@@ -24,8 +24,14 @@ export class User {
   @Column()
   password: string;
 
-  @Column({ default: 'ACTIVE' })
+  @Column({ default: 'PENDING' })
   status: string;
+
+  @Column({ type: 'text', nullable: true })
+  refreshToken: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  verifyToken: string | null;
 
   @CreateDateColumn()
   created_at: Date;

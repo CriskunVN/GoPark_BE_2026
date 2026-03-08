@@ -14,12 +14,19 @@ export const getDatabaseConfig = (
     // Sync database schema (tắt trong production)
     synchronize: configService.get('NODE_ENV') !== 'production',
 
-    // Log SQL queries
-    logging: configService.get('NODE_ENV') !== 'production',
+    // Log SQL queries - Tắt log query để terminal gọn gàng hơn
+    logging: false,
 
-    // Cấu hình SSL cho Supabase (Bắt buộc)
-    ssl: {
-      rejectUnauthorized: false,
+    // Cấu hình SSL (chỉ bật khi production hoặc có env DB_SSL=true)
+    ssl: (configService.get('NODE_ENV') === 'production' || configService.get('DB_SSL') === 'true')
+      ? { rejectUnauthorized: false }
+      : false, // Tắt SSL hoàn toàn ở local
+
+    // Đảm bảo extra options cũng tắt ssl
+    extra: {
+      ssl: (configService.get('NODE_ENV') === 'production' || configService.get('DB_SSL') === 'true')
+        ? { rejectUnauthorized: false }
+        : false,
     },
   };
 };
