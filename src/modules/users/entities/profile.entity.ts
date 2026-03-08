@@ -18,7 +18,7 @@ export class Profile {
   @Column()
   phone: string;
 
-  @Column()
+  @Column({ nullable: true })
   gender: string;
 
   @OneToOne('User', (user: User) => user.profile)
