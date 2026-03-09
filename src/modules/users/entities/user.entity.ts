@@ -12,12 +12,10 @@ import type { Vehicle } from './vehicle.entity';
 import type { Wallet } from '../../wallet/entities/wallet.entity';
 import type { Booking } from '../../booking/entities/booking.entity';
 import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
+import { BaseEntity } from 'src/common/entity/base.entity';
 
 @Entity('users')
-export class User {
-  @PrimaryGeneratedColumn()
-  id: number;
-
+export class User extends BaseEntity {
   @Column({ unique: true })
   email: string;
 
@@ -33,24 +31,28 @@ export class User {
   @Column({ type: 'text', nullable: true })
   verifyToken: string | null;
 
-  @CreateDateColumn()
-  created_at: Date;
+  @Column({ type: 'text', nullable: true })
+  resetPasswordToken: string | null;
 
-  @OneToOne('Profile', (profile: Profile) => profile.user)
+  @OneToOne('Profile', (profile: Profile) => profile.user, { cascade: true })
   profile: Profile;
 
-  @OneToMany('UserRole', (userRole: UserRole) => userRole.user)
+  @OneToMany('UserRole', (userRole: UserRole) => userRole.user, {
+    cascade: true,
+  })
   userRoles: UserRole[];
 
-  @OneToOne('Wallet', (wallet: Wallet) => wallet.user)
+  @OneToOne('Wallet', (wallet: Wallet) => wallet.user, { cascade: true })
   wallet: Wallet;
 
-  @OneToMany('Vehicle', (vehicle: Vehicle) => vehicle.user)
+  @OneToMany('Vehicle', (vehicle: Vehicle) => vehicle.user, { cascade: true })
   vehicles: Vehicle[];
 
-  @OneToMany('Booking', (booking: Booking) => booking.user)
+  @OneToMany('Booking', (booking: Booking) => booking.user, { cascade: true })
   bookings: Booking[];
 
-  @OneToMany('ParkingLot', (parkingLot: ParkingLot) => parkingLot.owner)
+  @OneToMany('ParkingLot', (parkingLot: ParkingLot) => parkingLot.owner, {
+    cascade: true,
+  })
   ownedParkingLots: ParkingLot[];
 }

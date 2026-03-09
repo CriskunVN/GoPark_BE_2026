@@ -7,6 +7,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RtStrategy } from './strategies/rt.strategy';
+import { EmailService } from './email/email.service';
 
 @Module({
   imports: [
@@ -14,17 +15,18 @@ import { RtStrategy } from './strategies/rt.strategy';
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_ACCESS_SECRET'),
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_ACCESS_EXPIRATION_TIME'),
-        },
-      } as any),
+      useFactory: async (configService: ConfigService) =>
+        ({
+          secret: configService.get<string>('JWT_ACCESS_SECRET'),
+          signOptions: {
+            expiresIn: configService.get<string>('JWT_ACCESS_EXPIRATION_TIME'),
+          },
+        }) as any,
       inject: [ConfigService],
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, RtStrategy],
-  exports: [AuthService],
+  providers: [AuthService, JwtStrategy, RtStrategy, EmailService],
+  exports: [AuthService, EmailService],
 })
 export class AuthModule {}

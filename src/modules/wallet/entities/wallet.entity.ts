@@ -24,7 +24,7 @@ export class Wallet {
   @CreateDateColumn()
   created_at: Date;
 
-  @OneToOne('User', (user: User) => user.wallet)
+  @OneToOne('User', (user: User) => user.wallet, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 

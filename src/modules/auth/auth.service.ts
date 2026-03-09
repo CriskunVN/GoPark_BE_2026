@@ -13,34 +13,25 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from './dto/login.dto';
 import * as nodemailer from 'nodemailer';
-import { getVerificationEmailTemplate } from './email-templates/verification-email.template';
+import { getVerificationEmailTemplate } from './email/verification-email.template';
+import { EmailService } from './email/email.service';
 
 @Injectable()
 export class AuthService {
-  private transporter: nodemailer.Transporter;
-// Khởi tạo transporter trong constructor để sử dụng cho việc gửi email xác thực
+  // Khởi tạo transporter trong constructor để sử dụng cho việc gửi email xác thực
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
     private configService: ConfigService,
-  ) {
-    this.transporter = nodemailer.createTransport({
-      host: this.configService.get('EMAIL_HOST'),
-      port: 587,
-      secure: false, // đúng cho port 587, nếu dùng port 465 thì secure: true
-      auth: {
-        user: this.configService.get('EMAIL_USER'),
-        pass: this.configService.get('EMAIL_PASS'),
-      },
-    });
-  }
+    private emailService: EmailService,
+  ) {}
 
   // Hàm để tạo access token và refresh token
-  async getTokens(userId: number, email: string, roles: string[]) {
+  async getTokens(userId: string, email: string, roles: string[]) {
     const [at, rt] = await Promise.all([
       this.jwtService.signAsync(
-        { sub: userId, email, roles },  // Thêm roles vào payload
-        { 
+        { sub: userId, email, roles }, // Thêm roles vào payload
+        {
           secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
           expiresIn: '15m', // thời gian  của access token.
         },
@@ -61,9 +52,9 @@ export class AuthService {
   }
 
   // Hàm để lưu hash của refresh token vào database, hash này sẽ được so sánh khi client gửi refresh token mới để cấp lại access token
-  async updateRefreshTokenHash(userId: number, rt: string) {
+  async updateRefreshTokenHash(userId: string, rt: string) {
     const hash = await bcrypt.hash(rt, 10);
-    await this.usersService.update(userId, { refreshToken: hash });// Cập nhật hash của refresh token vào database
+    await this.usersService.update(userId, { refreshToken: hash }); // Cập nhật hash của refresh token vào database
   }
 
   // Register
@@ -88,23 +79,7 @@ export class AuthService {
       verifyToken,
     });
 
-    // Gửi email xác minh template
-    const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
-    const link = `${frontendUrl}/verify-email?token=${verifyToken}`;
-    
-    // Log link xác thực ra console để tiện test local
-    console.log(`[TESTING] Verification Link: ${link}`);
-
-    try {
-        await this.transporter.sendMail({
-        from: '"Hỗ trợ GoPark" <' + this.configService.get('EMAIL_FROM') + '>',
-        to: newUser.email,
-        subject: 'Xác minh địa chỉ email của bạn',
-        html: getVerificationEmailTemplate(link), // Sử dụng template email
-        });
-    } catch (e) {
-        console.log("Email error: ", e);
-    }
+    await this.emailService.sendVerificationEmail(newUser.email, verifyToken); // Gửi email xác thực sau khi tạo người dùng mới
 
     // trả về thông tin người dùng đã được tạo, loại bỏ password và refreshToken khỏi kết quả trả về
     const { password, refreshToken, ...result } = newUser;
@@ -114,14 +89,18 @@ export class AuthService {
   // Login
   async login(loginDto: LoginDto) {
     const user = await this.usersService.findByEmail(loginDto.email); // Tìm người dùng theo email để kiểm tra thông tin đăng nhập
-    if (!user) throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
+    if (!user)
+      throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
 
     if (user.status !== 'ACTIVE') {
-      throw new ForbiddenException('Tài khoản chưa được xác minh. Vui lòng kiểm tra email của bạn.');
+      throw new ForbiddenException(
+        'Tài khoản chưa được xác minh. Vui lòng kiểm tra email của bạn.',
+      );
     }
 
     const isMatch = await bcrypt.compare(loginDto.password, user.password); // So sánh mật khẩu đã nhập với mật khẩu đã hash trong database
-    if (!isMatch) throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
+    if (!isMatch)
+      throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
 
     // Lấy danh sách role name
     const roles = user.userRoles?.map((ur) => ur.role.name) || [];
@@ -133,14 +112,15 @@ export class AuthService {
   }
 
   // Logout
-  async logout(userId: number) {
+  async logout(userId: string) {
     await this.usersService.update(userId, { refreshToken: null } as any); // Xóa hash của refresh token trong database để vô hiệu hóa refresh token hiện tại
   }
 
   // Refresh Token
-  async refreshTokens(userId: number, rt: string) {
+  async refreshTokens(userId: string, rt: string) {
     const user = await this.usersService.findOne(userId); // Tìm người dùng theo ID để kiểm tra refresh token
-    if (!user || !user.refreshToken) throw new ForbiddenException('Từ chối truy cập');
+    if (!user || !user.refreshToken)
+      throw new ForbiddenException('Từ chối truy cập');
 
     const rtMatches = await bcrypt.compare(rt, user.refreshToken);
     if (!rtMatches) throw new ForbiddenException('Từ chối truy cập');
@@ -160,14 +140,46 @@ export class AuthService {
     if (!user) throw new BadRequestException('Mã xác thực không hợp lệ');
 
     if (user.status === 'ACTIVE') {
-        return { message: "Email đã được xác minh trước đó" };
+      return { message: 'Email đã được xác minh trước đó' };
     }
 
-    await this.usersService.update(user.id, { 
-        status: 'ACTIVE', 
-        verifyToken: null 
+    await this.usersService.update(user.id, {
+      status: 'ACTIVE',
+      verifyToken: null,
     } as any);
 
-    return { message: "Xác minh email thành công" };
+    return { message: 'Xác minh email thành công' };
+  }
+
+  // Reset Password
+  async resetPassword(email: string) {
+    const user = await this.usersService.findByEmail(email);
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng với email này');
+    }
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = await bcrypt.hash(resetToken, 10);
+
+    // Lưu hash của reset token vào database, có thể thêm trường resetTokenHash vào bảng users để lưu thông tin này
+    await this.usersService.update(user.id, {
+      resetPasswordToken: resetTokenHash,
+    } as any);
+
+    // Gửi email chứa link reset password
+    const frontendUrl =
+      this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
+    const resetLink = `${frontendUrl}/reset-password?token=${resetToken}&email=${email}`;
+
+    try {
+      // Gửi email reset password
+    } catch (e) {
+      console.log('Email error: ', e);
+      throw new BadRequestException('Không thể gửi email reset mật khẩu');
+    }
+
+    return {
+      message: 'Liên kết đặt lại mật khẩu đã được gửi đến email của bạn',
+    };
   }
 }

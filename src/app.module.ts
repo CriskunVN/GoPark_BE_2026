@@ -12,6 +12,7 @@ import { ParkingModule } from './modules/parking/parking.module';
 import { BookingModule } from './modules/booking/booking.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { DataSource } from 'typeorm';
 
 @Module({
   imports: [
@@ -33,4 +34,13 @@ import { AuthModule } from './modules/auth/auth.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule {
+  constructor(private dataSource: DataSource) {}
+  onModuleInit() {
+    if (this.dataSource.isInitialized) {
+      console.log('Database connection successfully.');
+    } else {
+      console.error('Failed to connect to the database.');
+    }
+  }
+}

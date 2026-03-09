@@ -19,25 +19,25 @@ import { Request } from 'express';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
-// Đăng ký
+  // Đăng ký
   @Post('register')
   register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
-// Đăng nhập
+  // Đăng nhập
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
-// Đăng xuất
+  // Đăng xuất
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   logout(@Req() req: any) {
     return this.authService.logout(req.user['userId']);
   }
-// Refresh token để cấp lại access token mới khi access token cũ hết hạn
+  // Refresh token để cấp lại access token mới khi access token cũ hết hạn
   @UseGuards(RtAuthGuard)
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
@@ -46,9 +46,16 @@ export class AuthController {
     const refreshToken = req.user['refreshToken'];
     return this.authService.refreshTokens(userId, refreshToken);
   }
-// Xác thực email thông qua mã xác thực được gửi qua email
+  // Xác thực email thông qua mã xác thực được gửi qua email
   @Get('verify-email')
   verifyEmail(@Query('token') token: string) {
     return this.authService.verifyEmail(token);
+  }
+
+  // ENDPOINT: Reset password
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  resetPassword(@Body('email') email: string) {
+    return this.authService.resetPassword(email);
   }
 }
