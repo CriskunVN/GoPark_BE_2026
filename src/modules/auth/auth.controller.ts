@@ -14,7 +14,6 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RtAuthGuard } from './guards/rt-auth.guard';
-import { Request } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -57,5 +56,16 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   resetPassword(@Body('email') email: string) {
     return this.authService.resetPassword(email);
+  }
+
+  // ENDPOINT: Xác thực reset password thông qua token được gửi qua email
+  @Post('reset-password/confirm')
+  @HttpCode(HttpStatus.OK)
+  confirmResetPassword(
+    @Query('token') token: string,
+    @Query('email') email: string,
+    @Body('newPassword') newPassword: string,
+  ) {
+    return this.authService.confirmResetPassword(token, email, newPassword);
   }
 }

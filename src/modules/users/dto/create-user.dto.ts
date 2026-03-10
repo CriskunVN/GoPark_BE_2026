@@ -19,4 +19,6 @@ export class CreateUserDto {
 
   refreshToken?: string | null;
   verifyToken?: string | null;
+  resetPasswordToken?: string | null; // Thêm field này cho reset password
+  status?: string; // Thêm cho verify email
 }

@@ -13,7 +13,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from './dto/login.dto';
 import * as nodemailer from 'nodemailer';
-import { getVerificationEmailTemplate } from './email/verification-email.template';
+import { getVerificationEmailTemplate } from './email/template/verification-email.template';
 import { EmailService } from './email/email.service';
 
 @Injectable()
@@ -90,7 +90,9 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const user = await this.usersService.findByEmail(loginDto.email); // Tìm người dùng theo email để kiểm tra thông tin đăng nhập
     if (!user)
-      throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
+      throw new UnauthorizedException(
+        'Tài khoản không tồn tại hoặc thông tin đăng nhập không hợp lệ',
+      );
 
     if (user.status !== 'ACTIVE') {
       throw new ForbiddenException(
@@ -100,7 +102,7 @@ export class AuthService {
 
     const isMatch = await bcrypt.compare(loginDto.password, user.password); // So sánh mật khẩu đã nhập với mật khẩu đã hash trong database
     if (!isMatch)
-      throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
+      throw new UnauthorizedException('Sai tài khoản hoặc mật khẩu');
 
     // Lấy danh sách role name
     const roles = user.userRoles?.map((ur) => ur.role.name) || [];
@@ -153,33 +155,81 @@ export class AuthService {
 
   // Reset Password
   async resetPassword(email: string) {
+    // Tìm người dùng theo email
     const user = await this.usersService.findByEmail(email);
     if (!user) {
       throw new NotFoundException('Không tìm thấy người dùng với email này');
     }
-
+    // Tạo token đặt lại mật khẩu và hash token này để lưu vào database
     const resetToken = crypto.randomBytes(32).toString('hex');
     const resetTokenHash = await bcrypt.hash(resetToken, 10);
 
-    // Lưu hash của reset token vào database, có thể thêm trường resetTokenHash vào bảng users để lưu thông tin này
-    await this.usersService.update(user.id, {
-      resetPasswordToken: resetTokenHash,
-    } as any);
-
     // Gửi email chứa link reset password
-    const frontendUrl =
-      this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
-    const resetLink = `${frontendUrl}/reset-password?token=${resetToken}&email=${email}`;
-
     try {
+      // Cập nhật hash của reset token vào database
+      await this.usersService.update(user.id, {
+        resetPasswordToken: resetTokenHash,
+      });
+
       // Gửi email reset password
+      await this.emailService.sendResetPasswordEmail(user.email, resetToken);
+
+      setTimeout(
+        async () => {
+          // Hết hạn token sau 15p và xóa hash của reset token khỏi database
+          await this.usersService.update(user.id, {
+            resetPasswordToken: null,
+          } as any);
+        },
+        15 * 60 * 1000,
+      ); // 15 phút
+
+      // Trả về thông báo thành công - interceptor sẽ tự động wrap message
+      return {
+        message:
+          'Vui lòng kiểm tra hộp thư của bạn để nhận hướng dẫn đặt lại mật khẩu.',
+        data: {
+          requested: true,
+          expiresInMinutes: 15,
+        },
+      };
     } catch (e) {
       console.log('Email error: ', e);
       throw new BadRequestException('Không thể gửi email reset mật khẩu');
     }
+  }
 
-    return {
-      message: 'Liên kết đặt lại mật khẩu đã được gửi đến email của bạn',
-    };
+  // Xác nhận reset password
+  async confirmResetPassword(
+    token: string,
+    email: string,
+    newPassword: string,
+  ) {
+    // Tìm người dùng theo email
+    const user = await this.usersService.findByEmail(email);
+    console.log(user, email, token, newPassword);
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng với email này');
+    }
+
+    // Kiểm tra token reset password
+    const isTokenValid = await bcrypt.compare(
+      token,
+      user.resetPasswordToken as string,
+    );
+    if (!isTokenValid) {
+      throw new BadRequestException(
+        'Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
+      );
+    }
+
+    // Hash mật khẩu mới và cập nhật vào database, đồng thời xóa token reset password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await this.usersService.update(user.id, {
+      password: hashedPassword,
+      resetPasswordToken: null,
+    } as any);
+
+    return { message: 'Đặt lại mật khẩu thành công' };
   }
 }

@@ -95,10 +95,11 @@ export class UsersService {
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return this.usersRepository.findOne({
+    const user = await this.usersRepository.findOne({
       where: { email },
       relations: ['userRoles', 'userRoles.role'],
     });
+    return user;
   }
 
   async findByVerifyToken(verifyToken: string): Promise<User | null> {
