@@ -18,7 +18,7 @@ export class Vehicle {
   @Column()
   type: string;
 
-  @ManyToOne('User', (user: User) => user.vehicles)
+  @ManyToOne('User', (user: User) => user.vehicles, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 }

@@ -18,10 +18,10 @@ export class Profile {
   @Column()
   phone: string;
 
-  @Column()
+  @Column({ nullable: true })
   gender: string;
 
-  @OneToOne('User', (user: User) => user.profile)
+  @OneToOne('User', (user: User) => user.profile, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 }
