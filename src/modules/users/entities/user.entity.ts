@@ -13,6 +13,7 @@ import type { Wallet } from '../../wallet/entities/wallet.entity';
 import type { Booking } from '../../booking/entities/booking.entity';
 import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
 import { BaseEntity } from 'src/common/entity/base.entity';
+import { UserStatus } from 'src/common/enums/userStatus.enum';
 
 @Entity('users')
 export class User extends BaseEntity {
@@ -22,7 +23,11 @@ export class User extends BaseEntity {
   @Column()
   password: string;
 
-  @Column({ default: 'PENDING' })
+  @Column({
+    type: 'enum',
+    enum: UserStatus,
+    default: UserStatus.SPENDING,
+  })
   status: string;
 
   @Column({ type: 'text', nullable: true })

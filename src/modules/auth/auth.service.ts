@@ -15,6 +15,7 @@ import { LoginDto } from './dto/login.dto';
 import * as nodemailer from 'nodemailer';
 import { getVerificationEmailTemplate } from './email/template/verification-email.template';
 import { EmailService } from './email/email.service';
+import { UserResDto } from '../users/dto/user-res.dto';
 
 @Injectable()
 export class AuthService {
@@ -81,9 +82,8 @@ export class AuthService {
 
     await this.emailService.sendVerificationEmail(newUser.email, verifyToken); // Gửi email xác thực sau khi tạo người dùng mới
 
-    // trả về thông tin người dùng đã được tạo, loại bỏ password và refreshToken khỏi kết quả trả về
-    const { password, refreshToken, ...result } = newUser;
-    return result;
+    // Trả về DTO an toàn, không lộ các trường nhạy cảm
+    return UserResDto.fromEntity(newUser);
   }
 
   // Login
