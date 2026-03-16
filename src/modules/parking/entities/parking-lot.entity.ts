@@ -36,7 +36,7 @@ export class ParkingLot {
   @Column()
   status: string;
 
-  @ManyToOne('User')
+  @ManyToOne('User', (user: User) => user.id, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'owner_id' })
   owner: User;
 

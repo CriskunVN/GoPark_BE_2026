@@ -15,7 +15,9 @@ export class Gate {
   @Column()
   type: string; // IN, OUT
 
-  @ManyToOne('ParkingLot', (parkingLot: ParkingLot) => parkingLot.gates)
+  @ManyToOne('ParkingLot', (parkingLot: ParkingLot) => parkingLot.gates, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 }

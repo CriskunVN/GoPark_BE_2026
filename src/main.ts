@@ -3,10 +3,13 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { TransformInterceptor } from './utils/tranform.interceptor';
 import { HttpExceptionFilter } from './utils/http-exception.filter';
+import morgan from 'morgan';
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api/v1');
   app.enableCors(); // Enable CORS for all origins (development purposes)
+  app.use(morgan('dev')); // Log request method, URL, status, response time
   app.useGlobalInterceptors(new TransformInterceptor()); // Áp dụng interceptor để chuẩn hóa response
   app.useGlobalFilters(new HttpExceptionFilter()); // Áp dụng filter để chuẩn hóa lỗi
   app.useGlobalPipes(new ValidationPipe()); // Bật validation pipe toàn cục để tự động validate DTOs

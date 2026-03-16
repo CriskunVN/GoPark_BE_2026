@@ -29,7 +29,9 @@ export class Payment {
   @CreateDateColumn()
   created_at: Date;
 
-  @ManyToOne('Booking', (booking: Booking) => booking.payments)
+  @ManyToOne('Booking', (booking: Booking) => booking.payments, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'booking_id' })
   booking: Booking;
 
