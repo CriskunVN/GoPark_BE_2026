@@ -8,6 +8,7 @@ import {
   OneToOne,
   CreateDateColumn,
 } from 'typeorm';
+import { PaymentStatus } from 'src/common/enums/status.enum';
 import type { Booking } from '../../booking/entities/booking.entity';
 import type { Transaction } from './transaction.entity';
 import type { Invoice } from './invoice.entity';
@@ -23,17 +24,11 @@ export class Payment {
   @Column()
   method: string; // VNPAY, VIETQR, WALLET
 
-  @Column()
-  status: string; // PENDING, PAID, FAILED, REFUNDED
+  @Column({ type: 'enum', enum: PaymentStatus, default: PaymentStatus.PENDING })
+  status: PaymentStatus; // PENDING, PAID, FAILED, REFUNDED
 
   @CreateDateColumn()
   created_at: Date;
-
-  @ManyToOne('Booking', (booking: Booking) => booking.payments, {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({ name: 'booking_id' })
-  booking: Booking;
 
   @OneToMany('Transaction', (transaction: Transaction) => transaction.payment)
   transactions: Transaction[];

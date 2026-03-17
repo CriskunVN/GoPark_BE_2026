@@ -62,9 +62,6 @@ export class Booking {
   @OneToMany('CheckOutLog', (log: CheckOutLog) => log.booking)
   checkOutLogs: CheckOutLog[];
 
-  @OneToMany('Payment', (payment: Payment) => payment.booking)
-  payments: Payment[];
-
-  @OneToOne('Invoice', (invoice: Invoice) => invoice.booking)
-  invoice: Invoice;
+  @OneToMany('Invoice', (invoice: Invoice) => invoice.booking)
+  invoice: Invoice[];
 }
