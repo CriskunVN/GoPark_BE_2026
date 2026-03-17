@@ -110,7 +110,14 @@ export class AuthService {
     const tokens = await this.getTokens(user.id, user.email, roles); // Tạo access token và refresh token cho người dùng
     await this.updateRefreshTokenHash(user.id, tokens.refresh_token); // Lưu hash của refresh token vào database để sử dụng cho việc cấp lại access token sau này
 
-    return tokens;
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      user: {
+        ...UserResDto.fromEntity(user),
+        role: roles[0] || 'user'
+      }
+    };
   }
 
   // Logout

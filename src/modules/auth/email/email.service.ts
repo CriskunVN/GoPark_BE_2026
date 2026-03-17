@@ -41,7 +41,7 @@ export class EmailService {
   async sendVerificationEmail(to: string, link: string) {
     const frontendUrl = this.configService.get<string>('FRONTEND_URL');
     const logoUrl = this.configService.get<string>('EMAIL_LOGO_URL');
-    const verificationLink = `${frontendUrl}/api/v1/auth/verify-email?token=${link}`;
+    const verificationLink = `${frontendUrl}/auth/verify-email?token=${link}`;
 
     // Log link xác thực ra console để tiện test local
     console.log(`[TESTING] Verification Link: ${verificationLink}`);
@@ -58,7 +58,7 @@ export class EmailService {
     const frontendUrl =
       this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
     const logoUrl = this.configService.get<string>('EMAIL_LOGO_URL');
-    const resetLink = `${frontendUrl}/api/v1/auth/reset-password?token=${resetToken}&email=${to}`; // phải sửa lại URL page reset password trên frontend để nhận token và email qua query params
+    const resetLink = `${frontendUrl}/auth/reset-password?token=${resetToken}&email=${to}`; // phải sửa lại URL page reset password trên frontend để nhận token và email qua query params
 
     console.log(`Reset token : ${resetToken} | ${to}`);
 
