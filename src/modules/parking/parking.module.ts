@@ -3,11 +3,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { ParkingSlot } from './entities/parking-slot.entity';
 import { Gate } from './entities/gate.entity';
+import { Booking } from '../booking/entities/booking.entity';
+import { ParkingLotController } from './parking-lot.controller';
+import { ParkingLotService } from './parking-lot.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ParkingLot, ParkingSlot, Gate])],
-  controllers: [],
-  providers: [],
+  imports: [TypeOrmModule.forFeature([ParkingLot, ParkingSlot, Gate, Booking])],
+  controllers: [ParkingLotController],
+  providers: [ParkingLotService],
   exports: [TypeOrmModule],
 })
 export class ParkingModule {}
