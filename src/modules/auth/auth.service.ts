@@ -115,8 +115,8 @@ export class AuthService {
       refreshToken: tokens.refresh_token,
       user: {
         ...UserResDto.fromEntity(user),
-        role: roles[0] || 'user'
-      }
+        role: roles[0] || 'user',
+      },
     };
   }
 

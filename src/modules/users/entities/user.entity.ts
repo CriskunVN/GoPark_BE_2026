@@ -1,11 +1,4 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  OneToOne,
-  OneToMany,
-  CreateDateColumn,
-} from 'typeorm';
+import { Entity, Column, OneToOne, OneToMany } from 'typeorm';
 import type { Profile } from './profile.entity';
 import type { UserRole } from './user-role.entity';
 import type { Vehicle } from './vehicle.entity';
