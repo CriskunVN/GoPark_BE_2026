@@ -5,6 +5,7 @@ import type { Vehicle } from './vehicle.entity';
 import type { Wallet } from '../../wallet/entities/wallet.entity';
 import type { Booking } from '../../booking/entities/booking.entity';
 import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
+import type { Request } from '../../request/entities/request.entity';
 import { BaseEntity } from 'src/common/entity/base.entity';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
 
@@ -53,4 +54,9 @@ export class User extends BaseEntity {
     cascade: true,
   })
   ownedParkingLots: ParkingLot[];
+
+  @OneToMany('Request', (request: Request) => request.requester, {
+    cascade: true,
+  })
+  requests: Request[];
 }

@@ -6,9 +6,13 @@ import { Gate } from './entities/gate.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotController } from './parking-lot.controller';
 import { ParkingLotService } from './parking-lot.service';
+import { RequestModule } from '../request/request.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ParkingLot, ParkingSlot, Gate, Booking])],
+  imports: [
+    TypeOrmModule.forFeature([ParkingLot, ParkingSlot, Gate, Booking]),
+    RequestModule,
+  ],
   controllers: [ParkingLotController],
   providers: [ParkingLotService],
   exports: [TypeOrmModule],

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
@@ -8,6 +8,10 @@ import {
   OwnerParkingLotResDto,
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
+import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
+import { ParkingLotStatus } from 'src/common/enums/status.enum';
+import { RequestService } from '../request/request.service';
+import { RequestType } from '../request/entities/request.entity';
 
 @Injectable()
 export class ParkingLotService {
@@ -16,7 +20,42 @@ export class ParkingLotService {
     private parkingLotRepository: Repository<ParkingLot>,
     @InjectRepository(Booking)
     private bookingRepository: Repository<Booking>,
+    private requestService: RequestService,
   ) {}
+
+  async createParkingLot(createParkingLotDto: CreateParkingLotReqDto) {
+    const parkingLot = this.parkingLotRepository.create({
+      name: createParkingLotDto.name,
+      address: createParkingLotDto.address,
+      lat: createParkingLotDto.lat,
+      lng: createParkingLotDto.lng,
+      total_slots: createParkingLotDto.totalSlots,
+      available_slots:
+        createParkingLotDto.availableSlots ?? createParkingLotDto.totalSlots,
+      status: ParkingLotStatus.INACTIVE,
+      owner: { id: createParkingLotDto.ownerId } as any,
+    });
+
+    const savedParkingLot = await this.parkingLotRepository.save(parkingLot);
+
+    // Tạo request để admin duyệt sau khi tạo bãi đỗ xe mới
+    await this.requestService.create({
+      type: RequestType.NEW_PARKING_LOT,
+      payload: {
+        parkingLotId: savedParkingLot.id,
+        address: savedParkingLot.address,
+        name: savedParkingLot.name,
+        lat: savedParkingLot.lat,
+        lng: savedParkingLot.lng,
+        totalSlots: savedParkingLot.total_slots,
+        availableSlots: savedParkingLot.available_slots,
+      },
+      description: `Yêu cầu tạo bãi đỗ xe mới: ${savedParkingLot.name}`,
+      requesterId: createParkingLotDto.ownerId,
+    });
+
+    return OwnerParkingLotResDto.fromEntity(savedParkingLot);
+  }
 
   // ─── Get users of a parking lot (with optional search) ───────────────────
   async getUsersByParkingLot(

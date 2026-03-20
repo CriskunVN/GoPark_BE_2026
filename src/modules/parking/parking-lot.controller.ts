@@ -1,10 +1,19 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ParkingLotService } from './parking-lot.service';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
 import {
   OwnerParkingLotResDto,
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
+import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
 
 @Controller('parking-lots')
 export class ParkingLotController {
@@ -34,5 +43,10 @@ export class ParkingLotController {
     @Query('search') search?: string,
   ): Promise<ParkingLotUserResDto[]> {
     return this.parkingLotService.getUsersByParkingLot(parkingLotId, search);
+  }
+
+  @Post()
+  async createParkingLot(@Body() createParkingLotDto: CreateParkingLotReqDto) {
+    return this.parkingLotService.createParkingLot(createParkingLotDto);
   }
 }
