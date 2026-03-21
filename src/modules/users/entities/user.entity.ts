@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 import type { Profile } from './profile.entity';
 import type { UserRole } from './user-role.entity';
-import type { Vehicle } from './vehicle.entity';
+import type { Vehicle } from '../../vehicles/entities/vehicle.entity';
 import type { Wallet } from '../../wallet/entities/wallet.entity';
 import type { Booking } from '../../booking/entities/booking.entity';
 import type { ParkingLot } from '../../parking/entities/parking-lot.entity';

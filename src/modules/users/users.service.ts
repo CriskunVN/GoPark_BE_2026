@@ -1,10 +1,11 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -25,7 +26,7 @@ export class UsersService {
     @InjectRepository(Profile)
     private profileRepository: Repository<Profile>,
   ) {}
-
+// Tạo người dùng mới với vai trò mặc định là "USER" và thông tin hồ sơ nếu có
   async create(createUserDto: CreateUserDto) {
     const {
       role: roleName,
@@ -33,14 +34,11 @@ export class UsersService {
       phoneNumber,
       ...userData
     } = createUserDto;
-    // Bắt buộc xóa id nếu có để tránh lỗi duplicate PK khi insert (đặc biệt khi DTO được map từ entity cũ hoặc test data)
-    // Nếu userData chứa id=1 mà db đã có id=1 thì sẽ lỗi 23505
     if ('id' in userData) delete userData['id'];
-
+// Nếu có role được gửi lên mà không phải là "USER", trả về lỗi vì role này sẽ bị bỏ qua và mặc định là "USER"
     const user = this.usersRepository.create(userData);
     const savedUser = await this.usersRepository.save(user);
 
-    // Tạo Profile
     if (fullName || phoneNumber) {
       const profile = this.profileRepository.create({
         name: fullName,
@@ -49,17 +47,13 @@ export class UsersService {
       });
       await this.profileRepository.save(profile);
     }
-
-    // Luôn gán role mặc định là CLIENT (USER) cho người dùng đăng ký mới
+// Gán vai trò "USER" mặc định cho người dùng mới tạo, nếu role này chưa tồn tại trong database thì sẽ được tạo mới
     const targetRoleName = 'USER';
     const role = await this.roleRepository.findOne({
       where: { name: targetRoleName },
     });
 
     if (!role) {
-      // Nếu role chưa tồn tại trong DB, có thể throw error hoặc tự tạo (tùy logic)
-      // Ở đây ta giả sử role USER/OWNER/ADMIN đã đợc seed.
-      // Tuy nhiên để đảm bảo code chạy được khi chưa seed, ta có thể tạo tạm:
       const newRole = this.roleRepository.create({ name: targetRoleName });
       await this.roleRepository.save(newRole);
 
@@ -78,19 +72,19 @@ export class UsersService {
 
     return this.findOne(savedUser.id);
   }
-
+// Lấy danh sách tất cả người dùng, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findAll(): Promise<User[]> {
     return this.usersRepository.find({
-      relations: ['userRoles', 'userRoles.role', 'profile'],
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
     });
   }
-
+// Lấy danh sách người dùng có phân trang, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findAllPaginated(page = 1, limit = 10) {
     const currentPage = Math.max(1, Number(page) || 1);
     const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
 
     const [items, totalItems] = await this.usersRepository.findAndCount({
-      relations: ['userRoles', 'userRoles.role', 'profile'],
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
       order: { createdAt: 'DESC' },
       skip: (currentPage - 1) * itemsPerPage,
       take: itemsPerPage,
@@ -107,29 +101,45 @@ export class UsersService {
       },
     };
   }
-
+// Lấy thông tin chi tiết một người dùng theo ID, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findOne(id: string) {
     const user = await this.usersRepository.findOne({
       where: { id },
-      relations: ['userRoles', 'userRoles.role', 'profile'],
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
     });
     if (!user)
       throw new NotFoundException(`Không tìm thấy người dùng với ID ${id}`);
     return user;
   }
-
+// Tìm người dùng theo email, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findByEmail(email: string) {
     const user = await this.usersRepository.findOne({
       where: { email },
-      relations: ['userRoles', 'userRoles.role'],
+      relations: ['userRoles', 'userRoles.role', 'profile'],
     });
     return user;
   }
-
+// Tìm người dùng theo mã xác thực email, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findByVerifyToken(verifyToken: string) {
     return this.usersRepository.findOne({ where: { verifyToken } });
   }
-
+// Cấp quyền OWNER cho người dùng, nếu họ chưa có quyền này
+  async makeOwner(userId: string) {
+    const user = await this.findOne(userId);
+    let ownerRole = await this.roleRepository.findOne({ where: { name: 'OWNER' } });
+    if (!ownerRole) {
+      ownerRole = this.roleRepository.create({ name: 'OWNER' });
+      await this.roleRepository.save(ownerRole);
+    }
+// Kiểm tra xem người dùng đã có quyền OWNER chưa, nếu chưa thì gán quyền này cho họ
+    const hasOwnerRole = user.userRoles?.some(ur => ur.role?.name === 'OWNER');
+    if (!hasOwnerRole) {
+      const newRole = this.userRoleRepository.create({ user, role: ownerRole });
+      await this.userRoleRepository.save(newRole);
+    }
+    return true;
+  }
+// Cập nhật thông tin người dùng, bao gồm cả thông tin hồ sơ nếu có, đảm bảo rằng người dùng tồn tại trước khi cập nhật
   async update(id: string, updateUserDto: UpdateUserDto) {
     const user = await this.findOne(id);
     if (!user)
@@ -137,18 +147,18 @@ export class UsersService {
     Object.assign(user, updateUserDto);
     return this.usersRepository.save(user);
   }
-
+// Xóa người dùng theo ID, đảm bảo rằng người dùng tồn tại trước khi xóa
   async remove(id: string): Promise<void> {
     const user = await this.findOne(id);
     await this.usersRepository.remove(user);
   }
-
+// Lấy danh sách tất cả chủ bãi đỗ xe (OWNER), bao gồm thông tin vai trò, hồ sơ và phương tiện của họ, với phân trang
   async findAllOwners(page = 1, limit = 10) {
     const currentPage = Math.max(1, Number(page) || 1);
     const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
 
     const [owners, totalItems] = await this.usersRepository.findAndCount({
-      relations: ['userRoles', 'userRoles.role', 'profile'],
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
       where: {
         userRoles: {
           role: {
@@ -173,5 +183,17 @@ export class UsersService {
         currentPage,
       },
     };
+  }
+// Cập nhật thông tin hồ sơ của người dùng, đảm bảo rằng người dùng tồn tại trước khi cập nhật
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    let user = await this.findOne(userId);
+    if (!user.profile) {
+      const profile = this.profileRepository.create({ ...dto, user });
+      await this.profileRepository.save(profile);
+    } else {
+      Object.assign(user.profile, dto);
+      await this.profileRepository.save(user.profile);
+    }
+    return this.findOne(userId);
   }
 }

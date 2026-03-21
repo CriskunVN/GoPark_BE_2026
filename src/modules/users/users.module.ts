@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
@@ -8,7 +8,6 @@ import { Permission } from './entities/permission.entity';
 import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { Profile } from './entities/profile.entity';
-import { Vehicle } from './entities/vehicle.entity';
 
 @Module({
   imports: [
@@ -19,7 +18,6 @@ import { Vehicle } from './entities/vehicle.entity';
       UserRole,
       RolePermission,
       Profile,
-      Vehicle,
     ]),
   ],
   controllers: [UsersController],
