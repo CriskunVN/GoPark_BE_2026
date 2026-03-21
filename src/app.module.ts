@@ -14,6 +14,7 @@ import { PaymentModule } from './modules/payment/payment.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DataSource } from 'typeorm';
 import { AdminModule } from './modules/admin/admin.module';
+import { RequestModule } from './modules/request/request.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AdminModule } from './modules/admin/admin.module';
     BookingModule,
     PaymentModule,
     AdminModule,
+    RequestModule,
   ],
   controllers: [AppController],
   providers: [AppService],
