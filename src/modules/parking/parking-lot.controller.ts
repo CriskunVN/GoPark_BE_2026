@@ -45,6 +45,7 @@ export class ParkingLotController {
     return this.parkingLotService.getUsersByParkingLot(parkingLotId, search);
   }
 
+  // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
   @Post()
   async createParkingLot(@Body() createParkingLotDto: CreateParkingLotReqDto) {
     return this.parkingLotService.createParkingLot(createParkingLotDto);
