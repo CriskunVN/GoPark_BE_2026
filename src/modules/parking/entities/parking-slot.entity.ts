@@ -6,6 +6,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import type { ParkingLot } from './parking-lot.entity';
+import { ParkingZone } from './parking-zone.entity';
 
 @Entity('parking_slots')
 export class ParkingSlot {
@@ -24,4 +25,9 @@ export class ParkingSlot {
   @ManyToOne('ParkingLot', (parkingLot: ParkingLot) => parkingLot.parkingSlots)
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
+
+  @ManyToOne('ParkingZone',(zone:ParkingZone) => zone.slot)
+  @JoinColumn({name:'parking_zone_id'})
+  parkingZone:ParkingZone;
+
 }

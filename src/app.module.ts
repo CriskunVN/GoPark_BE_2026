@@ -18,6 +18,8 @@ import { DataSource } from 'typeorm';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      // the .env file lives under src/, adjust path accordingly
+      envFilePath: ['.env', 'src/.env'],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -31,7 +33,7 @@ import { DataSource } from 'typeorm';
     BookingModule,
     PaymentModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, ],
   providers: [AppService],
 })
 export class AppModule {

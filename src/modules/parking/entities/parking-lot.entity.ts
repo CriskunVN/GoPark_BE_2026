@@ -9,6 +9,7 @@ import {
 import type { ParkingSlot } from './parking-slot.entity';
 import type { Gate } from './gate.entity';
 import type { User } from '../../users/entities/user.entity';
+import { ParkingFloor } from './parking-floor.entity';
 
 @Entity('parking_lots')
 export class ParkingLot {
@@ -45,4 +46,7 @@ export class ParkingLot {
 
   @OneToMany('Gate', (gate: Gate) => gate.parkingLot)
   gates: Gate[];
+
+  @OneToMany('ParkingFloor',(floor : ParkingFloor) => floor.parkingLot)
+  parkingFloor : ParkingFloor[];
 }
