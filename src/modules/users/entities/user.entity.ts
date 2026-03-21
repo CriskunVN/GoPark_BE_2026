@@ -11,6 +11,8 @@ import { UserStatus } from 'src/common/enums/userStatus.enum';
 
 @Entity('users')
 export class User extends BaseEntity {
+
+
   @Column({ unique: true })
   email: string;
 

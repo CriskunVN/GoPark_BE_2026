@@ -20,6 +20,8 @@ import { RequestModule } from './modules/request/request.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      // the .env file lives under src/, adjust path accordingly
+      envFilePath: ['.env', 'src/.env'],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -35,7 +37,7 @@ import { RequestModule } from './modules/request/request.module';
     AdminModule,
     RequestModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, ],
   providers: [AppService],
 })
 export class AppModule {
