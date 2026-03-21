@@ -1,18 +1,13 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  OneToOne,
-  OneToMany,
-  CreateDateColumn,
-} from 'typeorm';
+import { Entity, Column, OneToOne, OneToMany } from 'typeorm';
 import type { Profile } from './profile.entity';
 import type { UserRole } from './user-role.entity';
 import type { Vehicle } from './vehicle.entity';
 import type { Wallet } from '../../wallet/entities/wallet.entity';
 import type { Booking } from '../../booking/entities/booking.entity';
 import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
+import type { Request } from '../../request/entities/request.entity';
 import { BaseEntity } from 'src/common/entity/base.entity';
+import { UserStatus } from 'src/common/enums/userStatus.enum';
 
 @Entity('users')
 export class User extends BaseEntity {
@@ -24,7 +19,11 @@ export class User extends BaseEntity {
   @Column()
   password: string;
 
-  @Column({ default: 'PENDING' })
+  @Column({
+    type: 'enum',
+    enum: UserStatus,
+    default: UserStatus.SPENDING,
+  })
   status: string;
 
   @Column({ type: 'text', nullable: true })
@@ -57,4 +56,9 @@ export class User extends BaseEntity {
     cascade: true,
   })
   ownedParkingLots: ParkingLot[];
+
+  @OneToMany('Request', (request: Request) => request.requester, {
+    cascade: true,
+  })
+  requests: Request[];
 }

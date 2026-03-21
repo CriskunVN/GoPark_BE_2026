@@ -32,19 +32,21 @@ export class Booking {
   @Column()
   status: string;
 
-  @ManyToOne('User', (user: User) => user.bookings)
+  @ManyToOne('User', (user: User) => user.bookings, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @ManyToOne('Vehicle')
+  @ManyToOne('Vehicle', {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'vehicle_id' })
   vehicle: Vehicle;
 
-  @ManyToOne('ParkingLot')
+  @ManyToOne('ParkingLot', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 
-  @ManyToOne('ParkingSlot')
+  @ManyToOne('ParkingSlot', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'slot_id' })
   slot: ParkingSlot;
 
@@ -60,9 +62,6 @@ export class Booking {
   @OneToMany('CheckOutLog', (log: CheckOutLog) => log.booking)
   checkOutLogs: CheckOutLog[];
 
-  @OneToMany('Payment', (payment: Payment) => payment.booking)
-  payments: Payment[];
-
-  @OneToOne('Invoice', (invoice: Invoice) => invoice.booking)
-  invoice: Invoice;
+  @OneToMany('Invoice', (invoice: Invoice) => invoice.booking)
+  invoice: Invoice[];
 }

@@ -10,6 +10,7 @@ import type { ParkingSlot } from './parking-slot.entity';
 import type { Gate } from './gate.entity';
 import type { User } from '../../users/entities/user.entity';
 import { ParkingFloor } from './parking-floor.entity';
+import { ParkingLotStatus } from 'src/common/enums/status.enum';
 
 @Entity('parking_lots')
 export class ParkingLot {
@@ -34,10 +35,14 @@ export class ParkingLot {
   @Column()
   available_slots: number;
 
-  @Column()
+  @Column({
+    type: 'enum',
+    enum: ParkingLotStatus,
+    default: ParkingLotStatus.INACTIVE,
+  })
   status: string;
 
-  @ManyToOne('User')
+  @ManyToOne('User', (user: User) => user.id, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'owner_id' })
   owner: User;
 

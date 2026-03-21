@@ -11,6 +11,7 @@ import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
 import { Profile } from './entities/profile.entity';
+import { UserResDto } from './dto/user-res.dto';
 
 @Injectable()
 export class UsersService {
@@ -25,7 +26,7 @@ export class UsersService {
     private profileRepository: Repository<Profile>,
   ) {}
 
-  async create(createUserDto: CreateUserDto): Promise<User> {
+  async create(createUserDto: CreateUserDto) {
     const {
       role: roleName,
       fullName,
@@ -80,11 +81,34 @@ export class UsersService {
 
   async findAll(): Promise<User[]> {
     return this.usersRepository.find({
-      relations: ['userRoles', 'userRoles.role'],
+      relations: ['userRoles', 'userRoles.role', 'profile'],
     });
   }
 
-  async findOne(id: string): Promise<User> {
+  async findAllPaginated(page = 1, limit = 10) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
+    const [items, totalItems] = await this.usersRepository.findAndCount({
+      relations: ['userRoles', 'userRoles.role', 'profile'],
+      order: { createdAt: 'DESC' },
+      skip: (currentPage - 1) * itemsPerPage,
+      take: itemsPerPage,
+    });
+
+    return {
+      items: items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
+  }
+
+  async findOne(id: string) {
     const user = await this.usersRepository.findOne({
       where: { id },
       relations: ['userRoles', 'userRoles.role', 'profile'],
@@ -94,7 +118,7 @@ export class UsersService {
     return user;
   }
 
-  async findByEmail(email: string): Promise<User | null> {
+  async findByEmail(email: string) {
     const user = await this.usersRepository.findOne({
       where: { email },
       relations: ['userRoles', 'userRoles.role'],
@@ -102,12 +126,14 @@ export class UsersService {
     return user;
   }
 
-  async findByVerifyToken(verifyToken: string): Promise<User | null> {
+  async findByVerifyToken(verifyToken: string) {
     return this.usersRepository.findOne({ where: { verifyToken } });
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+  async update(id: string, updateUserDto: UpdateUserDto) {
     const user = await this.findOne(id);
+    if (!user)
+      throw new NotFoundException(`Không tìm thấy người dùng với ID ${id}`);
     Object.assign(user, updateUserDto);
     return this.usersRepository.save(user);
   }
@@ -115,5 +141,37 @@ export class UsersService {
   async remove(id: string): Promise<void> {
     const user = await this.findOne(id);
     await this.usersRepository.remove(user);
+  }
+
+  async findAllOwners(page = 1, limit = 10) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
+    const [owners, totalItems] = await this.usersRepository.findAndCount({
+      relations: ['userRoles', 'userRoles.role', 'profile'],
+      where: {
+        userRoles: {
+          role: {
+            name: 'OWNER',
+          },
+        },
+      },
+      order: { createdAt: 'DESC' },
+      skip: (currentPage - 1) * itemsPerPage,
+      take: itemsPerPage,
+    });
+
+    const items = UserResDto.fromEntities(owners);
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
   }
 }

@@ -22,7 +22,13 @@ export class ParkingSlot {
   @Column()
   status: string; // available, occupied, reserved
 
-  @ManyToOne('ParkingLot', (parkingLot: ParkingLot) => parkingLot.parkingSlots)
+  @ManyToOne(
+    'ParkingLot',
+    (parkingLot: ParkingLot) => parkingLot.parkingSlots,
+    {
+      onDelete: 'CASCADE',
+    },
+  )
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 
