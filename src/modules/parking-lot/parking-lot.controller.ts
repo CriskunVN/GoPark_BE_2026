@@ -6,6 +6,10 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Req,
+  UploadedFiles,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ParkingLotService } from './parking-lot.service';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -14,6 +18,9 @@ import {
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { BecomeOwnerDto } from './dto/become-owner.dto';
 
 @Controller('parking-lots')
 export class ParkingLotController {
@@ -49,5 +56,17 @@ export class ParkingLotController {
   @Post()
   async createParkingLot(@Body() createParkingLotDto: CreateParkingLotReqDto) {
     return this.parkingLotService.createParkingLot(createParkingLotDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('become-owner')
+  @UseInterceptors(AnyFilesInterceptor())
+  async becomeOwner(
+    @Req() req: any,
+    @Body() dto: BecomeOwnerDto,
+    @UploadedFiles() files: Array<Express.Multer.File>,
+  ) {
+    const userId = req.user['userId'];
+    return this.parkingLotService.becomeOwner(userId, dto, files);
   }
 }

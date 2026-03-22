@@ -8,7 +8,7 @@ import { getDatabaseConfig } from './config/database/database.config';
 import { UsersModule } from './modules/users/users.module';
 import { UsersService } from './modules/users/users.service';
 import { WalletModule } from './modules/wallet/wallet.module';
-import { ParkingModule } from './modules/parking/parking.module';
+import { ParkingModule } from './modules/parking-lot/parking-lot.module';
 import { BookingModule } from './modules/booking/booking.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -39,7 +39,7 @@ import { RequestModule } from './modules/request/request.module';
     AdminModule,
     RequestModule,
   ],
-  controllers: [AppController, ],
+  controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {

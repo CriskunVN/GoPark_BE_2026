@@ -7,7 +7,6 @@ import {
   JoinColumn,
 } from 'typeorm';
 import type { ParkingSlot } from './parking-slot.entity';
-import type { Gate } from './gate.entity';
 import type { User } from '../../users/entities/user.entity';
 import { ParkingFloor } from './parking-floor.entity';
 import { ParkingLotStatus } from 'src/common/enums/status.enum';
@@ -49,9 +48,6 @@ export class ParkingLot {
   @OneToMany('ParkingSlot', (slot: ParkingSlot) => slot.parkingLot)
   parkingSlots: ParkingSlot[];
 
-  @OneToMany('Gate', (gate: Gate) => gate.parkingLot)
-  gates: Gate[];
-
-  @OneToMany('ParkingFloor',(floor : ParkingFloor) => floor.parkingLot)
-  parkingFloor : ParkingFloor[];
+  @OneToMany('ParkingFloor', (floor: ParkingFloor) => floor.parkingLot)
+  parkingFloor: ParkingFloor[];
 }

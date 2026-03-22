@@ -10,11 +10,9 @@ import {
 } from 'typeorm';
 import type { User } from '../../users/entities/user.entity';
 import type { Vehicle } from '../../users/entities/vehicle.entity';
-import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
-import type { ParkingSlot } from '../../parking/entities/parking-slot.entity';
+import type { ParkingLot } from '../../parking-lot/entities/parking-lot.entity';
+import type { ParkingSlot } from '../../parking-lot/entities/parking-slot.entity';
 import type { QRCode } from './qr-code.entity';
-import type { CheckInLog } from './check-in-log.entity';
-import type { CheckOutLog } from './check-out-log.entity';
 import type { Payment } from '../../payment/entities/payment.entity';
 import type { Invoice } from '../../payment/entities/invoice.entity';
 
@@ -53,14 +51,6 @@ export class Booking {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   @OneToOne('QRCode', (qrCode: QRCode) => qrCode.booking)
   qrCode: QRCode;
-
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  @OneToMany('CheckInLog', (log: CheckInLog) => log.booking)
-  checkInLogs: CheckInLog[];
-
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  @OneToMany('CheckOutLog', (log: CheckOutLog) => log.booking)
-  checkOutLogs: CheckOutLog[];
 
   @OneToMany('Invoice', (invoice: Invoice) => invoice.booking)
   invoice: Invoice[];

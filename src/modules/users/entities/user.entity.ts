@@ -4,15 +4,13 @@ import type { UserRole } from './user-role.entity';
 import type { Vehicle } from '../../vehicles/entities/vehicle.entity';
 import type { Wallet } from '../../wallet/entities/wallet.entity';
 import type { Booking } from '../../booking/entities/booking.entity';
-import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
+import type { ParkingLot } from '../../parking-lot/entities/parking-lot.entity';
 import type { Request } from '../../request/entities/request.entity';
 import { BaseEntity } from 'src/common/entity/base.entity';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
 
 @Entity('users')
 export class User extends BaseEntity {
-
-
   @Column({ unique: true })
   email: string;
 
