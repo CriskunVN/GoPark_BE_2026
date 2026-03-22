@@ -7,6 +7,7 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 import type { Payment } from './payment.entity';
+import { TransactionStatus } from 'src/common/enums/status.enum';
 
 @Entity('transactions')
 export class Transaction {
@@ -19,7 +20,11 @@ export class Transaction {
   @Column({ type: 'decimal', precision: 15, scale: 2 })
   amount: number;
 
-  @Column()
+  @Column({
+    type: 'enum',
+    enum: TransactionStatus,
+    default: TransactionStatus.PENDING,
+  })
   status: string;
 
   @CreateDateColumn()

@@ -5,11 +5,15 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor(configService: ConfigService) {
+  constructor(private configService: ConfigService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false, // Không bỏ qua việc kiểm tra hết hạn của token
-      secretOrKey: configService.get<string>('JWT_ACCESS_SECRET')!,
+      // ensure the secret is defined; throwing early makes the error clear
+      secretOrKey: configService.get<string>('JWT_ACCESS_SECRET') ||
+        (() => {
+          throw new Error('JWT_ACCESS_SECRET is not defined in configuration');
+        })(),
     });
   }
 // Hàm validate sẽ được gọi sau khi token đã được xác thực thành công, payload chứa thông tin đã được mã hóa trong token

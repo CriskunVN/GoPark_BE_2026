@@ -30,6 +30,22 @@ export class TransformInterceptor<T> implements NestInterceptor<
 
     return next.handle().pipe(
       map((rawData: any) => {
+        // Trường hợp service trả về object có message nhưng không có data
+        // -> đưa message ra ngoài và loại message khỏi data để tránh bị lặp
+        if (
+          rawData &&
+          typeof rawData === 'object' &&
+          'message' in rawData &&
+          !('data' in rawData)
+        ) {
+          const { message, ...rest } = rawData;
+          return {
+            statusCode: response.statusCode,
+            message: message || 'Thành công',
+            data: Object.keys(rest).length ? rest : {},
+          };
+        }
+
         // Nếu đã trả về đúng format custom (success + data), giữ nguyên
         if (
           rawData &&

@@ -15,11 +15,14 @@ import { AuthModule } from './modules/auth/auth.module';
 import { DataSource } from 'typeorm';
 import { AdminModule } from './modules/admin/admin.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
+import { RequestModule } from './modules/request/request.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      // the .env file lives under src/, adjust path accordingly
+      envFilePath: ['.env', 'src/.env'],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -34,8 +37,9 @@ import { VehiclesModule } from './modules/vehicles/vehicles.module';
     BookingModule,
     PaymentModule,
     AdminModule,
+    RequestModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, ],
   providers: [AppService],
 })
 export class AppModule {

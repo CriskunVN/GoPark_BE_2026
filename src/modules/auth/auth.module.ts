@@ -15,13 +15,18 @@ import { EmailService } from './email/email.service';
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) =>
-        ({
-          secret: configService.get<string>('JWT_ACCESS_SECRET'),
+      useFactory: async (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_ACCESS_SECRET');
+        if (!secret) {
+          throw new Error('JWT_ACCESS_SECRET not found for JwtModule');
+        }
+        return {
+          secret,
           signOptions: {
             expiresIn: configService.get<string>('JWT_ACCESS_EXPIRATION_TIME'),
           },
-        }) as any,
+        } as any;
+      },
       inject: [ConfigService],
     }),
   ],

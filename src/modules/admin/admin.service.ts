@@ -39,11 +39,19 @@ export class AdminService {
     };
   }
 
-  async blockUser(id: string) {
-    await this.userService.update(id, { status: UserStatus.BLOCKED });
-    return {
-      success: true,
-      message: 'Người dùng đã bị khóa',
-    };
+  async blockUser(id: string, status: string) {
+    if (status === UserStatus.BLOCKED) {
+      await this.userService.update(id, { status: UserStatus.BLOCKED });
+      return {
+        message: 'Người dùng đã bị khóa',
+      };
+    } else if (status === UserStatus.ACTIVE) {
+      await this.userService.update(id, { status: UserStatus.ACTIVE });
+      return {
+        message: 'Người dùng đã được mở khóa',
+      };
+    } else {
+      throw new NotFoundException('Trạng thái không hợp lệ');
+    }
   }
 }
