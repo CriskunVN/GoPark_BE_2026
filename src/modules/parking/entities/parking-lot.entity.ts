@@ -43,7 +43,7 @@ export class ParkingLot {
   status: string;
 
   @ManyToOne('User', (user: User) => user.id, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'owner_id' })
+  @JoinColumn({ name: 'user_id' })
   owner: User;
 
   @OneToMany('ParkingSlot', (slot: ParkingSlot) => slot.parkingLot)

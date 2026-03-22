@@ -1,10 +1,18 @@
-import { User } from '../entities/user.entity';
+﻿import { User } from '../entities/user.entity';
 
 export class UserProfileResDto {
   id: number;
   name: string;
   phone: string;
   gender: string;
+  image: string;
+}
+
+export class VehicleResDto {
+  id: number;
+  plate_number: string;
+  type: string;
+  image: string;
 }
 
 export class UserResDto {
@@ -15,6 +23,7 @@ export class UserResDto {
   updatedAt: Date;
   roles: string[];
   profile: UserProfileResDto | null;
+  vehicles: VehicleResDto[];
 
   static fromEntity(user: User): UserResDto {
     return {
@@ -33,8 +42,15 @@ export class UserResDto {
             name: user.profile.name,
             phone: user.profile.phone,
             gender: user.profile.gender,
+            image: user.profile.image,
           }
         : null,
+      vehicles: user.vehicles ? user.vehicles.map(v => ({
+            id: v.id,
+            plate_number: v.plate_number,
+            type: v.type,
+            image: v.image,
+          })) : [],
     };
   }
 

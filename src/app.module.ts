@@ -14,6 +14,7 @@ import { PaymentModule } from './modules/payment/payment.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DataSource } from 'typeorm';
 import { AdminModule } from './modules/admin/admin.module';
+import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { RequestModule } from './modules/request/request.module';
 
 @Module({
@@ -30,6 +31,7 @@ import { RequestModule } from './modules/request/request.module';
     }),
     AuthModule,
     UsersModule,
+    VehiclesModule,
     WalletModule,
     ParkingModule,
     BookingModule,

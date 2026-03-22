@@ -21,6 +21,9 @@ export class Profile {
   @Column({ nullable: true })
   gender: string;
 
+  @Column({ type: 'text', nullable: true })
+  image: string;
+
   @OneToOne('User', (user: User) => user.profile, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
