@@ -10,13 +10,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false, // Không bỏ qua việc kiểm tra hết hạn của token
       // ensure the secret is defined; throwing early makes the error clear
-      secretOrKey: configService.get<string>('JWT_ACCESS_SECRET') ||
+      secretOrKey:
+        configService.get<string>('JWT_ACCESS_SECRET') ||
         (() => {
           throw new Error('JWT_ACCESS_SECRET is not defined in configuration');
         })(),
     });
   }
-// Hàm validate sẽ được gọi sau khi token đã được xác thực thành công, payload chứa thông tin đã được mã hóa trong token
+  // Hàm validate sẽ được gọi sau khi token đã được xác thực thành công, payload chứa thông tin đã được mã hóa trong token
   async validate(payload: any) {
     return { userId: payload.sub, email: payload.email, roles: payload.roles };
   }

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -48,7 +47,6 @@ export class Booking {
   @JoinColumn({ name: 'slot_id' })
   slot: ParkingSlot;
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   @OneToOne('QRCode', (qrCode: QRCode) => qrCode.booking)
   qrCode: QRCode;
 

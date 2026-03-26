@@ -39,7 +39,11 @@ export class VehiclesController {
     @Param('id') id: string,
     @Body() updateVehicleDto: UpdateVehicleDto,
   ) {
-    return this.vehiclesService.update(+id, req.user['userId'], updateVehicleDto);
+    return this.vehiclesService.update(
+      +id,
+      req.user['userId'],
+      updateVehicleDto,
+    );
   }
 
   @Delete(':id')
