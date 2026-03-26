@@ -45,12 +45,14 @@ export class UserResDto {
             image: user.profile.image,
           }
         : null,
-      vehicles: user.vehicles ? user.vehicles.map(v => ({
+      vehicles: user.vehicles
+        ? user.vehicles.map((v) => ({
             id: v.id,
             plate_number: v.plate_number,
             type: v.type,
             image: v.image,
-          })) : [],
+          }))
+        : [],
     };
   }
 

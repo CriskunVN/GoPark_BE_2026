@@ -8,6 +8,7 @@ import {
   Query,
   Req,
   UploadedFiles,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -19,8 +20,11 @@ import {
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
+import { WalkInDto } from './dto/walk-in.dto';
+
+// chia vung ra roi thay nghe
 
 @Controller('parking-lots')
 export class ParkingLotController {
@@ -68,5 +72,21 @@ export class ParkingLotController {
   ) {
     const userId = req.user['userId'];
     return this.parkingLotService.becomeOwner(userId, dto, files);
+  }
+
+  // ─── Route: Guest Check-in (Silent Registration) ─────────────────────────
+
+  @Post('ocr')
+  @UseInterceptors(FileInterceptor('image'))
+  async extractLicensePlate(@UploadedFile() file: Express.Multer.File) {
+    return await this.parkingLotService.extractLicensePlate(file);
+  }
+
+  @Post(':parkingLotId/walk-in')
+  async handleWalkIn(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: WalkInDto,
+  ) {
+    return await this.parkingLotService.handleWalkIn(parkingLotId, dto);
   }
 }

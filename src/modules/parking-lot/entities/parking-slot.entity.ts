@@ -32,8 +32,7 @@ export class ParkingSlot {
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 
-  @ManyToOne('ParkingZone',(zone:ParkingZone) => zone.slot)
-  @JoinColumn({name:'parking_zone_id'})
-  parkingZone:ParkingZone;
-
+  @ManyToOne('ParkingZone', (zone: ParkingZone) => zone.slot)
+  @JoinColumn({ name: 'parking_zone_id' })
+  parkingZone: ParkingZone;
 }

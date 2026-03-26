@@ -47,7 +47,10 @@ export class UsersController {
     @Req() req: any,
     @Body() updateProfileDto: UpdateProfileDto,
   ): Promise<UserResDto> {
-    const user = await this.usersService.updateProfile(req.user['userId'], updateProfileDto);
+    const user = await this.usersService.updateProfile(
+      req.user['userId'],
+      updateProfileDto,
+    );
     return UserResDto.fromEntity(user);
   }
   // --------------------------------

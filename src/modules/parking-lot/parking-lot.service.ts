@@ -1,11 +1,11 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -20,6 +20,18 @@ import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
 import { UsersService } from '../users/users.service';
 import { ParkingSlot } from './entities/parking-slot.entity';
+import { WalkInDto } from './dto/walk-in.dto';
+import { User } from '../users/entities/user.entity';
+import { Profile } from '../users/entities/profile.entity';
+import { Vehicle } from '../vehicles/entities/vehicle.entity';
+
+export interface OcrSpaceResponse {
+  IsErroredOnProcessing: boolean;
+  ErrorMessage?: string[];
+  ParsedResults?: Array<{
+    ParsedText: string;
+  }>;
+}
 
 @Injectable()
 export class ParkingLotService {
@@ -35,6 +47,7 @@ export class ParkingLotService {
     private requestService: RequestService,
 
     private usersService: UsersService,
+    private dataSource: DataSource,
   ) {}
 
   async createParkingLot(createParkingLotDto: CreateParkingLotReqDto) {
@@ -47,7 +60,7 @@ export class ParkingLotService {
       available_slots:
         createParkingLotDto.availableSlots ?? createParkingLotDto.totalSlots,
       status: ParkingLotStatus.INACTIVE,
-      owner: { id: createParkingLotDto.ownerId } as any,
+      owner: { id: createParkingLotDto.ownerId } as User,
     });
 
     const savedParkingLot = await this.parkingLotRepository.save(parkingLot);
@@ -255,5 +268,144 @@ export class ParkingLotService {
         ownerRequest,
       },
     };
+  }
+
+  // ─── Extract License Plate (OCR) ───────────────────────────────────────────
+  async extractLicensePlate(file: Express.Multer.File): Promise<string> {
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    try {
+      const apiKey = String(process.env.OCR_API_KEY || 'K88596879988957');
+      const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+
+      const formData = new FormData();
+      formData.append('base64Image', base64Image);
+      formData.append('apikey', apiKey);
+      formData.append('language', 'eng');
+      formData.append('OCREngine', '2');
+
+      const response = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        body: formData as unknown as BodyInit,
+      });
+
+      const result = (await response.json()) as OcrSpaceResponse;
+
+      if (result.IsErroredOnProcessing) {
+        throw new BadRequestException(result.ErrorMessage?.[0] || 'OCR Error');
+      }
+
+      const parsedText = String(result.ParsedResults?.[0]?.ParsedText || '');
+      return parsedText.trim().replace(/\r?\n|\r/g, ' ');
+    } catch (error: unknown) {
+      console.error('OCR Error:', error);
+      throw new InternalServerErrorException('Failed to extract license plate');
+    }
+  }
+
+  // ─── Guest Check-in (Walk-in) ──────────────────────────────────────────────
+  async handleWalkIn(parkingLotId: number, dto: WalkInDto) {
+    const parkingLot = await this.parkingLotRepository.findOne({
+      where: { id: parkingLotId },
+    });
+
+    if (!parkingLot) {
+      throw new NotFoundException('Parking lot not found');
+    }
+
+    if (parkingLot.available_slots <= 0) {
+      throw new BadRequestException('Parking lot is full');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      let user = await queryRunner.manager
+        .createQueryBuilder(User, 'user')
+        .innerJoinAndSelect('user.profile', 'profile')
+        .where('profile.phone = :phone', { phone: dto.phoneNumber })
+        .getOne();
+
+      if (!user) {
+        const email = `guest_${dto.phoneNumber}@gopark.local`;
+        const randomPassword = Math.random().toString(36).slice(-8);
+
+        const newUser = queryRunner.manager.create(User, {
+          email,
+          password: randomPassword,
+          status: 'ACTIVE',
+        });
+        user = await queryRunner.manager.save(User, newUser);
+
+        const profile = queryRunner.manager.create(Profile, {
+          name: dto.name,
+          phone: dto.phoneNumber,
+          user: user,
+        });
+        await queryRunner.manager.save(Profile, profile);
+        user.profile = profile;
+      }
+
+      const standardizedPlate = dto.licensePlate
+        .toUpperCase()
+        .replace(/\W/g, '');
+
+      let vehicle = await queryRunner.manager.findOne(Vehicle, {
+        where: { plate_number: standardizedPlate },
+        relations: ['user'],
+      });
+
+      if (!vehicle) {
+        vehicle = queryRunner.manager.create(Vehicle, {
+          plate_number: standardizedPlate,
+          type: dto.vehicleType,
+          user: user,
+        });
+        vehicle = await queryRunner.manager.save(Vehicle, vehicle);
+      } else {
+        // Cập nhật lại user nếu xe đang thuộc về user khác
+        if (vehicle.user.id !== user.id) {
+          vehicle.user = user;
+          vehicle = await queryRunner.manager.save(Vehicle, vehicle);
+        }
+      }
+
+      const booking = queryRunner.manager.create(Booking, {
+        status: 'IN_PROGRESS',
+        start_time: new Date(),
+        end_time: new Date(), // Set temporary end_time
+        parkingLot: parkingLot,
+        user: user,
+        vehicle: vehicle,
+      });
+      await queryRunner.manager.save(Booking, booking);
+
+      parkingLot.available_slots -= 1;
+      await queryRunner.manager.save(ParkingLot, parkingLot);
+
+      await queryRunner.commitTransaction();
+
+      return {
+        message: 'Guest check-in successful',
+        bookingId: booking.id,
+      };
+    } catch (error: unknown) {
+      await queryRunner.rollbackTransaction();
+      console.error('Walk-in Error:', error);
+      if (error instanceof Error) {
+        throw new InternalServerErrorException(
+          error.message || 'Failed to process walk-in registration',
+        );
+      }
+      throw new InternalServerErrorException(
+        'Failed to process walk-in registration',
+      );
+    } finally {
+      await queryRunner.release();
+    }
   }
 }
