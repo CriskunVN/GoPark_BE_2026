@@ -11,7 +11,6 @@ export class RequestResDto {
   status: string;
   payload: Record<string, any>;
   description?: string;
-  note?: string;
   requesterId?: string;
   requester?: RequestRequesterResDto;
   createdAt: Date;
@@ -24,7 +23,6 @@ export class RequestResDto {
       status: request.status,
       payload: request.payload,
       description: request.description,
-      note: request.note,
       requesterId: request.requester?.id,
       requester: request.requester
         ? {

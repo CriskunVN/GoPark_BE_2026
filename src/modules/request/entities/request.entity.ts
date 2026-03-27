@@ -35,8 +35,13 @@ export class Request extends BaseEntity {
   description: string; // mô tả thêm về yêu cầu, có thể do người dùng nhập hoặc hệ thống tự sinh ra
 
   // Lưu lý do từ chối hoặc ghi chú của Admin
-  @Column({ type: 'text', nullable: true })
-  note: string;
+  @Column({ type: 'jsonb', nullable: true })
+  note: Array<{
+    action: 'APPROVED' | 'REJECTED' | 'PENDING';
+    approvedBy: string;
+    timestamp: Date;
+    reason?: string;
+  }>;
 
   @ManyToOne('User', (user: User) => user.requests, { onDelete: 'CASCADE' })
   requester: User;
