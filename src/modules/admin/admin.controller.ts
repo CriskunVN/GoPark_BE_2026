@@ -37,4 +37,43 @@ export class AdminController {
   updateStatusUser(@Param('id') id: string, @Body('status') status: string) {
     return this.adminService.blockUser(id, status);
   }
+
+  // Endpoint cho admin có thể xem tất cả yêu cầu đang chờ xử lý
+  @Get('requests')
+  @HttpCode(HttpStatus.OK)
+  findAllRequests(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('status') status?: string,
+  ) {
+    return this.adminService.findAllRequests(
+      Number(page),
+      Number(limit),
+      status,
+    );
+  }
+
+  // Admin duyệt yêu cầu
+  @Patch('requests/:id/approve')
+  async approveRequest(@Param('id') id: string) {
+    const result = await this.adminService.approveRequest(id, 'APPROVED');
+    return {
+      message: 'Yêu cầu đã được phê duyệt',
+      data: result,
+    };
+  }
+
+  // Admin từ chối yêu cầu
+  @Patch('requests/:id/reject')
+  async rejectRequest(@Param('id') id: string, @Body('reason') reason: string) {
+    const result = await this.adminService.rejectRequest(
+      id,
+      'REJECTED',
+      reason,
+    );
+    return {
+      message: 'Yêu cầu đã bị từ chối',
+      data: result,
+    };
+  }
 }

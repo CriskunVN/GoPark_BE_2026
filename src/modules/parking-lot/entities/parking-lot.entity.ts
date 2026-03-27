@@ -10,6 +10,16 @@ import type { ParkingSlot } from './parking-slot.entity';
 import type { User } from '../../users/entities/user.entity';
 import { ParkingFloor } from './parking-floor.entity';
 import { ParkingLotStatus } from 'src/common/enums/status.enum';
+import { Max, Min } from 'class-validator';
+
+type ParkingLotImages = {
+  thumbnail?: string; // ảnh đại diện
+  gallery?: string[]; // ảnh mô tả
+  documents?: Array<{
+    type: 'business_license' | 'parking_layout' | 'other';
+    url: string;
+  }>;
+};
 
 @Entity('parking_lots')
 export class ParkingLot {
@@ -33,6 +43,23 @@ export class ParkingLot {
 
   @Column()
   available_slots: number;
+
+  @Column({
+    type: 'decimal',
+    precision: 2,
+    scale: 1,
+    default: 0,
+  })
+  @Max(5, { message: 'Vote must be between 0 and 5' })
+  @Min(0, { message: 'Vote must be between 0 and 5' })
+  vote: number;
+
+  @Column({
+    type: 'jsonb',
+    nullable: true,
+    default: () => "'{}'::jsonb",
+  })
+  image: ParkingLotImages;
 
   @Column({
     type: 'enum',

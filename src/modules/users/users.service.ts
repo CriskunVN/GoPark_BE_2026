@@ -200,4 +200,16 @@ export class UsersService {
     }
     return this.findOne(userId);
   }
+
+  // =========== Lấy name bằng userId ================
+  async getNameByUserId(userId: string): Promise<string> {
+    const user = await this.usersRepository.findOne({
+      where: { id: userId },
+      relations: ['profile'],
+    });
+    if (!user) {
+      throw new NotFoundException(`Không tìm thấy người dùng với ID ${userId}`);
+    }
+    return user.profile?.name || 'Tên không có';
+  }
 }
