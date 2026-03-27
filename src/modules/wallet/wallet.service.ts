@@ -1,0 +1,302 @@
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { Wallet } from './entities/wallet.entity';
+import { WalletTransaction } from './entities/wallet-transaction.entity';
+import { TransactionType } from './enums/transaction-type.enum';
+import { TransactionStatus } from './enums/transaction-status.enum';
+
+@Injectable()
+export class WalletService {
+  constructor(
+    @InjectRepository(Wallet)
+    private readonly walletRepository: Repository<Wallet>,
+    @InjectRepository(WalletTransaction)
+    private readonly transactionRepository: Repository<WalletTransaction>,
+    private readonly dataSource: DataSource,
+  ) {}
+
+  /**
+   * Lấy thông tin ví theo ID người dùng
+   */
+  async getWalletByUserId(userId: string): Promise<Wallet> {
+    const wallet = await this.walletRepository.findOne({
+      where: { user_id: userId },
+    });
+    if (!wallet) {
+      throw new BadRequestException('Không tìm thấy ví cho người dùng này');
+    }
+    return wallet;
+  }
+
+  /**
+   * Khởi tạo ví mới (Thường gọi khi đăng ký tài khoản thành công)
+   */
+  async createWallet(userId: string): Promise<Wallet> {
+    const newWallet = this.walletRepository.create({ user_id: userId });
+    return this.walletRepository.save(newWallet);
+  }
+
+  /**
+   * Xử lý thanh toán (Trừ tiền ví Khách hàng, chuyển sang ví Chủ bãi)
+   */
+  async processPayment(
+    customerId: string,
+    ownerId: string,
+    amount: number,
+    bookingId: string,
+  ): Promise<boolean> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+
+    // Bắt đầu database transaction (để đảm bảo không thất thoát tiền)
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Khóa bảng dữ liệu ví Khách hàng để tránh xung đột (race conditions)
+      // Ép kiểu ::uuid bằng cast chuẩn trong PostgreSQL để tránh lỗi string_to_uuid
+      const customerWallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId: customerId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!customerWallet) {
+        throw new BadRequestException('Không tìm thấy ví Khách hàng');
+      }
+
+      if (Number(customerWallet.balance) < amount) {
+        throw new BadRequestException('Số dư không đủ để thanh toán');
+      }
+
+      // 2. Khóa bảng dữ liệu ví Chủ bãi
+      const ownerWallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId: ownerId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!ownerWallet) {
+        throw new BadRequestException('Không tìm thấy ví Chủ bãi');
+      }
+
+      // 3. Trừ tiền Khách hàng
+      const customerBalanceBefore = Number(customerWallet.balance);
+      customerWallet.balance = customerBalanceBefore - amount;
+      await queryRunner.manager.save(customerWallet);
+
+      // Ghi lại lịch sử giao dịch Khách hàng
+      const customerTx = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: customerWallet.id,
+        amount: -amount, // Khách hàng bị trừ tiền
+        balance_before: customerBalanceBefore,
+        balance_after: customerWallet.balance,
+        type: TransactionType.PAYMENT,
+        status: TransactionStatus.SUCCESS,
+        ref_type: 'BOOKING',
+        ref_id: bookingId,
+      });
+      await queryRunner.manager.save(customerTx);
+
+      // 4. Cộng tiền cho Chủ bãi
+      const ownerBalanceBefore = Number(ownerWallet.balance);
+      ownerWallet.balance = ownerBalanceBefore + amount;
+      await queryRunner.manager.save(ownerWallet);
+
+      // Ghi lại lịch sử giao dịch Chủ bãi
+      const ownerTx = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: ownerWallet.id,
+        amount: amount, // Chủ bãi được cộng tiền
+        balance_before: ownerBalanceBefore,
+        balance_after: ownerWallet.balance,
+        type: TransactionType.EARN_PARKING_FEE,
+        status: TransactionStatus.SUCCESS,
+        ref_type: 'BOOKING',
+        ref_id: bookingId,
+      });
+      await queryRunner.manager.save(ownerTx);
+
+      // Lưu toàn bộ phiên giao dịch nếu mọi thứ thành công
+      await queryRunner.commitTransaction();
+      return true;
+    } catch (error) {
+      // Hoàn tác trả lại tiền nếu có bất kỳ lỗi gì
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      // Giải phóng bộ nhớ kết nối database
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Nạp tiền vào ví người dùng (Thường gọi qua Callback/IPN của VNPay, Momo)
+   */
+  async deposit(
+    userId: string,
+    amount: number,
+    refId: string,
+  ): Promise<WalletTransaction> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Khóa bảng dữ liệu ví (chống nạp liên tục / trùng gói)
+      // Ép chuẩn ::uuid
+      const wallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!wallet)
+        throw new BadRequestException('Không tìm thấy ví cho người dùng này');
+
+      // 2. Cập nhật số dư
+      const balanceBefore = Number(wallet.balance);
+      const balanceAfter = balanceBefore + amount;
+      wallet.balance = balanceAfter;
+      await queryRunner.manager.save(wallet);
+
+      // 3. Ghi lại lịch sử
+      const transaction = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: wallet.id,
+        amount: amount,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        type: TransactionType.DEPOSIT,
+        status: TransactionStatus.SUCCESS,
+        ref_type: 'VNPAY', // Hoặc loại cổng bạn dùng
+        ref_id: refId,
+      });
+      const savedTx = await queryRunner.manager.save(transaction);
+
+      await queryRunner.commitTransaction();
+      return savedTx;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Rút tiền từ ví (Thường dành cho Chủ bãi rút doanh thu về Ngân hàng)
+   */
+  async withdraw(
+    userId: string,
+    amount: number,
+    refId: string,
+  ): Promise<WalletTransaction> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Khóa dữ liệu ví
+      const wallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!wallet)
+        throw new BadRequestException('Không tìm thấy ví cho người dùng này');
+
+      const balanceBefore = Number(wallet.balance);
+      if (balanceBefore < amount) {
+        throw new BadRequestException(
+          'Số dư chưa đủ để thực hiện yêu cầu rút tiền',
+        );
+      }
+
+      // 2. Trừ tiền đóng băng (chờ admin duyệt)
+      const balanceAfter = balanceBefore - amount;
+      wallet.balance = balanceAfter;
+      await queryRunner.manager.save(wallet);
+
+      // 3. Ghi nhận giao dịch rút tiền (PENDING - Chờ xử lý)
+      const transaction = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: wallet.id,
+        amount: -amount,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        type: TransactionType.WITHDRAW,
+        status: TransactionStatus.PENDING, // Chờ Admin kiểm tra và chuyển khoản
+        ref_type: 'BANK_TRANSFER',
+        ref_id: refId,
+      });
+      const savedTx = await queryRunner.manager.save(transaction);
+
+      await queryRunner.commitTransaction();
+      return savedTx;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Hoàn tiền cho Khách Hàng (Khi hủy lịch đỗ xe)
+   */
+  async refund(
+    userId: string,
+    amount: number,
+    bookingId: string,
+  ): Promise<WalletTransaction> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Khóa dữ liệu ví Khách hàng
+      const wallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!wallet) throw new BadRequestException('Không tìm thấy ví');
+
+      const balanceBefore = Number(wallet.balance);
+      wallet.balance = balanceBefore + amount;
+      await queryRunner.manager.save(wallet);
+
+      // 2. Ghi lại lịch sử hoàn tiền
+      const transaction = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: wallet.id,
+        amount: amount,
+        balance_before: balanceBefore,
+        balance_after: wallet.balance,
+        type: TransactionType.REFUND,
+        status: TransactionStatus.SUCCESS,
+        ref_type: 'BOOKING',
+        ref_id: bookingId,
+      });
+      const savedTx = await queryRunner.manager.save(transaction);
+
+      await queryRunner.commitTransaction();
+      return savedTx;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Lấy lịch sử biến động số dư của ví
+   */
+  async getTransactions(userId: string): Promise<WalletTransaction[]> {
+    const wallet = await this.getWalletByUserId(userId);
+    return this.transactionRepository.find({
+      where: { wallet_id: wallet.id },
+      order: { created_at: 'DESC' },
+    });
+  }
+}

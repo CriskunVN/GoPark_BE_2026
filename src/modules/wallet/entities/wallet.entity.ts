@@ -6,23 +6,31 @@ import {
   OneToMany,
   JoinColumn,
   CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import type { User } from '../../users/entities/user.entity';
-import type { WalletTransaction } from './wallet-transaction.entity';
+import { User } from '../../users/entities/user.entity';
+import { WalletTransaction } from './wallet-transaction.entity';
+import { WalletStatus } from '../enums/wallet-status.enum';
 
 @Entity('wallets')
 export class Wallet {
-  @PrimaryGeneratedColumn()
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   balance: number;
 
-  @Column({ default: 'ACTIVE' })
-  status: string;
+  @Column({ type: 'enum', enum: WalletStatus, default: WalletStatus.ACTIVE })
+  status: WalletStatus;
+
+  @Column({ name: 'user_id', type: 'uuid', nullable: true })
+  user_id: string;
 
   @CreateDateColumn()
   created_at: Date;
+
+  @UpdateDateColumn()
+  updated_at: Date;
 
   @OneToOne('User', (user: User) => user.wallet, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
