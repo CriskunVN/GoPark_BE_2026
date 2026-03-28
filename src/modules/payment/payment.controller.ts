@@ -1,0 +1,86 @@
+import { Controller, Post, Body, Req, Get, Query, Res, HttpStatus } from '@nestjs/common';
+import { VnpayService } from './vnpay.service';
+import { WalletService } from '../wallet/wallet.service';
+import type { Response } from 'express';
+
+@Controller('payment')
+export class PaymentController {
+  constructor(
+    private readonly vnpayService: VnpayService,
+    private readonly walletService: WalletService
+  ) {}
+
+  // API 1: Tạo link VNPAY cho Frontend
+  @Post('vnpay/create-url')
+  createPaymentUrl(@Req() req: any, @Body() body: { amount: number, userId: string }) {
+    // VNPAY thường báo lỗi định dạng nếu IP là ::1, nên ở local ta fix cứng IPv4
+    const ipAddr = '127.0.0.1'; 
+    
+    // Validate số tiền
+    if (!body.amount || body.amount < 10000) {
+      return { success: false, message: 'Số tiền tối thiểu là 10,000 VND' };
+    }
+
+    const userId = body.userId || req.user?.id; 
+    
+    // Xoá khoảng trắng để VNPAY không báo lỗi định dạng
+    const orderInfo = `NapTien_${userId}`;
+    
+    const url = this.vnpayService.createPaymentUrl(body.amount, ipAddr, orderInfo, userId);
+    return { success: true, url };
+  }
+
+  // API 2: VNPAY gọi về ngầm để cập nhật tiền (Webhook / IPN)
+  @Get('vnpay/ipn')
+  async vnpayIpn(@Query() query: any) {
+    console.log('--- VNPAY IPN Called ---');
+    console.log(query);
+
+    const verifyResult = this.vnpayService.verifyIpn(query);
+    
+    if (verifyResult.isSuccess) {
+      if (verifyResult.code === '00') {
+        try {
+          const orderInfo = query['vnp_OrderInfo'];
+          // Bóc tách lại userId (vì đã bỏ khoảng trắng)
+          const matched = orderInfo.match(/NapTien_([\w-]+)/);
+          const userId = matched ? matched[1] : null;
+          const amount = parseInt(query['vnp_Amount']) / 100; // VNPAY trả về x100, chia 100 bằng số tiền gốc
+
+          if (userId) {
+            const refId = query['vnp_TxnRef']; // Mã giao dịch của VNPay
+            
+            // Xử lý nạp tiền vào ví
+            await this.walletService.deposit(userId, amount, `VNPAY_${refId}`);
+            return { RspCode: '00', Message: 'Confirm Success' };
+          } else {
+            return { RspCode: '04', Message: 'Order not found / UserId missing' };
+          }
+        } catch (error) {
+          console.error('Lỗi khi nạp tiền:', error);
+          return { RspCode: '99', Message: 'Unknown error' };
+        }
+      } else {
+        // Code !== 00 tức là thất bại
+        return { RspCode: '00', Message: 'Confirm Success (Failed Transaction)' };
+      }
+    } else {
+      return { RspCode: '97', Message: 'Invalid Checksum' };
+    }
+  }
+
+  // API 3: URL để Frontend hiển thị kết quả về UI (Redirection URL)
+  @Get('vnpay/return')
+  vnpayReturn(@Query() query: any) {
+    const verifyResult = this.vnpayService.verifyIpn(query);
+    if (verifyResult.isSuccess) {
+      if (verifyResult.code === '00') {
+        return { success: true, message: 'Giao dịch thành công', data: query };
+      } else {
+        return { success: false, message: 'Giao dịch thất bại', data: query };
+      }
+    } else {
+      return { success: false, message: 'Chữ ký không hợp lệ', data: query };
+    }
+  }
+}
