@@ -17,9 +17,6 @@ export class ParkingSlot {
   code: string;
 
   @Column()
-  type: string;
-
-  @Column()
   status: string; // available, occupied, reserved
 
   @ManyToOne(

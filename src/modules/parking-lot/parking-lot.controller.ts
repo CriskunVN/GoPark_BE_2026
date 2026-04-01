@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -23,6 +24,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
 import { WalkInDto } from './dto/walk-in.dto';
+import { CreateFloorDto } from './dto/create-floor.dto';
+import { CreateZoneDto } from './dto/create-zone.dto';
+import { UpdateZoneDto } from './dto/update-zone.dto';
 
 // chia vung ra roi thay nghe
 
@@ -88,5 +92,31 @@ export class ParkingLotController {
     @Body() dto: WalkInDto,
   ) {
     return await this.parkingLotService.handleWalkIn(parkingLotId, dto);
+  }
+
+  // ─── Customization Endpoints (Floors & Zones) ─────────────────────────────
+
+  @Post(':parkingLotId/floors')
+  async createFloor(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: CreateFloorDto,
+  ) {
+    return await this.parkingLotService.createFloor(parkingLotId, dto);
+  }
+
+  @Post('floors/:floorId/zones')
+  async createZone(
+    @Param('floorId', ParseIntPipe) floorId: number,
+    @Body() dto: CreateZoneDto,
+  ) {
+    return await this.parkingLotService.createZone(floorId, dto);
+  }
+
+  @Patch('zones/:zoneId')
+  async updateZone(
+    @Param('zoneId', ParseIntPipe) zoneId: number,
+    @Body() dto: UpdateZoneDto,
+  ) {
+    return await this.parkingLotService.updateZone(zoneId, dto);
   }
 }

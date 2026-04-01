@@ -85,7 +85,6 @@ export class BookingService {
       select: {
         vehicle: {
           plate_number: true,
-          type: true,
         },
         user: {
           id: true,
@@ -132,7 +131,6 @@ export class BookingService {
           },
           vehicle: {
             plate_number: true,
-            type: true,
           },
           parkingLot: {
             name: true,
