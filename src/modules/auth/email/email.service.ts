@@ -9,6 +9,8 @@ import {
   getResetPasswordEmailTemplate,
   getResetPasswordEmailTextTemplate,
 } from './template/resetPassword-email.template';
+import { getBookingQREmailTemplate } from './template/bookingQR-email.template';
+import * as QRCode from 'qrcode';
 
 @Injectable()
 export class EmailService {
@@ -19,7 +21,7 @@ export class EmailService {
     this.resend = new Resend(this.configService.get('RESEND_API_KEY'));
   }
 
-  async sendEmail(to: string, subject: string, html: string, text?: string) {
+  async sendEmail(to: string, subject: string, html: string, text?: string, attachments?: any[]) {
     try {
       const from = this.configService.get<string>('EMAIL_FROM');
       const senderName =
@@ -30,6 +32,7 @@ export class EmailService {
         subject,
         html,
         text,
+        attachments,
       });
       console.log('Gửi email thành công: ' + to);
     } catch (error) {
@@ -69,4 +72,33 @@ export class EmailService {
       getResetPasswordEmailTextTemplate(resetLink),
     );
   }
+
+  // send QR
+  async sendBookingQREmail(to: string, userName: string, bookingData: any) {
+
+    console.log('Dữ liệu qrContent nhận được:', bookingData.qrContent);
+    console.log(bookingData)
+    const logoUrl = this.configService.get<string>('EMAIL_LOGO_URL') || '';
+    
+    // Encode chuỗi nội dung để đảm bảo chuỗi không làm hỏng cú pháp URL
+    const encodedQRContent = encodeURIComponent(bookingData.qrContent);
+    // Sử dụng API tạo ảnh QR. ecc=H tương đương với Error Correction Level 'H'
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodedQRContent}&ecc=H`;
+
+    const html = getBookingQREmailTemplate (
+      userName,
+      qrImageUrl, // Truyền trực tiếp Link URL hình ảnh vào đây
+      bookingData.parkingLot,
+      bookingData.startTime,
+      bookingData.endTime || 'N/A',
+      bookingData.code,
+      bookingData.floor_number,
+      bookingData.floor_zone,
+      logoUrl
+    );
+
+    // Ở frontend gửi qua, nếu thích bảo mật bạn có thể dùng API đệm, nhưng mã QR định danh thường có thể truyền trực tiếp
+    await this.sendEmail(to, '[GoPark] Vé QR của bạn', html);
+  }
+
 }

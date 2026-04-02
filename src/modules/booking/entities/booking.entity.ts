@@ -14,6 +14,7 @@ import type { ParkingSlot } from '../../parking-lot/entities/parking-slot.entity
 import type { QRCode } from './qr-code.entity';
 import type { Payment } from '../../payment/entities/payment.entity';
 import type { Invoice } from '../../payment/entities/invoice.entity';
+import { CheckLog } from './check-log.entity';
 
 @Entity('bookings')
 export class Booking {
@@ -52,4 +53,7 @@ export class Booking {
 
   @OneToMany('Invoice', (invoice: Invoice) => invoice.booking)
   invoice: Invoice[];
+
+  @OneToMany('CheckLog', (checkout : CheckLog) => checkout.booking)
+  checkout: CheckLog[];
 }

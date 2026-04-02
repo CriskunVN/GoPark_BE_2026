@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Booking } from './entities/booking.entity';
 import { QRCode } from './entities/qr-code.entity';
@@ -7,6 +7,9 @@ import { BookingService } from './booking.service';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 import { ParkingFloor } from '../parking-lot/entities/parking-floor.entity';
 import { ParkingZone } from '../parking-lot/entities/parking-zone.entity';
+import { CheckLog } from './entities/check-log.entity';
+import { AuthModule } from '../auth/auth.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
@@ -16,10 +19,13 @@ import { ParkingZone } from '../parking-lot/entities/parking-zone.entity';
       ParkingSlot,
       ParkingFloor,
       ParkingZone,
+      CheckLog,
     ]),
+      AuthModule,
+      forwardRef(() => WalletModule),
   ],
   controllers: [BookingController],
   providers: [BookingService],
-  exports: [TypeOrmModule],
+  exports: [TypeOrmModule,BookingService],
 })
 export class BookingModule {}

@@ -11,6 +11,8 @@ import type { User } from '../../users/entities/user.entity';
 import { ParkingFloor } from './parking-floor.entity';
 import { ParkingLotStatus } from 'src/common/enums/status.enum';
 import { Max, Min } from 'class-validator';
+import { PricingRule } from 'src/modules/payment/entities/pricingrule.entity';
+import { Booking } from 'src/modules/booking/entities/booking.entity';
 
 type ParkingLotImages = {
   thumbnail?: string; // ảnh đại diện
@@ -43,6 +45,12 @@ export class ParkingLot {
 
   @Column()
   available_slots: number;
+
+  @Column({nullable: true})
+  description?: string;
+
+  @Column({type: 'timestamp', nullable: true})
+  activity_time?: Date;
 
   @Column({
     type: 'decimal',
@@ -77,4 +85,10 @@ export class ParkingLot {
 
   @OneToMany('ParkingFloor', (floor: ParkingFloor) => floor.parkingLot)
   parkingFloor: ParkingFloor[];
+
+  @OneToMany ('PricingRule',(pricingRule : PricingRule) => pricingRule.parkingLot)
+  pricingRule: PricingRule[];
+
+  @OneToMany('Booking',(booking : Booking) => booking.parkingLot)
+  booking: Booking[];
 }

@@ -1,11 +1,12 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, forwardRef, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Wallet } from './entities/wallet.entity';
 import { WalletTransaction } from './entities/wallet-transaction.entity';
 import { TransactionType } from './enums/transaction-type.enum';
 import { TransactionStatus } from './enums/transaction-status.enum';
-
+import { Booking } from '../booking/entities/booking.entity';
+import { BookingService } from '../booking/booking.service';
 @Injectable()
 export class WalletService {
   constructor(
@@ -14,6 +15,8 @@ export class WalletService {
     @InjectRepository(WalletTransaction)
     private readonly transactionRepository: Repository<WalletTransaction>,
     private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => BookingService)) 
+    private readonly bookingService: BookingService,
   ) {}
 
   /**
@@ -116,8 +119,20 @@ export class WalletService {
       });
       await queryRunner.manager.save(ownerTx);
 
+      
+      // Cập nhật trạng thái Booking sang 'confirmed'
+      await queryRunner.manager.update(Booking, bookingId, {
+        status: 'confirmed',
+      });
+
       // Lưu toàn bộ phiên giao dịch nếu mọi thứ thành công
       await queryRunner.commitTransaction();
+
+      // Gửi Email (Gọi sau khi commit thành công)
+      this.bookingService.sendEmail(Number(bookingId)).catch((err) => {
+        console.error('Lỗi gửi email sau khi thanh toán:', err);
+      });
+
       return true;
     } catch (error) {
       // Hoàn tác trả lại tiền nếu có bất kỳ lỗi gì
@@ -136,6 +151,7 @@ export class WalletService {
     userId: string,
     amount: number,
     refId: string,
+    
   ): Promise<WalletTransaction> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -230,7 +246,10 @@ export class WalletService {
       });
       const savedTx = await queryRunner.manager.save(transaction);
 
+
       await queryRunner.commitTransaction();
+
+
       return savedTx;
     } catch (error) {
       await queryRunner.rollbackTransaction();

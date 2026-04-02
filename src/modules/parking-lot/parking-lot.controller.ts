@@ -60,6 +60,15 @@ export class ParkingLotController {
     return this.parkingLotService.getUsersByParkingLot(parkingLotId, search);
   }
 
+
+  //get bãi đỗ
+  @UseGuards(JwtAuthGuard)
+  @Get('map/:lotid')
+  async getMapBooing(@Param('lotid') lotid : number,@Req() req : any) {
+    const userId = req.user['userId'];
+    return this.parkingLotService.getMapForBooking(lotid,userId);
+  }
+
   // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
   @Post()
   async createParkingLot(@Body() createParkingLotDto: CreateParkingLotReqDto) {

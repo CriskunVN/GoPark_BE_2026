@@ -15,7 +15,7 @@ export class Vehicle {
   @Column()
   plate_number: string;
 
-  @Column()
+  @Column({ nullable: true })
   type: string;
 
   @Column({ type: 'text', nullable: true })
