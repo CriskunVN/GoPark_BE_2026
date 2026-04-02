@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { NotificationService } from './notification.service';
 import { NotificationQueueService } from './jobs/notification-queue.service';
@@ -35,18 +35,6 @@ export class AdminNotificationController {
   @Get()
   findAll() {
     return this.notificationService.findAll();
-  }
-
-  // ----------- Xem tiến trình + thời gian xử lý của job ----------
-  @Get('jobs/:jobId/timing')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  async getJobTiming(@Param('jobId') jobId: string) {
-    const data = await this.notificationQueueService.getJobTiming(jobId);
-    return {
-      message: 'Lấy thông tin tiến trình job thành công',
-      data,
-    };
   }
 
   // ----------- Gửi thông báo đến một hoặc một vài người dùng ----------
