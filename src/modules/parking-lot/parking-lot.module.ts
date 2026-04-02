@@ -10,6 +10,7 @@ import { ParkingLotController } from './parking-lot.controller';
 import { ParkingLotService } from './parking-lot.service';
 import { RequestModule } from '../request/request.module';
 import { UsersModule } from '../users/users.module';
+import { Vehicle } from '../vehicles/entities/vehicle.entity';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { UsersModule } from '../users/users.module';
       Booking,
       ParkingZone,
       ParkingFloor,
+      Vehicle
     ]),
     RequestModule,
     UsersModule,

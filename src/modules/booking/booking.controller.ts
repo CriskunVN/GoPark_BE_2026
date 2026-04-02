@@ -14,44 +14,42 @@ import { CreateQrcodeDto } from './dto/createQR.dto';
 
 @Controller('booking')
 export class BookingController {
-  constructor(private readonly bookingServer: BookingService) {}
+    constructor(private readonly bookingService:BookingService){}
+    //Booking
+    @Get()
+    find(){
+        return this.bookingService.getAllBooking();
+    }
 
-  //Booking
-  @Get()
-  find() {
-    return this.bookingServer.getAllBooking();
-  }
+    @Get('user/:id')
+    findByUser(@Param('id') userid:string){
+        console.log("User ID:", userid);
+        return this.bookingService.getBookingByUser(userid)
+    }
 
-  @Get('user/:id')
-  findByUser(@Param('id') userid: string) {
-    console.log('User ID:', userid);
-    return this.bookingServer.getBookingByUser(userid);
-  }
+    @Post()
+    create(@Body() bookingdto:CreateBookingDto){
+        return this.bookingService.createBooking(bookingdto)
+    }
 
-  @Post()
-  create(@Body() bookingdto: CreateBookingDto) {
-    return this.bookingServer.createBooking(bookingdto);
-  }
+    @Post('scan')
+    async handleScan(@Body() data: { content: string; gateId: number }) {
+    return await this.bookingService.scanQRCode(data.content, data.gateId);
+    }
 
-  @Put(':id')
-  update(@Param('id') id: number, @Body() bookingdto: CreateBookingDto) {
-    return this.bookingServer.updateBooking(id, bookingdto);
-  }
+    @Put(':id')
+    update(@Param('id') id:number,@Body() bookingdto:CreateBookingDto){
+        return this.bookingService.updateBooking(id,bookingdto)
+    }
 
-  @Delete(':id')
-  delete(@Param('id') id: number) {
-    return this.bookingServer.deleteBooking(id);
-  }
-
-  //QRcode
-
-  @Get('qrcode')
-  findQRcode() {
-    return this.bookingServer.getAllQRcode();
-  }
-
-  @Post('qrcode')
-  createQRcode(@Body() qrcodedto: CreateQrcodeDto) {
-    return this.bookingServer.createQRcode(qrcodedto);
-  }
+    @Delete(':id')
+    delete(@Param('id') id:number){
+        return this.bookingService.deleteBooking(id)
+    }
+    
+    //send QR email
+    @Post(':id/send-qr-email')
+    async sendQREmail(@Param('id') id: number) {
+    return this.bookingService.sendEmail(id);
+    }
 }

@@ -6,8 +6,9 @@ import {
   OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { ParkingSlot } from './parking-slot.entity';
-import { ParkingFloor } from './parking-floor.entity';
+import { ParkingSlot } from 'src/modules/parking/entities/parking-slot.entity';
+import { ParkingFloor } from 'src/modules/parking/entities/parking-floor.entity';
+import { PricingRule } from 'src/modules/payment/entities/pricingrule.entity';
 
 @Entity('parking_zones')
 export class ParkingZone {
@@ -32,4 +33,7 @@ export class ParkingZone {
     (parkingSlot: ParkingSlot) => parkingSlot.parkingZone,
   )
   slot: ParkingSlot[];
+
+  @OneToMany('PricingRule', (pricingRule : PricingRule) => pricingRule.parkingZone)
+  pricingRule: PricingRule[];
 }

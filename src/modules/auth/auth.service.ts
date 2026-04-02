@@ -34,7 +34,7 @@ export class AuthService {
         { sub: userId, email, roles }, // Thêm roles vào payload
         {
           secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
-          expiresIn: '15m', // thời gian  của access token.
+          expiresIn: '2h', // thời gian  của access token.
         },
       ),
       this.jwtService.signAsync(

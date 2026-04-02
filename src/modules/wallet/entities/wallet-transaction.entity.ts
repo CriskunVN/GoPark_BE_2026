@@ -25,7 +25,7 @@ export class WalletTransaction {
   @Column({ type: 'decimal', precision: 15, scale: 2 })
   balance_after: number;
 
-  @Column({ type: 'enum', enum: TransactionType })
+  @Column({ type: 'enum', enum: TransactionType, nullable: true  })
   type: TransactionType;
 
   @Column({
@@ -47,7 +47,7 @@ export class WalletTransaction {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @Column({ name: 'wallet_id', type: 'uuid' })
+  @Column({ name: 'wallet_id', type: 'uuid' , nullable: true,})
   wallet_id: string;
 
   @ManyToOne(() => Wallet, (wallet) => wallet.transactions)
