@@ -1,4 +1,13 @@
-import { Controller, Post, Body, Req, Get, Query, Res, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Req,
+  Get,
+  Query,
+  Res,
+  HttpStatus,
+} from '@nestjs/common';
 import { VnpayService } from './vnpay.service';
 import { WalletService } from '../wallet/wallet.service';
 import type { Response } from 'express';
@@ -7,26 +16,34 @@ import type { Response } from 'express';
 export class PaymentController {
   constructor(
     private readonly vnpayService: VnpayService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
   ) {}
 
   // API 1: Tạo link VNPAY cho Frontend
   @Post('vnpay/create-url')
-  createPaymentUrl(@Req() req: any, @Body() body: { amount: number, userId: string }) {
+  createPaymentUrl(
+    @Req() req: any,
+    @Body() body: { amount: number; userId: string },
+  ) {
     // VNPAY thường báo lỗi định dạng nếu IP là ::1, nên ở local ta fix cứng IPv4
-    const ipAddr = '127.0.0.1'; 
-    
+    const ipAddr = '127.0.0.1';
+
     // Validate số tiền
     if (!body.amount || body.amount < 10000) {
       return { success: false, message: 'Số tiền tối thiểu là 10,000 VND' };
     }
 
-    const userId = body.userId || req.user?.id; 
-    
+    const userId = body.userId || req.user?.id;
+
     // Xoá khoảng trắng để VNPAY không báo lỗi định dạng
     const orderInfo = `NapTien_${userId}`;
-    
-    const url = this.vnpayService.createPaymentUrl(body.amount, ipAddr, orderInfo, userId);
+
+    const url = this.vnpayService.createPaymentUrl(
+      body.amount,
+      ipAddr,
+      orderInfo,
+      userId,
+    );
     return { success: true, url };
   }
 
@@ -37,7 +54,7 @@ export class PaymentController {
     console.log(query);
 
     const verifyResult = this.vnpayService.verifyIpn(query);
-    
+
     if (verifyResult.isSuccess) {
       if (verifyResult.code === '00') {
         try {
@@ -49,12 +66,15 @@ export class PaymentController {
 
           if (userId) {
             const refId = query['vnp_TxnRef']; // Mã giao dịch của VNPay
-            
+
             // Xử lý nạp tiền vào ví
             await this.walletService.deposit(userId, amount, `VNPAY_${refId}`);
             return { RspCode: '00', Message: 'Confirm Success' };
           } else {
-            return { RspCode: '04', Message: 'Order not found / UserId missing' };
+            return {
+              RspCode: '04',
+              Message: 'Order not found / UserId missing',
+            };
           }
         } catch (error) {
           console.error('Lỗi khi nạp tiền:', error);
@@ -62,7 +82,10 @@ export class PaymentController {
         }
       } else {
         // Code !== 00 tức là thất bại
-        return { RspCode: '00', Message: 'Confirm Success (Failed Transaction)' };
+        return {
+          RspCode: '00',
+          Message: 'Confirm Success (Failed Transaction)',
+        };
       }
     } else {
       return { RspCode: '97', Message: 'Invalid Checksum' };

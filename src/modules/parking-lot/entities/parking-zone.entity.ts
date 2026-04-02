@@ -20,7 +20,10 @@ export class ParkingZone {
   @Column({ type: 'text', nullable: true })
   description: string;
 
-  @Column({ type: 'timestamp' })
+  @Column({ default: 0 })
+  total_slots: number;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 
   @ManyToOne('ParkingFloor', (floor: ParkingFloor) => floor.parkingZone)

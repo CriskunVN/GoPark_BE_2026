@@ -1,4 +1,4 @@
-﻿import { User } from '../entities/user.entity';
+import { User } from '../entities/user.entity';
 
 export class UserProfileResDto {
   id: number;
@@ -11,7 +11,6 @@ export class UserProfileResDto {
 export class VehicleResDto {
   id: number;
   plate_number: string;
-  type: string;
   image: string;
 }
 
@@ -49,7 +48,6 @@ export class UserResDto {
         ? user.vehicles.map((v) => ({
             id: v.id,
             plate_number: v.plate_number,
-            type: v.type,
             image: v.image,
           }))
         : [],

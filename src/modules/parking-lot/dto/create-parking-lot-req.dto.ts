@@ -26,9 +26,10 @@ export class CreateParkingLotReqDto {
   lng: number;
 
   @Type(() => Number)
+  @IsOptional()
   @IsNumber()
-  @Min(1)
-  totalSlots: number;
+  @Min(0)
+  totalSlots?: number;
 
   @Type(() => Number)
   @IsOptional()

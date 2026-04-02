@@ -1,4 +1,3 @@
-import { text } from 'stream/consumers';
 import {
   Column,
   Entity,
@@ -24,7 +23,10 @@ export class ParkingFloor {
   @Column({ type: 'text', nullable: true })
   description: string;
 
-  @Column({ type: 'timestamp' })
+  @Column({ default: 0 })
+  total_slots: number;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 
   @OneToMany('ParkingZone', (zone: ParkingZone) => zone.parkingFloor)
