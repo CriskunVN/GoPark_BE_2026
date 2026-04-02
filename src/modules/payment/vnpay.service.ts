@@ -10,11 +10,28 @@ export class VnpayService {
 
   constructor(private configService: ConfigService) {}
 
-  createPaymentUrl(amount: number, ipAddr: string, orderInfo: string, userId: string): string {
-    const tmnCode = process.env.VNPAY_TMNCODE || this.configService.get<string>('VNPAY_TMNCODE') || '';
-    const secretKey = process.env.VNPAY_HASHSECRET || this.configService.get<string>('VNPAY_HASHSECRET') || '';
-    let vnpUrl = process.env.VNPAY_URL || this.configService.get<string>('VNPAY_URL') || '';
-    const returnUrl = process.env.VNPAY_RETURN_URL || this.configService.get<string>('VNPAY_RETURN_URL') || '';
+  createPaymentUrl(
+    amount: number,
+    ipAddr: string,
+    orderInfo: string,
+    userId: string,
+  ): string {
+    const tmnCode =
+      process.env.VNPAY_TMNCODE ||
+      this.configService.get<string>('VNPAY_TMNCODE') ||
+      '';
+    const secretKey =
+      process.env.VNPAY_HASHSECRET ||
+      this.configService.get<string>('VNPAY_HASHSECRET') ||
+      '';
+    let vnpUrl =
+      process.env.VNPAY_URL ||
+      this.configService.get<string>('VNPAY_URL') ||
+      '';
+    const returnUrl =
+      process.env.VNPAY_RETURN_URL ||
+      this.configService.get<string>('VNPAY_RETURN_URL') ||
+      '';
 
     const date = new Date();
     const createDate = moment(date).format('YYYYMMDDHHmmss');
@@ -48,13 +65,16 @@ export class VnpayService {
     this.logger.log(`signData: ${signData}`);
     this.logger.log(`signed: ${signed}`);
     this.logger.log(`vnpUrl: ${vnpUrl}`);
-    
+
     return vnpUrl;
   }
 
   verifyIpn(vnp_Params: any): any {
-    let secureHash = vnp_Params['vnp_SecureHash'];
-    const secretKey = process.env.VNPAY_HASHSECRET || this.configService.get<string>('VNPAY_HASHSECRET') || '';
+    const secureHash = vnp_Params['vnp_SecureHash'];
+    const secretKey =
+      process.env.VNPAY_HASHSECRET ||
+      this.configService.get<string>('VNPAY_HASHSECRET') ||
+      '';
 
     delete vnp_Params['vnp_SecureHash'];
     delete vnp_Params['vnp_SecureHashType'];
@@ -65,15 +85,20 @@ export class VnpayService {
     const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
 
     if (secureHash === signed) {
-      return { isSuccess: true, code: vnp_Params['vnp_ResponseCode'], message: 'success', vnp_Params };
+      return {
+        isSuccess: true,
+        code: vnp_Params['vnp_ResponseCode'],
+        message: 'success',
+        vnp_Params,
+      };
     } else {
       return { isSuccess: false, code: '97', message: 'Fail checksum' };
     }
   }
 
   private sortObject(obj: any): any {
-    let sorted: any = {};
-    let str: string[] = [];
+    const sorted: any = {};
+    const str: string[] = [];
     let key;
     for (key in obj) {
       if (Object.prototype.hasOwnProperty.call(obj, key)) {

@@ -12,7 +12,7 @@ export class RequestService {
     @InjectRepository(Request)
     private requestRepository: Repository<Request>,
   ) {}
-// tạo yêu cầu mới
+  // tạo yêu cầu mới
   async create(createRequestDto: CreateRequestDto) {
     const { requesterId, ...requestData } = createRequestDto;
 
@@ -25,7 +25,7 @@ export class RequestService {
     await this.requestRepository.save(request);
     return RequestResDto.fromEntity(request);
   }
-// lấy tất cả yêu cầu (dành cho admin)
+  // lấy tất cả yêu cầu (dành cho admin)
   async findAll() {
     const requests = await this.requestRepository.find({
       relations: ['requester'],
@@ -34,11 +34,11 @@ export class RequestService {
 
     return RequestResDto.fromEntities(requests);
   }
-// lấy tất cả yêu cầu của người dùng hiện tại
+  // lấy tất cả yêu cầu của người dùng hiện tại
   async findAllByUser(userId: string) {
     const requests = await this.requestRepository.find({
       where: { requester: { id: userId } },
-      relations: ['requester'],// lấy thông tin người yêu cầu
+      relations: ['requester'], // lấy thông tin người yêu cầu
       order: { createdAt: 'DESC' },
     });
 
@@ -49,7 +49,7 @@ export class RequestService {
   async findAllByStatus(status: string) {
     const requests = await this.requestRepository.find({
       where: { status },
-      relations: ['requester'],// lấy thông tin người yêu cầu
+      relations: ['requester'], // lấy thông tin người yêu cầu
       order: { createdAt: 'DESC' },
     });
 
@@ -70,7 +70,7 @@ export class RequestService {
     }
 
     const [requests, total] = await query.getManyAndCount();
-// trả về dữ liệu với thông tin phân trang
+    // trả về dữ liệu với thông tin phân trang
     return {
       items: RequestResDto.fromEntities(requests),
       meta: {
@@ -82,7 +82,7 @@ export class RequestService {
       },
     };
   }
-// cập nhật trạng thái yêu cầu (dành cho admin)
+  // cập nhật trạng thái yêu cầu (dành cho admin)
   updateStatusRequest(id: string, status: string) {
     // kiểm tra nếu trạng thái không hợp lệ thì ném lỗi
     if (

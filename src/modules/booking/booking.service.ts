@@ -132,6 +132,38 @@ import { Code } from 'typeorm/browser';
       }
       
       await this.bookingRepository.save(booking);
+  getAllBooking() {
+    return this.bookingRepository.find({
+      select: {
+        vehicle: {
+          plate_number: true,
+        },
+        user: {
+          id: true,
+          profile: {
+            id: true,
+            name: true,
+          },
+        },
+        parkingLot: {
+          name: true,
+          address: true,
+        },
+        invoice: {
+          id: true,
+          total: true,
+        },
+      },
+      relations: [
+        'user',
+        'user.profile',
+        'vehicle',
+        'slot',
+        'parkingLot',
+        'invoice',
+      ], //tên các trường trong database-ko phải tên database
+    });
+  }
 
       return {
         message: `Check-${statusType} thành công!`,
@@ -153,6 +185,9 @@ import { Code } from 'typeorm/browser';
               id: true,
               name: true,
             },
+          },
+          vehicle: {
+            plate_number: true,
           },
           parkingLot: {
             name: true,

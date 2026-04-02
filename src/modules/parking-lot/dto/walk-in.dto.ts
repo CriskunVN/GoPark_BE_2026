@@ -13,9 +13,5 @@ export class WalkInDto {
   @IsNotEmpty()
   licensePlate: string;
 
-  @IsString()
-  @IsNotEmpty()
-  vehicleType: string;
-
   // Ảnh để null theo yêu cầu do chưa có Supabase
 }

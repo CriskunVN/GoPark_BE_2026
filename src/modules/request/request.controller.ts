@@ -31,7 +31,7 @@ export class RequestController {
       data,
     };
   }
-// Admin có thể xem tất cả yêu cầu với phân trang và lọc theo trạng thái
+  // Admin có thể xem tất cả yêu cầu với phân trang và lọc theo trạng thái
   @UseGuards(JwtAuthGuard)
   @Post('become-owner')
   async becomeOwner(
@@ -42,7 +42,9 @@ export class RequestController {
       type: 'BECOME_OWNER' as any,
       payload,
       // nếu payload có tên bãi đỗ thì mô tả sẽ là yêu cầu đăng ký trở thành chủ bãi đỗ với tên bãi đỗ, ngược lại sẽ là yêu cầu đăng ký trở thành chủ bãi đỗ chung chung
-      description: payload.parkingLotName ? `Yêu cầu đăng ký trở thành chủ bãi đỗ: ${payload.parkingLotName}` : 'Yêu cầu đăng ký trở thành chủ bãi đỗ',
+      description: payload.parkingLotName
+        ? `Yêu cầu đăng ký trở thành chủ bãi đỗ: ${payload.parkingLotName}`
+        : 'Yêu cầu đăng ký trở thành chủ bãi đỗ',
       requesterId: req.user['userId'],
     };
     const data = await this.requestService.create(createRequestDto);
@@ -51,7 +53,7 @@ export class RequestController {
       data,
     };
   }
-// Người dùng có thể xem tất cả yêu cầu của mình
+  // Người dùng có thể xem tất cả yêu cầu của mình
   @Get()
   async findAll(): Promise<{ message: string; data: RequestResDto[] }> {
     const data = await this.requestService.findAll();
@@ -60,7 +62,7 @@ export class RequestController {
       data,
     };
   }
-// Người dùng có thể xem tất cả yêu cầu của mình
+  // Người dùng có thể xem tất cả yêu cầu của mình
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async findMyRequests(
@@ -73,4 +75,3 @@ export class RequestController {
     };
   }
 }
-

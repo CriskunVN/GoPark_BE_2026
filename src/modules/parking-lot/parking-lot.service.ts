@@ -24,6 +24,11 @@ import { WalkInDto } from './dto/walk-in.dto';
 import { User } from '../users/entities/user.entity';
 import { Profile } from '../users/entities/profile.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
+import { ParkingFloor } from './entities/parking-floor.entity';
+import { ParkingZone } from './entities/parking-zone.entity';
+import { CreateFloorDto } from './dto/create-floor.dto';
+import { CreateZoneDto } from './dto/create-zone.dto';
+import { UpdateZoneDto } from './dto/update-zone.dto';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -46,6 +51,11 @@ export class ParkingLotService {
 
     @InjectRepository(Vehicle)
     private vehicleRepository: Repository<Vehicle>,
+    @InjectRepository(ParkingFloor)
+    private parkingFloorRepository: Repository<ParkingFloor>,
+
+    @InjectRepository(ParkingZone)
+    private parkingZoneRepository: Repository<ParkingZone>,
 
     private requestService: RequestService,
 
@@ -59,9 +69,11 @@ export class ParkingLotService {
       address: createParkingLotDto.address,
       lat: createParkingLotDto.lat,
       lng: createParkingLotDto.lng,
-      total_slots: createParkingLotDto.totalSlots,
+      total_slots: createParkingLotDto.totalSlots ?? 0,
       available_slots:
-        createParkingLotDto.availableSlots ?? createParkingLotDto.totalSlots,
+        createParkingLotDto.availableSlots ??
+        createParkingLotDto.totalSlots ??
+        0,
       status: ParkingLotStatus.INACTIVE,
       owner: { id: createParkingLotDto.ownerId } as User,
     });
@@ -229,7 +241,6 @@ export class ParkingLotService {
           this.parkingSlotRepository.create({
             parkingLot: savedParking,
             code: `F${floorIdx + 1}-${i}`,
-            type: 'REGULAR',
             status: 'AVAILABLE',
           }),
         );
@@ -365,7 +376,6 @@ export class ParkingLotService {
       if (!vehicle) {
         vehicle = queryRunner.manager.create(Vehicle, {
           plate_number: standardizedPlate,
-          type: dto.vehicleType,
           user: user,
         });
         vehicle = await queryRunner.manager.save(Vehicle, vehicle);
@@ -435,5 +445,92 @@ export class ParkingLotService {
       ...lot,
       userVehicles : vehicleUser
     };
+  // ─── Floor & Zone Management (Customization) ──────────────────────────────
+
+  async createFloor(lotId: number, dto: CreateFloorDto) {
+    const lot = await this.parkingLotRepository.findOne({
+      where: { id: lotId },
+    });
+    if (!lot) throw new NotFoundException('Parking lot not found');
+
+    const floor = this.parkingFloorRepository.create({
+      ...dto,
+      parkingLot: lot,
+    });
+    return await this.parkingFloorRepository.save(floor);
+  }
+
+  async createZone(floorId: number, dto: CreateZoneDto) {
+    const floor = await this.parkingFloorRepository.findOne({
+      where: { id: floorId },
+      relations: ['parkingLot'],
+    });
+    if (!floor) throw new NotFoundException('Parking floor not found');
+
+    const zone = this.parkingZoneRepository.create({
+      ...dto,
+      parkingFloor: floor,
+    });
+    const savedZone = await this.parkingZoneRepository.save(zone);
+
+    // Sync hierarchical totals
+    await this.syncHierarchyTotals(floor.id);
+
+    return savedZone;
+  }
+
+  async updateZone(zoneId: number, dto: UpdateZoneDto) {
+    const zone = await this.parkingZoneRepository.findOne({
+      where: { id: zoneId },
+      relations: ['parkingFloor'],
+    });
+    if (!zone) throw new NotFoundException('Parking zone not found');
+
+    Object.assign(zone, dto);
+    const savedZone = await this.parkingZoneRepository.save(zone);
+
+    // Sync hierarchical totals
+    await this.syncHierarchyTotals(zone.parkingFloor.id);
+
+    return savedZone;
+  }
+
+  private async syncHierarchyTotals(floorId: number) {
+    // 1. Update Floor total_slots
+    const floor = await this.parkingFloorRepository.findOne({
+      where: { id: floorId },
+      relations: ['parkingZone', 'parkingLot'],
+    });
+
+    if (!floor) return;
+
+    const totalFloorSlots = floor.parkingZone.reduce(
+      (sum, zone) => sum + (zone.total_slots || 0),
+      0,
+    );
+    floor.total_slots = totalFloorSlots;
+    await this.parkingFloorRepository.save(floor);
+
+    // 2. Update ParkingLot total_slots
+    const lotId = floor.parkingLot.id;
+    const lot = await this.parkingLotRepository.findOne({
+      where: { id: lotId },
+      relations: ['parkingFloor'],
+    });
+
+    if (!lot) return;
+
+    const totalLotSlots = lot.parkingFloor.reduce(
+      (sum, f) => sum + (f.total_slots || 0),
+      0,
+    );
+
+    // Available slots logic: increase if total_slots increased
+    const diff = totalLotSlots - lot.total_slots;
+    lot.total_slots = totalLotSlots;
+    lot.available_slots = (lot.available_slots || 0) + diff;
+    if (lot.available_slots < 0) lot.available_slots = 0;
+
+    await this.parkingLotRepository.save(lot);
   }
 }

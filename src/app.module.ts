@@ -6,7 +6,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { getDatabaseConfig } from './config/database/database.config';
 
 import { UsersModule } from './modules/users/users.module';
-import { UsersService } from './modules/users/users.service';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { ParkingModule } from './modules/parking-lot/parking-lot.module';
 import { BookingModule } from './modules/booking/booking.module';
