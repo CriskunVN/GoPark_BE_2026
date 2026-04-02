@@ -15,9 +15,14 @@ import { DataSource } from 'typeorm';
 import { AdminModule } from './modules/admin/admin.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { RequestModule } from './modules/request/request.module';
+import { NotificationModule } from './modules/notification/notification.module';
+import { BullModule } from '@nestjs/bull';
 
 @Module({
   imports: [
+    BullModule.forRoot({
+      redis: process.env.REDIS_URL,
+    }),
     ConfigModule.forRoot({
       isGlobal: true,
       // the .env file lives under src/, adjust path accordingly
@@ -37,6 +42,7 @@ import { RequestModule } from './modules/request/request.module';
     PaymentModule,
     AdminModule,
     RequestModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
