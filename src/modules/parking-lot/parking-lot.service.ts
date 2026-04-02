@@ -422,29 +422,37 @@ export class ParkingLotService {
     }
   }
 
-
-  //Get bãi đỗ 
-  async getMapForBooking(lotid : number,userId : string){
-    console.log('Getting map for booking - ParkingLotService', { lotid, userId });
+  //Get bãi đỗ
+  async getMapForBooking(lotid: number, userId: string) {
+    console.log('Getting map for booking - ParkingLotService', {
+      lotid,
+      userId,
+    });
     //lấy thông tin bãi đỗ cùng với các tầng, zone, slot để hiển thị trên map khi booking
     const lot = await this.parkingLotRepository.findOne({
-      where: {id : lotid},
-      relations : ['owner','pricingRule','parkingFloor','parkingFloor.parkingZone','parkingFloor.parkingZone.slot']
-    })
+      where: { id: lotid },
+      relations: [
+        'owner',
+        'pricingRule',
+        'parkingFloor',
+        'parkingFloor.parkingZone',
+        'parkingFloor.parkingZone.slot',
+      ],
+    });
 
-    if(!lot) throw new NotFoundException('Not found Parking Lot')
-      
+    if (!lot) throw new NotFoundException('Not found Parking Lot');
+
     //lấy danh sách xe của người dùng
     const vehicleUser = await this.vehicleRepository.find({
-      where : { user: { id: userId } },
-      relations : ['user']
-    })
+      where: { user: { id: userId } },
+      relations: ['user'],
+    });
 
-    
     return {
       ...lot,
-      userVehicles : vehicleUser
+      userVehicles: vehicleUser,
     };
+  }
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
 
   async createFloor(lotId: number, dto: CreateFloorDto) {

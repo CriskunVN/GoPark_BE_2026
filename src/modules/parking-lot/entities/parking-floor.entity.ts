@@ -29,10 +29,10 @@ export class ParkingFloor {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 
-  @OneToMany('ParkingZone', (zone: ParkingZone) => zone.parkingFloor)
+  @OneToMany(() => ParkingZone, (zone: ParkingZone) => zone.parkingFloor)
   parkingZone: ParkingZone[];
 
-  @ManyToOne('ParkingLot', (lot: ParkingLot) => lot.parkingFloor)
+  @ManyToOne(() => ParkingLot, (lot: ParkingLot) => lot.parkingFloor)
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 }
