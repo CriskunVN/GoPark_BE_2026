@@ -8,6 +8,8 @@ import {
 } from 'typeorm';
 import { ParkingZone } from './parking-zone.entity';
 import { ParkingLot } from './parking-lot.entity';
+import { ParkingSlot } from './parking-slot.entity';
+import { PricingRule } from 'src/modules/payment/entities/pricingrule.entity';
 
 @Entity('parking_floors')
 export class ParkingFloor {
@@ -32,7 +34,15 @@ export class ParkingFloor {
   @OneToMany(() => ParkingZone, (zone: ParkingZone) => zone.parkingFloor)
   parkingZone: ParkingZone[];
 
-  @ManyToOne(() => ParkingLot, (lot: ParkingLot) => lot.parkingFloor)
+  @ManyToOne(() => ParkingLot, (lot: ParkingLot) => lot.parkingFloor, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
+
+  @OneToMany(() => ParkingSlot, (slot: ParkingSlot) => slot.parkingFloor)
+  parkingSlot: ParkingSlot[];
+
+  @OneToMany(() => PricingRule, (rule: PricingRule) => rule.parkingFloor)
+  pricingRule: PricingRule[];
 }
