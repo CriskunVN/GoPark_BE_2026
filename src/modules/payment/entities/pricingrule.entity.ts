@@ -1,3 +1,4 @@
+import { ParkingFloor } from 'src/modules/parking-lot/entities/parking-floor.entity';
 import { ParkingLot } from 'src/modules/parking-lot/entities/parking-lot.entity';
 import { ParkingZone } from 'src/modules/parking-lot/entities/parking-zone.entity';
 import {
@@ -19,17 +20,21 @@ export class PricingRule {
   @Column()
   price_per_day: number;
 
-  @Column({ type: 'timestamp' })
-  start_time: Date;
-
-  @Column({ type: 'timestamp' })
-  end_time: Date;
-
-  @ManyToOne('ParkingLot', (lot: ParkingLot) => lot.pricingRule)
+  @ManyToOne('ParkingLot', (lot: ParkingLot) => lot.pricingRule, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 
-  @ManyToOne('ParkingZone', (zone: ParkingZone) => zone.pricingRule)
+  @ManyToOne('ParkingFloor', (floor: ParkingFloor) => floor.pricingRule, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'parking_floor_id' })
+  parkingFloor: ParkingFloor;
+
+  @ManyToOne('ParkingZone', (zone: ParkingZone) => zone.pricingRule, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'parking_zone_id' })
   parkingZone: ParkingZone;
 }

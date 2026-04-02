@@ -5,19 +5,51 @@ import {
   Req,
   Get,
   Query,
-  Res,
-  HttpStatus,
+  Param,
+  Patch,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { VnpayService } from './vnpay.service';
 import { WalletService } from '../wallet/wallet.service';
 import type { Response } from 'express';
+import { PaymentService } from './payment.service';
+import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
+import { UpdatePricingRuleDto } from './dto/update-pricing-rule.dto';
 
 @Controller('payment')
 export class PaymentController {
   constructor(
     private readonly vnpayService: VnpayService,
     private readonly walletService: WalletService,
+    private readonly paymentService: PaymentService,
   ) {}
+
+  @Post('pricing-rule')
+  async createPricingRule(@Body() dto: CreatePricingRuleDto) {
+    return await this.paymentService.createPricingRule(dto);
+  }
+
+  @Get('pricing-rule/zone/:zoneId')
+  async getPricingRuleByZone(@Param('zoneId') zoneId: string) {
+    return await this.paymentService.getPricingRuleByZone(+zoneId);
+  }
+
+  @Patch('pricing-rule/:parkingLotId/floors/:floorId/zones/:zoneId/rule/:id')
+  async updatePricingRule(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
+    @Param('zoneId', ParseIntPipe) zoneId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePricingRuleDto,
+  ) {
+    return await this.paymentService.updatePricingRule(
+      parkingLotId,
+      floorId,
+      zoneId,
+      id,
+      dto,
+    );
+  }
 
   // API 1: Tạo link VNPAY cho Frontend
   @Post('vnpay/create-url')

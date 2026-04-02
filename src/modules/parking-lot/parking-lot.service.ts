@@ -29,6 +29,7 @@ import { ParkingZone } from './entities/parking-zone.entity';
 import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
+import { UpdateFloorDto } from './dto/update-floor.dto';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -455,6 +456,25 @@ export class ParkingLotService {
   }
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
 
+  async getFloorsByParkingLot(lotId: number) {
+    return await this.parkingFloorRepository.find({
+      where: { parkingLot: { id: lotId } },
+      relations: ['parkingZone'],
+    });
+  }
+
+  async getZonesByFloor(lotId: number, floorId: number) {
+    return await this.parkingZoneRepository.find({
+      where: {
+        parkingFloor: {
+          id: floorId,
+          parkingLot: { id: lotId },
+        },
+      },
+      relations: ['parkingFloor'],
+    });
+  }
+
   async createFloor(lotId: number, dto: CreateFloorDto) {
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotId },
@@ -465,6 +485,20 @@ export class ParkingLotService {
       ...dto,
       parkingLot: lot,
     });
+    return await this.parkingFloorRepository.save(floor);
+  }
+
+  async updateFloor(lotId: number, floorId: number, dto: any) {
+    const floor = await this.parkingFloorRepository.findOne({
+      where: { id: floorId, parkingLot: { id: lotId } },
+    });
+    if (!floor) {
+      throw new NotFoundException(
+        'Parking floor not found or mismatched with parking lot',
+      );
+    }
+
+    Object.assign(floor, dto);
     return await this.parkingFloorRepository.save(floor);
   }
 
@@ -487,12 +521,24 @@ export class ParkingLotService {
     return savedZone;
   }
 
-  async updateZone(zoneId: number, dto: UpdateZoneDto) {
+  async updateZone(
+    lotId: number,
+    floorId: number,
+    zoneId: number,
+    dto: UpdateZoneDto,
+  ) {
     const zone = await this.parkingZoneRepository.findOne({
-      where: { id: zoneId },
-      relations: ['parkingFloor'],
+      where: {
+        id: zoneId,
+        parkingFloor: { id: floorId, parkingLot: { id: lotId } },
+      },
+      relations: ['parkingFloor', 'parkingFloor.parkingLot'],
     });
-    if (!zone) throw new NotFoundException('Parking zone not found');
+    if (!zone) {
+      throw new NotFoundException(
+        'Parking zone not found or mismatched with floor/lot',
+      );
+    }
 
     Object.assign(zone, dto);
     const savedZone = await this.parkingZoneRepository.save(zone);

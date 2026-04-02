@@ -27,6 +27,7 @@ import { WalkInDto } from './dto/walk-in.dto';
 import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
+import { UpdateFloorDto } from './dto/update-floor.dto';
 
 // chia vung ra roi thay nghe
 
@@ -59,14 +60,12 @@ export class ParkingLotController {
   ): Promise<ParkingLotUserResDto[]> {
     return this.parkingLotService.getUsersByParkingLot(parkingLotId, search);
   }
-
-
-  //get bãi đỗ
+  // get bãi đỗ
   @UseGuards(JwtAuthGuard)
   @Get('map/:lotid')
-  async getMapBooing(@Param('lotid') lotid : number,@Req() req : any) {
+  async getMapBooing(@Param('lotid') lotid: number, @Req() req: any) {
     const userId = req.user['userId'];
-    return this.parkingLotService.getMapForBooking(lotid,userId);
+    return this.parkingLotService.getMapForBooking(lotid, userId);
   }
 
   // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
@@ -105,12 +104,36 @@ export class ParkingLotController {
 
   // ─── Customization Endpoints (Floors & Zones) ─────────────────────────────
 
+  @Get(':parkingLotId/floors')
+  async getFloorsByParkingLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+  ) {
+    return await this.parkingLotService.getFloorsByParkingLot(parkingLotId);
+  }
+
+  @Get(':parkingLotId/floors/:floorId/zones')
+  async getZonesByFloor(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
+  ) {
+    return await this.parkingLotService.getZonesByFloor(parkingLotId, floorId);
+  }
+
   @Post(':parkingLotId/floors')
   async createFloor(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Body() dto: CreateFloorDto,
   ) {
     return await this.parkingLotService.createFloor(parkingLotId, dto);
+  }
+
+  @Patch(':parkingLotId/floors/:floorId')
+  async updateFloor(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
+    @Body() dto: UpdateFloorDto,
+  ) {
+    return await this.parkingLotService.updateFloor(parkingLotId, floorId, dto);
   }
 
   @Post('floors/:floorId/zones')
@@ -121,11 +144,18 @@ export class ParkingLotController {
     return await this.parkingLotService.createZone(floorId, dto);
   }
 
-  @Patch('zones/:zoneId')
+  @Patch(':parkingLotId/floors/:floorId/zones/:zoneId')
   async updateZone(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
     @Param('zoneId', ParseIntPipe) zoneId: number,
     @Body() dto: UpdateZoneDto,
   ) {
-    return await this.parkingLotService.updateZone(zoneId, dto);
+    return await this.parkingLotService.updateZone(
+      parkingLotId,
+      floorId,
+      zoneId,
+      dto,
+    );
   }
 }
