@@ -11,8 +11,9 @@ export const getDatabaseConfig = (
     // Tự động load entities (đỡ phải khai báo thủ công)
     autoLoadEntities: true,
 
-    // Sync database schema (tắt trong production)
-    synchronize: configService.get('NODE_ENV') !== 'production',
+    // Tắt synchronize khi dùng Supabase (cloud DB với RLS).
+    // Schema thay đổi phải chạy thủ công qua Supabase SQL Editor.
+    synchronize: false,
 
     // Log SQL queries - Tắt log query để terminal gọn gàng hơn
     logging: false,

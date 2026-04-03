@@ -8,6 +8,7 @@ import {
 import type { ParkingLot } from './parking-lot.entity';
 import { ParkingZone } from './parking-zone.entity';
 import { ParkingFloor } from './parking-floor.entity';
+import { SlotStatus } from 'src/common/enums/status.enum';
 
 @Entity('parking_slots')
 export class ParkingSlot {
@@ -17,8 +18,12 @@ export class ParkingSlot {
   @Column()
   code: string;
 
-  @Column()
-  status: string; // available, occupied, reserved
+  @Column({
+    type: 'enum',
+    enum: SlotStatus,
+    default: SlotStatus.AVAILABLE,
+  })
+  status: SlotStatus;
 
   @ManyToOne(
     'ParkingLot',

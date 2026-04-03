@@ -30,3 +30,10 @@ export enum RequestStatus {
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
 }
+
+export enum SlotStatus {
+  AVAILABLE = 'AVAILABLE',
+  OCCUPIED = 'OCCUPIED',
+  RESERVED = 'RESERVED',
+  DISABLED = 'DISABLED', // Slot bị vô hiệu hoá khi total_slots giảm
+}

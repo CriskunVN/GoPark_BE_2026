@@ -18,6 +18,9 @@ export class ParkingZone {
   @Column()
   zone_name: string;
 
+  @Column({ type: 'varchar', length: 10 })
+  prefix: string; // VD: 'A', 'B', 'VIP' — dùng làm tiền tố cho mã slot
+
   @Column({ type: 'text', nullable: true })
   description: string;
 
