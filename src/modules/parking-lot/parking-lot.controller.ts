@@ -158,4 +158,70 @@ export class ParkingLotController {
       dto,
     );
   }
+
+  // ─── Generate / Sync Slots ─────────────────────────────────────────────────
+
+  /**
+   * [POST] /parking-lots/:lotId/generate-slots
+   * Generate hoặc sync toàn bộ slots của Lot (tất cả floors + zones).
+   * Dùng cho nút "Hoàn tất cấu hình" trên FE.
+   */
+  @Post(':parkingLotId/generate-slots')
+  async generateSlotsForLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+  ) {
+    return await this.parkingLotService.generateSlotsForLot(parkingLotId);
+  }
+
+  /**
+   * [POST] /parking-lots/:lotId/floors/:floorId/generate-slots
+   * Generate hoặc sync slots cho 1 Floor cụ thể.
+   */
+  @Post(':parkingLotId/floors/:floorId/generate-slots')
+  async generateSlotsForFloor(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
+  ) {
+    return await this.parkingLotService.generateSlotsForFloor(
+      parkingLotId,
+      floorId,
+    );
+  }
+
+  /**
+   * [POST] /parking-lots/:lotId/floors/:floorId/zones/:zoneId/generate-slots
+   * Generate hoặc sync slots cho 1 Zone cụ thể (granular nhất).
+   */
+  @Post(':parkingLotId/floors/:floorId/zones/:zoneId/generate-slots')
+  async generateSlotsForZone(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
+    @Param('zoneId', ParseIntPipe) zoneId: number,
+  ) {
+    return await this.parkingLotService.generateSlotsForZone(
+      parkingLotId,
+      floorId,
+      zoneId,
+    );
+  }
+
+  /**
+   * [GET] /parking-lots/:lotId/floors/:floorId/zones/:zoneId/slots
+   * Xem danh sách slots của 1 Zone (để preview trên UI).
+   * Query param: includeDisabled=true để xem cả slot DISABLED.
+   */
+  @Get(':parkingLotId/floors/:floorId/zones/:zoneId/slots')
+  async getSlotsByZone(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Param('floorId', ParseIntPipe) floorId: number,
+    @Param('zoneId', ParseIntPipe) zoneId: number,
+    @Query('includeDisabled') includeDisabled?: string,
+  ) {
+    return await this.parkingLotService.getSlotsByZone(
+      parkingLotId,
+      floorId,
+      zoneId,
+      includeDisabled === 'true',
+    );
+  }
 }

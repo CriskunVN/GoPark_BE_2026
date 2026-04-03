@@ -5,7 +5,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, Not } from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -14,7 +14,7 @@ import {
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
-import { ParkingLotStatus } from 'src/common/enums/status.enum';
+import { ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
@@ -29,7 +29,6 @@ import { ParkingZone } from './entities/parking-zone.entity';
 import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
-import { UpdateFloorDto } from './dto/update-floor.dto';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -242,7 +241,7 @@ export class ParkingLotService {
           this.parkingSlotRepository.create({
             parkingLot: savedParking,
             code: `F${floorIdx + 1}-${i}`,
-            status: 'AVAILABLE',
+            status: SlotStatus.AVAILABLE,
           }),
         );
       }
@@ -550,7 +549,7 @@ export class ParkingLotService {
   }
 
   private async syncHierarchyTotals(floorId: number) {
-    // 1. Update Floor total_slots
+    // 1. Update Floor total_slots (dựa trên metadata zone.total_slots)
     const floor = await this.parkingFloorRepository.findOne({
       where: { id: floorId },
       relations: ['parkingZone', 'parkingLot'],
@@ -565,7 +564,7 @@ export class ParkingLotService {
     floor.total_slots = totalFloorSlots;
     await this.parkingFloorRepository.save(floor);
 
-    // 2. Update ParkingLot total_slots
+    // 2. Update ParkingLot total_slots + available_slots từ slot thực tế trong DB
     const lotId = floor.parkingLot.id;
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotId },
@@ -578,13 +577,254 @@ export class ParkingLotService {
       (sum, f) => sum + (f.total_slots || 0),
       0,
     );
-
-    // Available slots logic: increase if total_slots increased
-    const diff = totalLotSlots - lot.total_slots;
     lot.total_slots = totalLotSlots;
-    lot.available_slots = (lot.available_slots || 0) + diff;
-    if (lot.available_slots < 0) lot.available_slots = 0;
+
+    // available_slots = số slot AVAILABLE thực tế trong DB
+    const availableCount = await this.parkingSlotRepository.count({
+      where: {
+        parkingLot: { id: lotId },
+        status: SlotStatus.AVAILABLE,
+      },
+    });
+    lot.available_slots = availableCount;
 
     await this.parkingLotRepository.save(lot);
+  }
+
+  // ─── Generate / Sync Slots ────────────────────────────────────────────────
+
+  /**
+   * Generate hoặc sync slots cho 1 Zone cụ thể.
+   * - total_slots tăng → thêm slot mới AVAILABLE
+   * - total_slots giảm → vô hiệu hoá (DISABLED) slot AVAILABLE cuối
+   * - total_slots bằng → không làm gì
+   */
+  async generateSlotsForZone(
+    lotId: number,
+    floorId: number,
+    zoneId: number,
+  ): Promise<{ added: number; disabled: number }> {
+    // 1. Verify zone thuộc đúng floor & lot
+    const zone = await this.parkingZoneRepository.findOne({
+      where: {
+        id: zoneId,
+        parkingFloor: { id: floorId, parkingLot: { id: lotId } },
+      },
+      relations: ['parkingFloor', 'parkingFloor.parkingLot'],
+    });
+    if (!zone) {
+      throw new NotFoundException(
+        'Không tìm thấy zone hoặc zone không thuộc floor/lot này',
+      );
+    }
+
+    const lot = zone.parkingFloor.parkingLot;
+    const floor = zone.parkingFloor;
+    const targetCount = zone.total_slots;
+
+    // 2. Lấy tất cả slot ACTIVE (không phải DISABLED) của zone
+    const activeSlots = await this.parkingSlotRepository.find({
+      where: {
+        parkingZone: { id: zoneId },
+        status: Not(SlotStatus.DISABLED),
+      },
+      order: { id: 'ASC' },
+    });
+    const currentActiveCount = activeSlots.length;
+
+    // CASE C: Bằng nhau → không làm gì
+    if (targetCount === currentActiveCount) {
+      return { added: 0, disabled: 0 };
+    }
+
+    // CASE A: total_slots tăng → thêm slot mới
+    if (targetCount > currentActiveCount) {
+      const toAdd = targetCount - currentActiveCount;
+
+      // Tính max STT hiện có để tiếp tục đánh số
+      const allSlots = await this.parkingSlotRepository.find({
+        where: { parkingZone: { id: zoneId } },
+        order: { id: 'DESC' },
+        take: 1,
+      });
+      let maxIndex = 0;
+      if (allSlots.length > 0) {
+        // Trích số cuối từ code VD: "A007" → 7
+        const match = allSlots[0].code.match(/(\d+)$/);
+        maxIndex = match ? parseInt(match[1], 10) : 0;
+      }
+
+      // Dùng prefix từ zone (VD: 'A', 'B', 'VIP') — owner tự đặt khi tạo zone
+      const prefix = zone.prefix.toUpperCase();
+      const newSlots: ParkingSlot[] = [];
+      for (let i = 1; i <= toAdd; i++) {
+        const stt = String(maxIndex + i).padStart(3, '0');
+        newSlots.push(
+          this.parkingSlotRepository.create({
+            code: `${prefix}${stt}`,
+            status: SlotStatus.AVAILABLE,
+            parkingLot: lot,
+            parkingFloor: floor,
+            parkingZone: zone,
+          }),
+        );
+      }
+      await this.parkingSlotRepository.save(newSlots);
+      await this.syncHierarchyTotals(floorId);
+      return { added: toAdd, disabled: 0 };
+    }
+
+    // CASE B: total_slots giảm → vô hiệu hoá slot AVAILABLE cuối
+    const toDisable = currentActiveCount - targetCount;
+
+    // Chỉ disable slot AVAILABLE (không được disable OCCUPIED/RESERVED)
+    const availableSlots = await this.parkingSlotRepository.find({
+      where: {
+        parkingZone: { id: zoneId },
+        status: SlotStatus.AVAILABLE,
+      },
+      order: { id: 'DESC' }, // lấy slot mới nhất trước
+    });
+
+    if (availableSlots.length < toDisable) {
+      throw new BadRequestException(
+        `Không thể giảm xuống ${targetCount} slot: ` +
+          `có ${currentActiveCount - availableSlots.length} slot đang OCCUPIED/RESERVED, ` +
+          `chỉ có thể vô hiệu hoá tối đa ${currentActiveCount - (currentActiveCount - availableSlots.length)} slot.`,
+      );
+    }
+
+    const slotsToDisable = availableSlots.slice(0, toDisable);
+    for (const slot of slotsToDisable) {
+      slot.status = SlotStatus.DISABLED;
+    }
+    await this.parkingSlotRepository.save(slotsToDisable);
+    await this.syncHierarchyTotals(floorId);
+    return { added: 0, disabled: toDisable };
+  }
+
+  /**
+   * Generate / sync slots cho tất cả zones của 1 Floor.
+   */
+  async generateSlotsForFloor(
+    lotId: number,
+    floorId: number,
+  ): Promise<{
+    totalAdded: number;
+    totalDisabled: number;
+    perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }>;
+  }> {
+    const zones = await this.parkingZoneRepository.find({
+      where: {
+        parkingFloor: { id: floorId, parkingLot: { id: lotId } },
+      },
+    });
+
+    if (zones.length === 0) {
+      throw new NotFoundException('Floor không có zone nào');
+    }
+
+    let totalAdded = 0;
+    let totalDisabled = 0;
+    const perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }> = [];
+
+    for (const zone of zones) {
+      const result = await this.generateSlotsForZone(lotId, floorId, zone.id);
+      totalAdded += result.added;
+      totalDisabled += result.disabled;
+      perZone.push({
+        zoneId: zone.id,
+        zoneName: zone.zone_name,
+        added: result.added,
+        disabled: result.disabled,
+      });
+    }
+
+    return { totalAdded, totalDisabled, perZone };
+  }
+
+  /**
+   * Generate / sync slots cho tất cả floors & zones của 1 Lot.
+   * Dùng cho nút "Hoàn tất cấu hình" trên FE.
+   */
+  async generateSlotsForLot(lotId: number): Promise<{
+    totalAdded: number;
+    totalDisabled: number;
+    perFloor: Array<{
+      floorId: number;
+      floorName: string;
+      totalAdded: number;
+      totalDisabled: number;
+      perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }>;
+    }>;
+  }> {
+    const lot = await this.parkingLotRepository.findOne({
+      where: { id: lotId },
+      relations: ['parkingFloor'],
+    });
+    if (!lot) throw new NotFoundException('Không tìm thấy parking lot');
+
+    if (!lot.parkingFloor || lot.parkingFloor.length === 0) {
+      throw new BadRequestException('Parking lot chưa có floor nào');
+    }
+
+    let totalAdded = 0;
+    let totalDisabled = 0;
+    const perFloor: Array<{
+      floorId: number;
+      floorName: string;
+      totalAdded: number;
+      totalDisabled: number;
+      perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }>;
+    }> = [];
+
+    for (const floor of lot.parkingFloor) {
+      const result = await this.generateSlotsForFloor(lotId, floor.id);
+      totalAdded += result.totalAdded;
+      totalDisabled += result.totalDisabled;
+      perFloor.push({
+        floorId: floor.id,
+        floorName: floor.floor_name,
+        totalAdded: result.totalAdded,
+        totalDisabled: result.totalDisabled,
+        perZone: result.perZone,
+      });
+    }
+
+    return { totalAdded, totalDisabled, perFloor };
+  }
+
+  /**
+   * Lấy danh sách slots của 1 Zone (để preview trên UI).
+   * Mặc định ẩn slot DISABLED, truyền includeDisabled=true để xem tất cả.
+   */
+  async getSlotsByZone(
+    lotId: number,
+    floorId: number,
+    zoneId: number,
+    includeDisabled = false,
+  ) {
+    const zone = await this.parkingZoneRepository.findOne({
+      where: {
+        id: zoneId,
+        parkingFloor: { id: floorId, parkingLot: { id: lotId } },
+      },
+    });
+    if (!zone) {
+      throw new NotFoundException(
+        'Không tìm thấy zone hoặc zone không thuộc floor/lot này',
+      );
+    }
+
+    const where: any = { parkingZone: { id: zoneId } };
+    if (!includeDisabled) {
+      where.status = Not(SlotStatus.DISABLED);
+    }
+
+    return await this.parkingSlotRepository.find({
+      where,
+      order: { id: 'ASC' },
+      select: ['id', 'code', 'status'],
+    });
   }
 }
