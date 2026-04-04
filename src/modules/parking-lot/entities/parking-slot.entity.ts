@@ -7,6 +7,8 @@ import {
 } from 'typeorm';
 import type { ParkingLot } from './parking-lot.entity';
 import { ParkingZone } from './parking-zone.entity';
+import { ParkingFloor } from './parking-floor.entity';
+import { SlotStatus } from 'src/common/enums/status.enum';
 
 @Entity('parking_slots')
 export class ParkingSlot {
@@ -16,11 +18,12 @@ export class ParkingSlot {
   @Column()
   code: string;
 
-  @Column({nullable : true})
-  type: string;
-
-  @Column({nullable : true})
-  status: string; // available, occupied, reserved
+  @Column({
+    type: 'enum',
+    enum: SlotStatus,
+    default: SlotStatus.AVAILABLE,
+  })
+  status: SlotStatus;
 
   @ManyToOne(
     'ParkingLot',
@@ -32,7 +35,15 @@ export class ParkingSlot {
   @JoinColumn({ name: 'parking_lot_id' })
   parkingLot: ParkingLot;
 
-  @ManyToOne('ParkingZone', (zone: ParkingZone) => zone.slot)
+  @ManyToOne('ParkingFloor', (floor: ParkingFloor) => floor.parkingSlot, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'parking_floor_id' })
+  parkingFloor: ParkingFloor;
+
+  @ManyToOne('ParkingZone', (zone: ParkingZone) => zone.slot, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'parking_zone_id' })
   parkingZone: ParkingZone;
 }

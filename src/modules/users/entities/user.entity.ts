@@ -8,6 +8,7 @@ import type { ParkingLot } from '../../parking-lot/entities/parking-lot.entity';
 import type { Request } from '../../request/entities/request.entity';
 import { BaseEntity } from 'src/common/entity/base.entity';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
+import { NotificationRecipient } from 'src/modules/notification/entities/notification_recipient.entity';
 import { Review } from './review.entity';
 
 @Entity('users')
@@ -60,6 +61,12 @@ export class User extends BaseEntity {
     cascade: true,
   })
   requests: Request[];
+
+  @OneToMany(
+    'NotificationRecipient',
+    (recipient: NotificationRecipient) => recipient.recipient,
+  )
+  notifications: NotificationRecipient[];
 
   @OneToMany('Review',(review : Review) => review.user)
   review : Review[]

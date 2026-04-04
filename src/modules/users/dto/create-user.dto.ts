@@ -1,4 +1,11 @@
-import { IsEmail, IsNotEmpty, MinLength, IsOptional } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  MinLength,
+  IsOptional,
+  Max,
+  IsPhoneNumber,
+} from 'class-validator';
 
 export class CreateUserDto {
   @IsEmail()
@@ -12,6 +19,8 @@ export class CreateUserDto {
   fullName?: string;
 
   @IsOptional()
+  @Max(11, { message: 'Phone number must be at most 11 characters long' })
+  @IsPhoneNumber('VN', { message: 'Invalid phone number format' })
   phoneNumber?: string;
 
   @IsOptional()
