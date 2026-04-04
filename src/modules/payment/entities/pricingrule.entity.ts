@@ -1,4 +1,4 @@
-import { ParkingLot } from "src/modules/parking/entities/parking-lot.entity";
+import { ParkingLot } from "src/modules/parking-lot/entities/parking-lot.entity";
 import { ParkingZone } from "src/modules/parking-lot/entities/parking-zone.entity";
 import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
 
@@ -12,12 +12,6 @@ export class PricingRule{
 
     @Column()
     price_per_day:number;
-
-    @Column({type : 'timestamp'})
-    start_time:Date;
-
-    @Column({type : 'timestamp'})
-    end_time:Date;
 
     @ManyToOne('ParkingLot',(lot : ParkingLot) => lot.pricingRule)
     @JoinColumn({name : 'parking_lot_id'})

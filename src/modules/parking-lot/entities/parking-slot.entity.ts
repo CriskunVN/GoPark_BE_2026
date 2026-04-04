@@ -16,10 +16,10 @@ export class ParkingSlot {
   @Column()
   code: string;
 
-  @Column()
+  @Column({nullable : true})
   type: string;
 
-  @Column()
+  @Column({nullable : true})
   status: string; // available, occupied, reserved
 
   @ManyToOne(

@@ -24,6 +24,7 @@ import { WalkInDto } from './dto/walk-in.dto';
 import { User } from '../users/entities/user.entity';
 import { Profile } from '../users/entities/profile.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
+import { Review } from '../users/entities/review.entity';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -46,6 +47,8 @@ export class ParkingLotService {
 
     @InjectRepository(Vehicle)
     private vehicleRepository: Repository<Vehicle>,
+    @InjectRepository(Review)
+    private reviewRepository : Repository<Review>,
 
     private requestService: RequestService,
 
@@ -419,7 +422,7 @@ export class ParkingLotService {
     //lấy thông tin bãi đỗ cùng với các tầng, zone, slot để hiển thị trên map khi booking
     const lot = await this.parkingLotRepository.findOne({
       where: {id : lotid},
-      relations : ['owner','pricingRule','parkingFloor','parkingFloor.parkingZone','parkingFloor.parkingZone.slot']
+      relations : ['owner','pricingRule','pricingRule.parkingZone','parkingFloor','parkingFloor.parkingZone','parkingFloor.parkingZone.slot']
     })
 
     if(!lot) throw new NotFoundException('Not found Parking Lot')
@@ -435,5 +438,55 @@ export class ParkingLotService {
       ...lot,
       userVehicles : vehicleUser
     };
+  }
+
+  //bãi đỗ xe gần nhất
+  async haversineParkingLot(parkingLotId:number,lat:number,lng:number){
+    return await this.parkingLotRepository
+    .createQueryBuilder('pl')
+    .leftJoin('Review', 'r', 'r.parking_lot_id = pl.id')
+    .select([
+      'pl.id AS id', 
+      'pl.name AS name', 
+      'pl.address AS address', 
+      'pl.image AS image'       
+    ])
+    // parking-lot.service.ts
+    .addSelect('ROUND(COALESCE(AVG(r.rating), 0), 1)', 'avgRating')
+    .addSelect(
+      `ST_DistanceSphere(
+        ST_MakePoint(pl.lng::float, pl.lat::float), 
+        ST_MakePoint(:lng::float, :lat::float)
+      ) / 1000`, 
+      'distance'
+    )
+    // QUAN TRỌNG: Phải setParameters ở đây để addSelect nhận được lat/lng
+    .setParameters({ 
+      lng: Number(lng), 
+      lat: Number(lat), 
+      parkingLotId 
+    })
+    .where('pl.id != :parkingLotId AND pl.status = :status', { 
+      parkingLotId, 
+      status: 'INACTIVE' // Dùng chuỗi 'ACTIVE' thay vì true hay 1
+    })
+    .groupBy('pl.id')
+    .addGroupBy('pl.name')
+    .addGroupBy('pl.address')
+    .addGroupBy('pl.image')
+    .orderBy('distance', 'ASC')
+    .limit(4)
+    .getRawMany();
+  }
+
+  //lấy bình luận
+  async getCommentUser(parkingLotId:number){
+    return this.reviewRepository.find({
+      where : {
+        lot : {id:parkingLotId}
+      },
+      relations :['user.profile'],
+      order : {created_at : 'DESC'}
+    })
   }
 }

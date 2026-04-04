@@ -8,6 +8,7 @@ import type { ParkingLot } from '../../parking-lot/entities/parking-lot.entity';
 import type { Request } from '../../request/entities/request.entity';
 import { BaseEntity } from 'src/common/entity/base.entity';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
+import { Review } from './review.entity';
 
 @Entity('users')
 export class User extends BaseEntity {
@@ -59,4 +60,7 @@ export class User extends BaseEntity {
     cascade: true,
   })
   requests: Request[];
+
+  @OneToMany('Review',(review : Review) => review.user)
+  review : Review[]
 }

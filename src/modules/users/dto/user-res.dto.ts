@@ -15,6 +15,14 @@ export class VehicleResDto {
   image: string;
 }
 
+export class BookingResDto {
+  id: number;
+  status: string;
+  qrCode?: any; // Hoặc định nghĩa rõ DTO của QR Code
+  vehicle?: any;
+  created_at:Date
+}
+
 export class UserResDto {
   id: string;
   email: string;
@@ -24,6 +32,7 @@ export class UserResDto {
   roles: string[];
   profile: UserProfileResDto | null;
   vehicles: VehicleResDto[];
+  bookings: BookingResDto[];
 
   static fromEntity(user: User): UserResDto {
     return {
@@ -51,6 +60,17 @@ export class UserResDto {
             plate_number: v.plate_number,
             type: v.type,
             image: v.image,
+          }))
+        : [],
+      
+      // 2. MAP DỮ LIỆU BOOKINGS TỪ ENTITY SANG DTO
+      bookings: user.bookings 
+        ? user.bookings.map((b) => ({
+            id: b.id,
+            status: b.status,
+            qrCode: b.qrCode, // Đảm bảo relation qrCode đã được load ở findOne
+            vehicle: b.vehicle,
+            created_at:b.created_at
           }))
         : [],
     };

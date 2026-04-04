@@ -27,6 +27,7 @@ export class PaymentController {
     const orderInfo = `NapTien_${userId}`;
     
     const url = this.vnpayService.createPaymentUrl(body.amount, ipAddr, orderInfo, userId);
+    console.log(url)
     return { success: true, url };
   }
 
