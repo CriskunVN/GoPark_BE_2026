@@ -212,4 +212,9 @@ export class UsersService {
     }
     return user.profile?.name || 'Tên không có';
   }
+
+  // =========== Đếm tổng số người dùng ================
+  async countTotalUsers() {
+    return this.usersRepository.count();
+  }
 }

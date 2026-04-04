@@ -37,3 +37,10 @@ export enum SlotStatus {
   RESERVED = 'RESERVED',
   DISABLED = 'DISABLED', // Slot bị vô hiệu hoá khi total_slots giảm
 }
+
+export enum ActivityStatus {
+  SUCCESS = 'SUCCESS',
+  WARNING = 'WARNING',
+  ERROR = 'ERROR',
+  INFO = 'INFO',
+}
