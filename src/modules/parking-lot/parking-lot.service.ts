@@ -468,7 +468,7 @@ export class ParkingLotService {
     })
     .where('pl.id != :parkingLotId AND pl.status = :status', { 
       parkingLotId, 
-      status: 'INACTIVE' // Dùng chuỗi 'ACTIVE' thay vì true hay 1
+      status: 'INACTIVE' 
     })
     .groupBy('pl.id')
     .addGroupBy('pl.name')
