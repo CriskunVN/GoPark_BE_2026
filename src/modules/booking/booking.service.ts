@@ -38,42 +38,97 @@ export class BookingService {
     private readonly activityService: ActivityService,
   ) {}
 
-  // ================= BOOKING =================
+    //Booking
+    async createBooking(bookingdto: CreateBookingDto) {
+      try {
+      //dọn dẹp booking quá hạn
+        await this.bookingRepository
+        .createQueryBuilder()
+        .delete()
+        .from(Booking)
+        .where("status = :status", { status: 'PENDING' })
+        .andWhere("created_at < :expiredTime", { 
+          expiredTime: new Date(Date.now() - 15 * 60 * 1000) // Quá 60 phút
+        })
+        .execute();
 
-  async createBooking(bookingdto: CreateBookingDto) {
-    const slot = await this.parkingSlotRepository.findOne({
-      where: { id: bookingdto.slot_id },
-    });
+      const slot = await this.parkingSlotRepository.findOne({
+        where: {
+          id: bookingdto.slot_id,
+        },
+      });
 
     if (!slot) {
       throw new NotFoundException('Không tìm thấy chỗ đỗ');
     }
 
-    if (slot.status.toLowerCase() !== 'available') {
-      throw new BadRequestException('Chỗ này không khả dụng');
-    }
+      //kiểm tra trạng thái
+      if (slot.status.toLowerCase() == 'booked') {
+        throw new BadRequestException('Chỗ này đã được đặt');
+      }
 
-    const newBooking = this.bookingRepository.create({
-      start_time: bookingdto.start_time,
-      end_time: bookingdto.end_time,
-      status: bookingdto.status,
-      user: { id: bookingdto.user_id },
-      vehicle: { id: bookingdto.vehicle_id },
-      parkingLot: { id: bookingdto.parking_lot_id },
-      slot: { id: bookingdto.slot_id },
-    });
 
-    const savedBooking = await this.bookingRepository.save(newBooking);
+      //kiểm tra xem user đã có booking pending nào chưa
+      let newbooking = await this.bookingRepository.findOne({
+        where : {
+          user : {id:bookingdto.user_id},
+          status : 'PENDING'
+      },
+        relations:['qrCode'],
+      })
 
-    const qrCode = this.qrcodeRepository.create({
-      booking: savedBooking,
-      content: `PARK-${uuidv4()}`,
-      status: 'active',
-    });
+      if (newbooking) {
+        // 2. NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
+        newbooking.start_time = bookingdto.start_time;
+        newbooking.end_time = bookingdto.end_time;
+        newbooking.vehicle = { id: bookingdto.vehicle_id } as any;
+        newbooking.parkingLot = { id: bookingdto.parking_lot_id } as any;
+        newbooking.slot = { id: bookingdto.slot_id } as any;
+        // Cập nhật lại ngày tạo để tính lại thời gian hết hạn 15 phút từ lúc này
+        newbooking.created_at = new Date(); 
+      }else{
 
-    await this.qrcodeRepository.save(qrCode);
+        newbooking = this.bookingRepository.create({
+        start_time: bookingdto.start_time,
+        end_time: bookingdto.end_time,
+        status: bookingdto.status,
+        user: { id: bookingdto.user_id },
+        vehicle: { id: bookingdto.vehicle_id },
+        parkingLot: { id: bookingdto.parking_lot_id },
+        slot: { id: bookingdto.slot_id },
+      });
+      }
+      const savedBooking= await this.bookingRepository.save(newbooking);
 
-    // ======= add activity log ==================
+      //tạo qr
+      let qrCode = await this.qrcodeRepository.findOne({
+        where: { booking: { id: savedBooking.id } }
+      });
+      if (!qrCode) {
+        qrCode = this.qrcodeRepository.create({
+        booking:savedBooking,
+        content:`PARK-${uuidv4()}`, // Tạo chuỗi ngẫu nhiên duy nhất
+        status : 'active'
+      })
+
+      await this.qrcodeRepository.save(qrCode)
+        } else {
+        // Nếu đã có QR rồi, có thể cập nhật nội dung mới nếu muốn, hoặc giữ nguyên
+        qrCode.status = 'active'; 
+        await this.qrcodeRepository.save(qrCode);
+      }
+      // // --- GỬI EMAIL TỰ ĐỘNG ---
+      // try {
+      //   // Gọi hàm sendEmail bạn đã định nghĩa ở dưới
+      //   // Lưu ý: Nên dùng setTimeout hoặc Background Job nếu muốn API phản hồi nhanh hơn
+      //   await this.sendEmail(savedBooking.id); 
+      //   console.log(`Email QR đã được gửi cho booking: ${savedBooking.id}`);
+      // } catch (emailError) {
+      //   // Không throw lỗi ở đây để tránh làm hỏng giao dịch đặt chỗ nếu chỉ lỗi email
+      //   console.error('Lỗi gửi email nhưng đặt chỗ vẫn thành công:', emailError);
+      // }
+      
+      // ======= add activity log ==================
 
     await this.activityService.logActivity({
       type: ActivityType.BOOKING_NEW,
@@ -86,13 +141,17 @@ export class BookingService {
       },
     });
 
-    return {
-      ...savedBooking,
-      qrCodeContent: qrCode.content,
-    };
-  }
 
-  // ================= SCAN QR =================
+      return {
+        ...savedBooking,
+        qrCodeContent:qrCode.content//trả về để app vẽ hình QR
+      }
+      } catch (error) {
+      // In lỗi ra terminal để bạn đọc được nó bị gì
+      console.error("LỖI TẠI CREATE_BOOKING:", error); 
+      
+    }
+    }
 
   async scanQRCode(content: string, gateId: number) {
     const qrCode = await this.qrcodeRepository.findOne({

@@ -15,6 +15,7 @@ import { BookingService } from '../booking/booking.service';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityType } from 'src/common/enums/type.enum';
 import { ActivityStatus } from 'src/common/enums/status.enum';
+import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 @Injectable()
 export class WalletService {
   constructor(
@@ -58,6 +59,8 @@ export class WalletService {
     amount: number,
     bookingId: string,
   ): Promise<boolean> {
+
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
 
@@ -128,11 +131,29 @@ export class WalletService {
       });
       await queryRunner.manager.save(ownerTx);
 
+      
+      // Kiểm tra xem bookingId gửi lên có thực sự là một chuỗi số không
+      const numericBookingId = parseInt(bookingId, 10);
+      
+      
+      if (isNaN(numericBookingId)) {
+        // Log ra để kiểm tra xem thực tế nó nhận được giá trị gì (undefined, null, hay "object")
+        console.error("LỖI: bookingId nhận được không phải là số hợp lệ:", bookingId);
+        throw new BadRequestException('Mã đặt chỗ không hợp lệ để xử lý thanh toán.');
+      }
+      const booking = await queryRunner.manager.findOne(Booking, {
+        where: { id: numericBookingId },
+        relations: ['slot'], // Quan trọng: phải lấy relation slot
+      });
+
       // Cập nhật trạng thái Booking sang 'confirmed'
-      await queryRunner.manager.update(Booking, bookingId, {
+      await queryRunner.manager.update(Booking, numericBookingId, {
         status: 'confirmed',
       });
 
+      await queryRunner.manager.update(ParkingSlot,booking?.slot.id,{
+        status : 'booked'
+      })
       // Lưu toàn bộ phiên giao dịch nếu mọi thứ thành công
       await queryRunner.commitTransaction();
 

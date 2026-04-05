@@ -76,6 +76,7 @@ export class PaymentController {
       orderInfo,
       userId,
     );
+    console.log(url)
     return { success: true, url };
   }
 
