@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, forwardRef, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  forwardRef,
+  Inject,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Wallet } from './entities/wallet.entity';
@@ -7,6 +12,9 @@ import { TransactionType } from './enums/transaction-type.enum';
 import { TransactionStatus } from './enums/transaction-status.enum';
 import { Booking } from '../booking/entities/booking.entity';
 import { BookingService } from '../booking/booking.service';
+import { ActivityService } from '../activity/activity.service';
+import { ActivityType } from 'src/common/enums/type.enum';
+import { ActivityStatus } from 'src/common/enums/status.enum';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 @Injectable()
 export class WalletService {
@@ -16,8 +24,9 @@ export class WalletService {
     @InjectRepository(WalletTransaction)
     private readonly transactionRepository: Repository<WalletTransaction>,
     private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => BookingService)) 
+    @Inject(forwardRef(() => BookingService))
     private readonly bookingService: BookingService,
+    private readonly activityService: ActivityService,
   ) {}
 
   /**
@@ -153,6 +162,29 @@ export class WalletService {
         console.error('Lỗi gửi email sau khi thanh toán:', err);
       });
 
+      const booked = await this.dataSource.getRepository(Booking).findOne({
+        where: { id: Number(bookingId) },
+        relations: ['user', 'user.profile', 'parkingLot'],
+      });
+
+      const userName =
+        booked?.user?.profile?.name ||
+        booked?.user?.email ||
+        `user #${booked?.user?.id ?? customerId}`;
+      const parkingLotName = booked?.parkingLot?.name || 'bãi xe';
+
+      await this.activityService.logActivity({
+        type: ActivityType.PAYMENT_SUCCESS,
+        content: `Người dùng ${userName} đã thanh toán booking tại ${parkingLotName}`,
+        status: ActivityStatus.SUCCESS,
+        userId: booked?.user?.id ?? customerId,
+        meta: {
+          bookingId,
+          amount,
+          ownerId,
+        },
+      });
+
       return true;
     } catch (error) {
       // Hoàn tác trả lại tiền nếu có bất kỳ lỗi gì
@@ -171,7 +203,6 @@ export class WalletService {
     userId: string,
     amount: number,
     refId: string,
-    
   ): Promise<WalletTransaction> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -208,10 +239,30 @@ export class WalletService {
       });
       const savedTx = await queryRunner.manager.save(transaction);
 
+      await this.activityService.logActivity({
+        type: ActivityType.WALLET_DEPOSIT,
+        content: `Người dùng đã nạp tiền vào ví: +${amount}đ`,
+        status: ActivityStatus.SUCCESS,
+        userId,
+        meta: {
+          amount,
+          refId,
+        },
+      });
       await queryRunner.commitTransaction();
       return savedTx;
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      await this.activityService.logActivity({
+        type: ActivityType.WALLET_DEPOSIT,
+        content: `Người dùng đã nạp tiền vào ví nhưng gặp lỗi: ${error.message}`,
+        status: ActivityStatus.ERROR,
+        userId,
+        meta: {
+          amount,
+          refId,
+        },
+      });
       throw error;
     } finally {
       await queryRunner.release();
@@ -266,13 +317,32 @@ export class WalletService {
       });
       const savedTx = await queryRunner.manager.save(transaction);
 
+      await this.activityService.logActivity({
+        type: ActivityType.WALLET_WITHDRAW,
+        content: `Người dùng đã yêu cầu rút tiền từ ví: -${amount}đ (chờ xử lý)`,
+        status: ActivityStatus.INFO,
+        userId,
+        meta: {
+          amount,
+          refId,
+        },
+      });
 
       await queryRunner.commitTransaction();
-
 
       return savedTx;
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      await this.activityService.logActivity({
+        type: ActivityType.WALLET_WITHDRAW,
+        content: `Người dùng đã yêu cầu rút tiền từ ví nhưng gặp lỗi: ${error.message}`,
+        status: ActivityStatus.ERROR,
+        userId,
+        meta: {
+          amount,
+          refId,
+        },
+      });
       throw error;
     } finally {
       await queryRunner.release();

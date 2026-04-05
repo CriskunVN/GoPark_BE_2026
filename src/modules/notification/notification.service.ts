@@ -8,6 +8,11 @@ import { Repository } from 'typeorm';
 import { ResNotificationDto } from './dto/res-notification.dto';
 import { User } from '../users/entities/user.entity';
 import { NotificationQueueService } from './jobs/notification-queue.service';
+import {
+  GetNotificationTableDto,
+  NotificationTableItemDto,
+  NotificationTableResponseDto,
+} from './dto/notification-table.dto';
 
 @Injectable()
 export class NotificationService {
@@ -144,5 +149,105 @@ export class NotificationService {
   // ---------- Gửi thông báo theo vai trò (admin, owner, user) ----------
   async sendNotificationToRole(notificationDto: CreateNotificationDto) {
     return this.notificationQueueService.sendToRole(notificationDto);
+  }
+
+  /**
+   * Lấy danh sách thông báo cho bảng admin
+   * Không lọc theo userId, vì admin cần xem toàn bộ thông báo đã tạo.
+   */
+  async getAdminNotificationTable(
+    query: GetNotificationTableDto,
+  ): Promise<NotificationTableResponseDto> {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      type,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+    } = query;
+
+    const skip = (page - 1) * limit;
+
+    let queryBuilder = this.notificationRepository.createQueryBuilder('n');
+
+    if (type) {
+      queryBuilder = queryBuilder.andWhere('n.type = :type', { type });
+    }
+
+    if (search) {
+      queryBuilder = queryBuilder.andWhere(
+        '(n.title ILIKE :search OR n.content ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    const sortColumn = sortBy === 'readAt' ? 'n.createdAt' : 'n.createdAt';
+
+    queryBuilder = queryBuilder.orderBy(sortColumn, sortOrder);
+
+    const total = await queryBuilder.getCount();
+
+    const notifications = await queryBuilder.skip(skip).take(limit).getMany();
+
+    const notificationIds = notifications.map((item) => item.id);
+
+    const stats =
+      notificationIds.length > 0
+        ? await this.notificationRecipientRepository
+            .createQueryBuilder('nr')
+            .select('nr.notification_id', 'notificationId')
+            .addSelect('COUNT(nr.id)', 'recipientCount')
+            .addSelect(
+              'COUNT(CASE WHEN nr.is_read = true THEN 1 END)',
+              'readCount',
+            )
+            .where('nr.notification_id IN (:...notificationIds)', {
+              notificationIds,
+            })
+            .groupBy('nr.notification_id')
+            .getRawMany()
+        : [];
+
+    const statMap = new Map(
+      stats.map((item) => [
+        item.notificationId,
+        {
+          recipientCount: Number(item.recipientCount) || 0,
+          readCount: Number(item.readCount) || 0,
+        },
+      ]),
+    );
+
+    const items: NotificationTableItemDto[] = notifications.map((n) => {
+      const stat = statMap.get(n.id) ?? { recipientCount: 0, readCount: 0 };
+
+      return {
+        id: n.id,
+        title: n.title,
+        type: n.type,
+        targetRole: n.target_role,
+        isRead:
+          stat.recipientCount > 0 && stat.readCount === stat.recipientCount,
+        readSummary: `${stat.readCount}/${stat.recipientCount}`,
+        recipientCount: stat.recipientCount,
+        readCount: stat.readCount,
+        status: stat.recipientCount > 0 ? 'Đã gửi' : 'Chưa có người nhận',
+        createdAt: n.createdAt,
+        readAt: null,
+      };
+    });
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    };
   }
 }

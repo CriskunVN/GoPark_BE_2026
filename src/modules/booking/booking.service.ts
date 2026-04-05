@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Between, Repository } from 'typeorm';
 
 import { Booking } from './entities/booking.entity';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
@@ -15,6 +15,9 @@ import { CreateBookingDto } from './dto/create.dto';
 import { EmailService } from '../auth/email/email.service';
 
 import { v4 as uuidv4 } from 'uuid';
+import { ActivityStatus, InvoiceStatus } from 'src/common/enums/status.enum';
+import { ActivityService } from '../activity/activity.service';
+import { ActivityType } from 'src/common/enums/type.enum';
 
 @Injectable()
 export class BookingService {
@@ -32,6 +35,7 @@ export class BookingService {
     private checkLogRepository: Repository<CheckLog>,
 
     private readonly emailService: EmailService,
+    private readonly activityService: ActivityService,
   ) {}
 
     //Booking
@@ -62,6 +66,7 @@ export class BookingService {
       if (slot.status.toLowerCase() == 'booked') {
         throw new BadRequestException('Chỗ này đã được đặt');
       }
+
 
       //kiểm tra xem user đã có booking pending nào chưa
       let newbooking = await this.bookingRepository.findOne({
@@ -122,6 +127,20 @@ export class BookingService {
       //   // Không throw lỗi ở đây để tránh làm hỏng giao dịch đặt chỗ nếu chỉ lỗi email
       //   console.error('Lỗi gửi email nhưng đặt chỗ vẫn thành công:', emailError);
       // }
+      
+      // ======= add activity log ==================
+
+    await this.activityService.logActivity({
+      type: ActivityType.BOOKING_NEW,
+      content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #${bookingdto.parking_lot_id}`,
+      status: ActivityStatus.SUCCESS,
+      userId: bookingdto.user_id,
+      meta: {
+        parkingLotId: bookingdto.parking_lot_id,
+        slotId: bookingdto.slot_id,
+      },
+    });
+
 
       return {
         ...savedBooking,
@@ -289,6 +308,7 @@ export class BookingService {
   async deleteBooking(id: number) {
     const booking = await this.bookingRepository.findOne({
       where: { id },
+      relations: ['user', 'user.profile', 'parkingLot'],
     });
 
     if (!booking) {
@@ -296,6 +316,23 @@ export class BookingService {
     }
 
     await this.bookingRepository.delete(id);
+
+    const userName =
+      booking.user?.profile?.name ||
+      booking.user?.email ||
+      `user #${booking.user?.id ?? 'N/A'}`;
+    const parkingLotName =
+      booking.parkingLot?.name || `bãi #${booking.parkingLot?.id ?? 'N/A'}`;
+
+    await this.activityService.logActivity({
+      type: ActivityType.BOOKING_CANCELED,
+      content: `Người dùng ${userName} đã hủy chỗ tại ${parkingLotName}`,
+      status: ActivityStatus.WARNING,
+      userId: booking.user?.id,
+      meta: {
+        parkingLotId: booking.parkingLot?.id,
+      },
+    });
 
     return booking;
   }
@@ -365,5 +402,44 @@ export class BookingService {
         startTime: new Date(booking.start_time).toLocaleString('vi-VN'),
       },
     );
+  }
+
+  // ================== Thống kê số lượng booking hôm nay (ADMIN) =================
+  async countTodayBookings() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return this.bookingRepository.count({
+      where: {
+        start_time: Between(today, tomorrow),
+      },
+    });
+  }
+
+  // =========== Tính doanh thu trong tháng (ADMIN) ================
+  async calculateMonthlyRevenue() {
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstDayOfNextMonth = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      1,
+    );
+
+    const revenue = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoinAndSelect('booking.invoice', 'invoice')
+      .where('booking.start_time >= :start AND booking.start_time < :end', {
+        start: firstDayOfMonth,
+        end: firstDayOfNextMonth,
+      })
+      .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(invoice.total)', 'total')
+      .getRawOne();
+
+    return parseFloat(revenue.total) || 0;
   }
 }

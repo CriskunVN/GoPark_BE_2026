@@ -715,7 +715,12 @@ export class ParkingLotService {
   ): Promise<{
     totalAdded: number;
     totalDisabled: number;
-    perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }>;
+    perZone: Array<{
+      zoneId: number;
+      zoneName: string;
+      added: number;
+      disabled: number;
+    }>;
   }> {
     const zones = await this.parkingZoneRepository.find({
       where: {
@@ -729,7 +734,12 @@ export class ParkingLotService {
 
     let totalAdded = 0;
     let totalDisabled = 0;
-    const perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }> = [];
+    const perZone: Array<{
+      zoneId: number;
+      zoneName: string;
+      added: number;
+      disabled: number;
+    }> = [];
 
     for (const zone of zones) {
       const result = await this.generateSlotsForZone(lotId, floorId, zone.id);
@@ -758,7 +768,12 @@ export class ParkingLotService {
       floorName: string;
       totalAdded: number;
       totalDisabled: number;
-      perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }>;
+      perZone: Array<{
+        zoneId: number;
+        zoneName: string;
+        added: number;
+        disabled: number;
+      }>;
     }>;
   }> {
     const lot = await this.parkingLotRepository.findOne({
@@ -778,7 +793,12 @@ export class ParkingLotService {
       floorName: string;
       totalAdded: number;
       totalDisabled: number;
-      perZone: Array<{ zoneId: number; zoneName: string; added: number; disabled: number }>;
+      perZone: Array<{
+        zoneId: number;
+        zoneName: string;
+        added: number;
+        disabled: number;
+      }>;
     }> = [];
 
     for (const floor of lot.parkingFloor) {
@@ -831,6 +851,11 @@ export class ParkingLotService {
     });
   }
 
+  // =========== Đếm tổng số bãi đỗ xe (ADMIN) ================
+  async countTotalParkingLots() {
+    return this.parkingLotRepository.count();
+    }
+  
   //bãi đỗ xe gần nhất
   async haversineParkingLot(parkingLotId:number,lat:number,lng:number){
     return await this.parkingLotRepository

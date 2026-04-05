@@ -76,4 +76,18 @@ export class AdminController {
       data: result,
     };
   }
+
+  // =========== Thống kê tổng quan cho dashboard admin ================
+  @Get('/stats/overview')
+  async getOverviewStats() {
+    const stats = await this.adminService.getOverviewStats();
+    return { data: stats };
+  }
+
+  // =========== Hoạt động gần đây nhất (recent activities) cho dashboard admin ================
+  @Get('/stats/activities-recent')
+  async getRecentActivities() {
+    const activities = await this.adminService.getRecentActivities();
+    return { data: activities };
+  }
 }
