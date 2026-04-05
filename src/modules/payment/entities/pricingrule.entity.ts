@@ -1,5 +1,5 @@
 import { ParkingFloor } from 'src/modules/parking-lot/entities/parking-floor.entity';
-import { ParkingLot } from 'src/modules/parking-lot-lot/entities/parking-lot.entity';
+import { ParkingLot } from 'src/modules/parking-lot/entities/parking-lot.entity';
 import { ParkingZone } from 'src/modules/parking-lot/entities/parking-zone.entity';
 import {
   Column,
