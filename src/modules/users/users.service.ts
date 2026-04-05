@@ -13,6 +13,7 @@ import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
 import { Profile } from './entities/profile.entity';
 import { UserResDto } from './dto/user-res.dto';
+import { Review } from './entities/review.entity';
 
 @Injectable()
 export class UsersService {
@@ -25,6 +26,8 @@ export class UsersService {
     private userRoleRepository: Repository<UserRole>,
     @InjectRepository(Profile)
     private profileRepository: Repository<Profile>,
+    @InjectRepository (Review)
+    private ratingUser : Repository<Review>
   ) {}
   // Tạo người dùng mới với vai trò mặc định là "USER" và thông tin hồ sơ nếu có
   async create(createUserDto: CreateUserDto) {
@@ -105,7 +108,10 @@ export class UsersService {
   async findOne(id: string) {
     const user = await this.usersRepository.findOne({
       where: { id },
-      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles',
+      'bookings',
+      'bookings.qrCode',
+      'bookings.vehicle'],
     });
     if (!user)
       throw new NotFoundException(`Không tìm thấy người dùng với ID ${id}`);
@@ -212,4 +218,5 @@ export class UsersService {
     }
     return user.profile?.name || 'Tên không có';
   }
+
 }

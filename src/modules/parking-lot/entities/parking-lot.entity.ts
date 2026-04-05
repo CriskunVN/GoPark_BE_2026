@@ -13,6 +13,7 @@ import { ParkingLotStatus } from 'src/common/enums/status.enum';
 import { Max, Min } from 'class-validator';
 import { PricingRule } from 'src/modules/payment/entities/pricingrule.entity';
 import { Booking } from 'src/modules/booking/entities/booking.entity';
+import { Review } from 'src/modules/users/entities/review.entity';
 
 type ParkingLotImages = {
   thumbnail?: string; // ảnh đại diện
@@ -49,8 +50,14 @@ export class ParkingLot {
   @Column({nullable: true})
   description?: string;
 
-  @Column({type: 'timestamp', nullable: true})
-  activity_time?: Date;
+  @Column ({type: 'timestamp',nullable:true})
+  open_time:Date
+
+  @Column ({type: 'timestamp',nullable:true})
+  close_time:Date
+
+  @Column({nullable:true})
+  operating_days:string
 
   @Column({
     type: 'decimal',
@@ -58,9 +65,6 @@ export class ParkingLot {
     scale: 1,
     default: 0,
   })
-  @Max(5, { message: 'Vote must be between 0 and 5' })
-  @Min(0, { message: 'Vote must be between 0 and 5' })
-  vote: number;
 
   @Column({
     type: 'jsonb',
@@ -91,4 +95,8 @@ export class ParkingLot {
 
   @OneToMany('Booking',(booking : Booking) => booking.parkingLot)
   booking: Booking[];
+
+  @OneToMany('Review',(review : Review)=> review.lot)
+  review: Review[]
+
 }

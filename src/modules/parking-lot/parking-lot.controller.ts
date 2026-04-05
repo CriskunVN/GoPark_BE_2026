@@ -65,7 +65,19 @@ export class ParkingLotController {
   @Get('map/:lotid')
   async getMapBooing(@Param('lotid') lotid: number, @Req() req: any) {
     const userId = req.user['userId'];
-    return this.parkingLotService.getMapForBooking(lotid, userId);
+    return this.parkingLotService.getMapForBooking(lotid,userId);
+  }
+
+  //bãi đỗ gần nhất
+  @Get('nearby/:lotid')
+  async gethaversineParkingLot(
+  @Param('lotid') lotid :number, 
+  @Query('lat') lat: any, 
+  @Query('lng') lng: any){
+    
+    const latitude = parseFloat(lat) || 0;
+    const longitude = parseFloat(lng) || 0;
+    return this.parkingLotService.haversineParkingLot(lotid,latitude,longitude)
   }
 
   // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
@@ -223,5 +235,11 @@ export class ParkingLotController {
       zoneId,
       includeDisabled === 'true',
     );
+  }
+
+  //lấy comment
+  @Get('comment/:lotid')
+  async getComment(@Param('lotid') lotid : number){
+    return await this.parkingLotService.getCommentUser(lotid)
   }
 }
