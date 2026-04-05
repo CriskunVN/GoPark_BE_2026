@@ -20,13 +20,13 @@ import { Vehicle } from '../vehicles/entities/vehicle.entity';
       Booking,
       ParkingZone,
       ParkingFloor,
-      Vehicle
+      Vehicle,
     ]),
     RequestModule,
     UsersModule,
   ],
   controllers: [ParkingLotController],
   providers: [ParkingLotService],
-  exports: [TypeOrmModule],
+  exports: [TypeOrmModule, ParkingLotService],
 })
 export class ParkingModule {}

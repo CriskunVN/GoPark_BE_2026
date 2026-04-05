@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { NotificationService } from './notification.service';
 import { NotificationQueueService } from './jobs/notification-queue.service';
@@ -11,6 +19,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from 'src/common/enums/role.enum';
+import { GetNotificationTableDto } from './dto/notification-table.dto';
 
 @Controller('admin/notifications')
 export class AdminNotificationController {
@@ -76,6 +85,22 @@ export class AdminNotificationController {
     return {
       message: result.message,
       jobId: result.jobId,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('table/list')
+  async getNotificationTable(
+    @Req() req: any,
+    @Query() query: GetNotificationTableDto,
+  ) {
+    const data =
+      await this.notificationService.getAdminNotificationTable(query);
+
+    return {
+      message: 'Lấy danh sách thông báo cho bảng thành công',
+      data,
     };
   }
 }

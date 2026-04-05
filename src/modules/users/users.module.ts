@@ -8,6 +8,7 @@ import { Permission } from './entities/permission.entity';
 import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { Profile } from './entities/profile.entity';
+import { Review } from './entities/review.entity';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { Profile } from './entities/profile.entity';
       UserRole,
       RolePermission,
       Profile,
+      Review
     ]),
   ],
   controllers: [UsersController],

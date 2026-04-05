@@ -11,12 +11,18 @@ import { RequestService } from '../request/request.service';
 import { ParkingLotStatus, RequestStatus } from 'src/common/enums/status.enum';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RequestType, Request } from '../request/entities/request.entity';
+import { ParkingLotService } from '../parking-lot/parking-lot.service';
+import { BookingService } from '../booking/booking.service';
+import { ActivityService } from '../activity/activity.service';
 
 @Injectable()
 export class AdminService {
   constructor(
     private readonly userService: UsersService,
     private readonly requestService: RequestService,
+    private readonly parkingLotService: ParkingLotService,
+    private readonly bookingService: BookingService,
+    private readonly activityService: ActivityService,
     @InjectRepository(Request) private requestRepository: Repository<Request>,
   ) {}
 
@@ -171,5 +177,26 @@ export class AdminService {
         // await this.emailService.sendApprovalEmail(request.requester.email);
       },
     );
+  }
+
+  // totalUsers, totalParkingLots, todayBookings, monthlyRevenue (kèm % tăng trưởng)
+  async getOverviewStats() {
+    const totalUsers = await this.userService.countTotalUsers();
+    const totalParkingLots =
+      await this.parkingLotService.countTotalParkingLots();
+    const todayBookings = await this.bookingService.countTodayBookings();
+    const monthlyRevenue = await this.bookingService.calculateMonthlyRevenue();
+
+    return {
+      totalUsers,
+      totalParkingLots,
+      todayBookings,
+      monthlyRevenue,
+    };
+  }
+
+  // =========== Lấy 5 hoạt động gần đây nhất (recent activities) cho dashboard admin ================
+  async getRecentActivities() {
+    return this.activityService.getRecentActivities(5);
   }
 }

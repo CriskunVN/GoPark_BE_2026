@@ -18,7 +18,14 @@ async function bootstrap() {
   app.use(morgan('dev')); // Log request method, URL, status, response time
   app.useGlobalInterceptors(new TransformInterceptor()); // Áp dụng interceptor để chuẩn hóa response
   app.useGlobalFilters(new HttpExceptionFilter()); // Áp dụng filter để chuẩn hóa lỗi
-  app.useGlobalPipes(new ValidationPipe()); // Bật validation pipe toàn cục để tự động validate DTOs
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+    }),
+  ); // Bật validation pipe toàn cục để tự động validate DTOs
   await app.listen(process.env.PORT ?? 3000);
   console.log('Server is running on port', process.env.PORT);
 }
