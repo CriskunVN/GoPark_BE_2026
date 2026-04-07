@@ -166,14 +166,22 @@ export class WalletService {
 
       const booked = await this.dataSource.getRepository(Booking).findOne({
         where: { id: Number(bookingId) },
-        relations: ['user', 'user.profile', 'parkingLot'],
+        relations: [
+          'user',
+          'user.profile',
+          'slot',
+          'slot.parkingZone',
+          'slot.parkingZone.parkingFloor',
+          'slot.parkingZone.parkingFloor.parkingLot',
+        ],
       });
 
       const userName =
         booked?.user?.profile?.name ||
         booked?.user?.email ||
         `user #${booked?.user?.id ?? customerId}`;
-      const parkingLotName = booked?.parkingLot?.name || 'bãi xe';
+      const parkingLotName =
+        booked?.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'bãi xe';
 
       await this.activityService.logActivity({
         type: ActivityType.PAYMENT_SUCCESS,
