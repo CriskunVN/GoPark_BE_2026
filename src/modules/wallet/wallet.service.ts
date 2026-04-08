@@ -8,6 +8,7 @@ import { TransactionStatus } from './enums/transaction-status.enum';
 import { Booking } from '../booking/entities/booking.entity';
 import { BookingService } from '../booking/booking.service';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
+import { SlotStatus } from 'src/common/enums/status.enum';
 @Injectable()
 export class WalletService {
   constructor(
@@ -143,7 +144,7 @@ export class WalletService {
       });
 
       await queryRunner.manager.update(ParkingSlot,booking?.slot.id,{
-        status : 'booked'
+        status : SlotStatus.OCCUPIED
       })
       // Lưu toàn bộ phiên giao dịch nếu mọi thứ thành công
       await queryRunner.commitTransaction();
