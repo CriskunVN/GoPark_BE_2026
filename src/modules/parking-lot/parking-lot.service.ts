@@ -491,7 +491,7 @@ export class ParkingLotService {
   async getFloorsByParkingLot(lotId: number) {
     return await this.parkingFloorRepository.find({
       where: { parkingLot: { id: lotId } },
-      relations: ['parkingZone'],
+      relations: ['parkingZones'],
     });
   }
 
@@ -930,14 +930,10 @@ export class ParkingLotService {
   // =========== Đếm tổng số bãi đỗ xe (ADMIN) ================
   async countTotalParkingLots() {
     return this.parkingLotRepository.count();
-    }
-  
+  }
+
   //bãi đỗ xe gần nhất
-  async haversineParkingLot(
-    parkingLotId: number,
-    lat: number,
-    lng: number,
-  ) {
+  async haversineParkingLot(parkingLotId: number, lat: number, lng: number) {
     return await this.parkingLotRepository
       .createQueryBuilder('pl')
       .leftJoin('Review', 'r', 'r.parking_lot_id = pl.id')
