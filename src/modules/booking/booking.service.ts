@@ -38,36 +38,34 @@ export class BookingService {
     private readonly activityService: ActivityService,
   ) {}
 
-  //Booking
+  // Booking
   async createBooking(bookingdto: CreateBookingDto) {
     try {
-      //dọn dẹp booking quá hạn
+      // Dọn dẹp booking quá hạn
       await this.bookingRepository
         .createQueryBuilder()
         .delete()
         .from(Booking)
         .where('status = :status', { status: 'PENDING' })
         .andWhere('created_at < :expiredTime', {
-          expiredTime: new Date(Date.now() - 15 * 60 * 1000), // Quá 60 phút
+          expiredTime: new Date(Date.now() - 15 * 60 * 1000), // Quá 15 phút
         })
         .execute();
 
       const slot = await this.parkingSlotRepository.findOne({
-        where: {
-          id: bookingdto.slot_id,
-        },
+        where: { id: bookingdto.slot_id },
       });
 
       if (!slot) {
         throw new NotFoundException('Không tìm thấy chỗ đỗ');
       }
 
-      //kiểm tra trạng thái
-      if (slot.status.toLowerCase() == 'booked') {
+      // Kiểm tra trạng thái
+      if (slot.status.toLowerCase() === 'booked') {
         throw new BadRequestException('Chỗ này đã được đặt');
       }
 
-      //kiểm tra xem user đã có booking pending nào chưa
+      // Kiểm tra xem user đã có booking pending nào chưa
       let newbooking = await this.bookingRepository.findOne({
         where: {
           user: { id: bookingdto.user_id },
@@ -77,13 +75,11 @@ export class BookingService {
       });
 
       if (newbooking) {
-        // 2. NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
+        // NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
         newbooking.start_time = bookingdto.start_time;
         newbooking.end_time = bookingdto.end_time;
         newbooking.vehicle = { id: bookingdto.vehicle_id } as any;
-        newbooking.parkingLot = { id: bookingdto.parking_lot_id } as any;
         newbooking.slot = { id: bookingdto.slot_id } as any;
-        // Cập nhật lại ngày tạo để tính lại thời gian hết hạn 15 phút từ lúc này
         newbooking.created_at = new Date();
       } else {
         newbooking = this.bookingRepository.create({
@@ -98,10 +94,11 @@ export class BookingService {
       }
       const savedBooking = await this.bookingRepository.save(newbooking);
 
-      //tạo qr
+      // Tạo QR
       let qrCode = await this.qrcodeRepository.findOne({
         where: { booking: { id: savedBooking.id } },
       });
+
       if (!qrCode) {
         qrCode = this.qrcodeRepository.create({
           booking: savedBooking,
@@ -197,33 +194,14 @@ export class BookingService {
 
   getAllBooking() {
     return this.bookingRepository.find({
-      select: {
-        vehicle: {
-          plate_number: true,
-          type: true,
-        },
-        user: {
-          id: true,
-          profile: {
-            id: true,
-            name: true,
-          },
-        },
-        parkingLot: {
-          name: true,
-          address: true,
-        },
-        invoice: {
-          id: true,
-          total: true,
-        },
-      },
       relations: [
         'user',
         'user.profile',
         'vehicle',
         'slot',
-        'parkingLot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'slot.parkingZone.parkingFloor.parkingLot',
         'invoice',
       ],
     });
@@ -238,38 +216,16 @@ export class BookingService {
           id: userid,
         },
       },
-      select: {
-        user: {
-          id: true,
-          email: true,
-          profile: {
-            id: true,
-            name: true,
-          },
-        },
-        vehicle: {
-          plate_number: true,
-          type: true,
-        },
-        parkingLot: {
-          id: true,
-          name: true,
-          address: true,
-        },
-        invoice: {
-          total: true,
-        },
-      },
       relations: [
         'user',
         'qrCode',
         'slot',
-        'parkingLot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'slot.parkingZone.parkingFloor.parkingLot',
         'vehicle',
         'user.profile',
         'invoice',
-        'parkingLot.parkingFloor',
-        'parkingLot.parkingFloor.parkingZone',
       ],
       order: {
         id: 'DESC',
@@ -288,8 +244,6 @@ export class BookingService {
     if (bookingdto.user_id) updateData.user = { id: bookingdto.user_id };
     if (bookingdto.vehicle_id)
       updateData.vehicle = { id: bookingdto.vehicle_id };
-    if (bookingdto.parking_lot_id)
-      updateData.parkingLot = { id: bookingdto.parking_lot_id };
     if (bookingdto.slot_id) updateData.slot = { id: bookingdto.slot_id };
 
     await this.bookingRepository.update(id, updateData);
@@ -304,7 +258,14 @@ export class BookingService {
   async deleteBooking(id: number) {
     const booking = await this.bookingRepository.findOne({
       where: { id },
-      relations: ['user', 'user.profile', 'parkingLot'],
+      relations: [
+        'user',
+        'user.profile',
+        'slot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'slot.parkingZone.parkingFloor.parkingLot',
+      ],
     });
 
     if (!booking) {
@@ -317,8 +278,9 @@ export class BookingService {
       booking.user?.profile?.name ||
       booking.user?.email ||
       `user #${booking.user?.id ?? 'N/A'}`;
+    const parkingLot = booking.slot?.parkingZone?.parkingFloor?.parkingLot;
     const parkingLotName =
-      booking.parkingLot?.name || `bãi #${booking.parkingLot?.id ?? 'N/A'}`;
+      parkingLot?.name || `bãi #${parkingLot?.id ?? 'N/A'}`;
 
     await this.activityService.logActivity({
       type: ActivityType.BOOKING_CANCELED,
@@ -326,7 +288,7 @@ export class BookingService {
       status: ActivityStatus.WARNING,
       userId: booking.user?.id,
       meta: {
-        parkingLotId: booking.parkingLot?.id,
+        parkingLotId: booking.slot?.parkingZone?.parkingFloor?.parkingLot?.id,
       },
     });
 
@@ -369,12 +331,12 @@ export class BookingService {
       relations: [
         'user',
         'user.profile',
-        'parkingLot',
         'qrCode',
         'vehicle',
-        'parkingLot.parkingFloor',
-        'parkingLot.parkingFloor.parkingZone',
         'slot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'slot.parkingZone.parkingFloor.parkingLot',
       ],
     });
 
@@ -384,17 +346,19 @@ export class BookingService {
 
     const displayName = booking.user.profile.name;
 
+    const floorDetails = booking.slot?.parkingZone?.parkingFloor;
+    const parkingLot = floorDetails?.parkingLot;
+
     return this.emailService.sendBookingQREmail(
       booking.user.email,
       displayName,
       {
         qrContent: booking.qrCode?.content,
-        parkingLot: booking.parkingLot?.name,
+        parkingLot: parkingLot?.name,
         endTime: new Date(booking.end_time).toLocaleString('vi-VN'),
         code: booking.slot?.code,
-        floor_number: booking.parkingLot?.parkingFloor?.[0]?.floor_number,
-        floor_zone:
-          booking.parkingLot?.parkingFloor?.[0]?.parkingZone?.[0]?.zone_name,
+        floor_number: floorDetails?.floor_number,
+        floor_zone: booking.slot?.parkingZone?.zone_name,
         startTime: new Date(booking.start_time).toLocaleString('vi-VN'),
       },
     );

@@ -1,5 +1,4 @@
-import { MESSAGES } from '@nestjs/core/constants';
-import { IsDateString, IsEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class CreateBookingDto {
   @IsDateString()
@@ -18,12 +17,9 @@ export class CreateBookingDto {
   vehicle_id: number;
 
   @IsNumber()
-  parking_lot_id: number;
-
-  @IsNumber()
   slot_id: number;
 
   @IsOptional()
   @IsDateString()
-  created_at?:Date;
+  created_at?: Date;
 }
