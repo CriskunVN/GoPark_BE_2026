@@ -88,7 +88,6 @@ export class BookingService {
           status: bookingdto.status,
           user: { id: bookingdto.user_id },
           vehicle: { id: bookingdto.vehicle_id },
-          parkingLot: { id: bookingdto.parking_lot_id },
           slot: { id: bookingdto.slot_id },
         });
       }
@@ -127,11 +126,10 @@ export class BookingService {
 
       await this.activityService.logActivity({
         type: ActivityType.BOOKING_NEW,
-        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #${bookingdto.parking_lot_id}`,
+        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #`,
         status: ActivityStatus.SUCCESS,
         userId: bookingdto.user_id,
         meta: {
-          parkingLotId: bookingdto.parking_lot_id,
           slotId: bookingdto.slot_id,
         },
       });
