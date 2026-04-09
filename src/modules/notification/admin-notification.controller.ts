@@ -18,7 +18,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { Role } from 'src/common/enums/role.enum';
+import { UserRoleEnum } from 'src/common/enums/role.enum';
 import { GetNotificationTableDto } from './dto/notification-table.dto';
 
 @Controller('admin/notifications')
@@ -49,7 +49,7 @@ export class AdminNotificationController {
   // ----------- Gửi thông báo đến một hoặc một vài người dùng ----------
   @Post('send-to-user')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(UserRoleEnum.ADMIN)
   async sendToUser(@Body() body: SendNotificationToUsersDto) {
     const { notification, userIds } = body;
     const result = await this.notificationQueueService.sendToUsers(
@@ -65,7 +65,7 @@ export class AdminNotificationController {
   // ----------- Gửi thông báo đến tất cả người dùng ----------
   @Post('broadcast')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(UserRoleEnum.ADMIN)
   async broadcastNotification(@Body() body: BroadcastNotificationDto) {
     const { notification } = body;
     const result = await this.notificationQueueService.broadcast(notification);
@@ -78,7 +78,7 @@ export class AdminNotificationController {
   // ----------- Gửi thông báo theo vai trò (admin, owner, user) ----------
   @Post('send-to-role')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(UserRoleEnum.ADMIN)
   async sendToRole(@Body() body: SendNotificationToRolesDto) {
     const { notification } = body;
     const result = await this.notificationQueueService.sendToRole(notification);
@@ -89,7 +89,7 @@ export class AdminNotificationController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(UserRoleEnum.ADMIN)
   @Get('table/list')
   async getNotificationTable(
     @Req() req: any,

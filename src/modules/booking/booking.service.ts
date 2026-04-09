@@ -88,6 +88,7 @@ export class BookingService {
           status: bookingdto.status,
           user: { id: bookingdto.user_id },
           vehicle: { id: bookingdto.vehicle_id },
+          parkingLot: { id: bookingdto.parking_lot_id },
           slot: { id: bookingdto.slot_id },
         });
       }
@@ -101,31 +102,46 @@ export class BookingService {
       if (!qrCode) {
         qrCode = this.qrcodeRepository.create({
           booking: savedBooking,
-          content: `PARK-${uuidv4()}`,
+          content: `PARK-${uuidv4()}`, // Tạo chuỗi ngẫu nhiên duy nhất
           status: 'active',
         });
+
         await this.qrcodeRepository.save(qrCode);
       } else {
+        // Nếu đã có QR rồi, có thể cập nhật nội dung mới nếu muốn, hoặc giữ nguyên
         qrCode.status = 'active';
         await this.qrcodeRepository.save(qrCode);
       }
+      // // --- GỬI EMAIL TỰ ĐỘNG ---
+      // try {
+      //   // Gọi hàm sendEmail bạn đã định nghĩa ở dưới
+      //   // Lưu ý: Nên dùng setTimeout hoặc Background Job nếu muốn API phản hồi nhanh hơn
+      //   await this.sendEmail(savedBooking.id);
+      //   console.log(`Email QR đã được gửi cho booking: ${savedBooking.id}`);
+      // } catch (emailError) {
+      //   // Không throw lỗi ở đây để tránh làm hỏng giao dịch đặt chỗ nếu chỉ lỗi email
+      //   console.error('Lỗi gửi email nhưng đặt chỗ vẫn thành công:', emailError);
+      // }
 
-      // Activity log
+      // ======= add activity log ==================
+
       await this.activityService.logActivity({
         type: ActivityType.BOOKING_NEW,
-        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ`,
+        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #${bookingdto.parking_lot_id}`,
         status: ActivityStatus.SUCCESS,
         userId: bookingdto.user_id,
         meta: {
+          parkingLotId: bookingdto.parking_lot_id,
           slotId: bookingdto.slot_id,
         },
       });
 
       return {
         ...savedBooking,
-        qrCodeContent: qrCode.content,
+        qrCodeContent: qrCode.content, //trả về để app vẽ hình QR
       };
     } catch (error) {
+      // In lỗi ra terminal để bạn đọc được nó bị gì
       console.error('LỖI TẠI CREATE_BOOKING:', error);
     }
   }
@@ -385,5 +401,102 @@ export class BookingService {
       .getRawOne();
 
     return parseFloat(revenue.total) || 0;
+  }
+
+  // =========== Đếm sô lượng booking của 1 user ================
+  async countBookingsByUserId(userId: string) {
+    return this.bookingRepository.count({
+      where: {
+        user: { id: userId },
+      },
+    });
+  }
+
+  // =========== Tính tổng chi tiêu của 1 user ================
+  async calculateTotalSpendingByUserId(userId: string) {
+    const result = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.invoice', 'invoice')
+      .leftJoin('booking.user', 'user')
+      .where('user.id = :userId', { userId })
+      .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(invoice.total)', 'total')
+      .getRawOne();
+
+    return parseFloat(result.total) || 0;
+  }
+
+  // =========== Tổng doanh thu booking của 1 bãi đỗ xe ================
+  async calculateTotalRevenueByOwnerId(ownerId: string) {
+    const result = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.invoice', 'invoice')
+      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(invoice.total)', 'total')
+      .getRawOne();
+
+    const rawTotal = parseFloat(result.total) || 0;
+    return this.formatToMillions(rawTotal);
+  }
+
+  // =========== Thêm một hàm helper nhỏ trong cùng class để tái sử dụng
+  private formatToMillions(amount: number): string {
+    if (amount === 0) return '0 Tr ₫';
+
+    // Chia cho 1 triệu để lấy phần nguyên và thập phân (VD: 5200000 -> 5.2)
+    const millions = amount / 1000000;
+
+    // Dùng Intl.NumberFormat với locale 'vi-VN' để tự động dùng dấu phẩy `,`
+    const formattedNumber = new Intl.NumberFormat('vi-VN', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1, // Lấy tối đa 1 chữ số thập phân giống trong ảnh
+    }).format(millions);
+
+    return `${formattedNumber} Tr ₫`;
+  }
+
+  // =========== Đếm số lượng booking của 1 bãi đỗ xe ================
+  async countBookingsByOwnerId(ownerId: string) {
+    return this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .getCount();
+  }
+
+  async getOwnerBookingStatsByOwnerIds(ownerIds: string[]) {
+    if (!ownerIds.length) {
+      return new Map<string, { totalBookings: number; totalRevenue: string }>();
+    }
+
+    const rows = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .leftJoin('booking.invoice', 'invoice')
+      .where('owner.id IN (:...ownerIds)', { ownerIds })
+      .select('owner.id', 'ownerId')
+      .addSelect('COUNT(DISTINCT booking.id)', 'totalBookings')
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN invoice.status = :paidStatus THEN invoice.total ELSE 0 END), 0)`,
+        'totalRevenue',
+      )
+      .setParameter('paidStatus', InvoiceStatus.PAID)
+      .groupBy('owner.id')
+      .getRawMany();
+
+    return new Map<string, { totalBookings: number; totalRevenue: string }>(
+      rows.map((row) => [
+        row.ownerId,
+        {
+          totalBookings: Number(row.totalBookings) || 0,
+          totalRevenue: this.formatToMillions(Number(row.totalRevenue) || 0),
+        },
+      ]),
+    );
   }
 }

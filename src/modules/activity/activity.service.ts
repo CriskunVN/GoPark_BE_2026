@@ -57,6 +57,7 @@ export class ActivityService {
       id: item.id,
       type: item.type,
       content: item.content,
+      username: item.user_name,
       time: this.toRelativeTime(item.createdAt),
       status: item.status,
     }));

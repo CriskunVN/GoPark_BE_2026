@@ -930,8 +930,8 @@ export class ParkingLotService {
   // =========== Đếm tổng số bãi đỗ xe (ADMIN) ================
   async countTotalParkingLots() {
     return this.parkingLotRepository.count();
-    }
-  
+  }
+
   //bãi đỗ xe gần nhất
   async haversineParkingLot(
     parkingLotId: number,
@@ -984,5 +984,31 @@ export class ParkingLotService {
       relations: ['user.profile'],
       order: { created_at: 'DESC' },
     });
+  }
+
+  // ============ Đếm số bãi đỗ xe của chủ sở hữu ==================
+  async countParkingLotsByOwnerId(ownerId: string) {
+    return this.parkingLotRepository.count({
+      where: { owner: { id: ownerId } },
+    });
+  }
+
+  async countParkingLotsByOwnerIds(ownerIds: string[]) {
+    if (!ownerIds.length) {
+      return new Map<string, number>();
+    }
+
+    const rows = await this.parkingLotRepository
+      .createQueryBuilder('parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .select('owner.id', 'ownerId')
+      .addSelect('COUNT(parkingLot.id)', 'totalParkingLots')
+      .where('owner.id IN (:...ownerIds)', { ownerIds })
+      .groupBy('owner.id')
+      .getRawMany();
+
+    return new Map<string, number>(
+      rows.map((row) => [row.ownerId, Number(row.totalParkingLots) || 0]),
+    );
   }
 }
