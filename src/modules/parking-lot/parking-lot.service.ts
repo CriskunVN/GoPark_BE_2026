@@ -58,7 +58,7 @@ export class ParkingLotService {
     @InjectRepository(ParkingZone)
     private parkingZoneRepository: Repository<ParkingZone>,
     @InjectRepository(Review)
-    private reviewRepository : Repository<Review>,
+    private reviewRepository: Repository<Review>,
 
     private requestService: RequestService,
 
@@ -436,7 +436,8 @@ export class ParkingLotService {
       where: { id: lotid },
       relations: [
         'owner',
-        'pricingRule','pricingRule.parkingZone',
+        'pricingRule',
+        'pricingRule.parkingZone',
         'parkingFloor',
         'parkingFloor.parkingZone',
         'parkingFloor.parkingZone.slot',
@@ -854,55 +855,81 @@ export class ParkingLotService {
   // =========== Đếm tổng số bãi đỗ xe (ADMIN) ================
   async countTotalParkingLots() {
     return this.parkingLotRepository.count();
-    }
-  
+  }
+
   //bãi đỗ xe gần nhất
-  async haversineParkingLot(parkingLotId:number,lat:number,lng:number){
+  async haversineParkingLot(parkingLotId: number, lat: number, lng: number) {
     return await this.parkingLotRepository
-    .createQueryBuilder('pl')
-    .leftJoin('Review', 'r', 'r.parking_lot_id = pl.id')
-    .select([
-      'pl.id AS id', 
-      'pl.name AS name', 
-      'pl.address AS address', 
-      'pl.image AS image'       
-    ])
-    // parking-lot.service.ts
-    .addSelect('ROUND(COALESCE(AVG(r.rating), 0), 1)', 'avgRating')
-    .addSelect(
-      `ST_DistanceSphere(
+      .createQueryBuilder('pl')
+      .leftJoin('Review', 'r', 'r.parking_lot_id = pl.id')
+      .select([
+        'pl.id AS id',
+        'pl.name AS name',
+        'pl.address AS address',
+        'pl.image AS image',
+      ])
+      // parking-lot.service.ts
+      .addSelect('ROUND(COALESCE(AVG(r.rating), 0), 1)', 'avgRating')
+      .addSelect(
+        `ST_DistanceSphere(
         ST_MakePoint(pl.lng::float, pl.lat::float), 
         ST_MakePoint(:lng::float, :lat::float)
-      ) / 1000`, 
-      'distance'
-    )
-    // QUAN TRỌNG: Phải setParameters ở đây để addSelect nhận được lat/lng
-    .setParameters({ 
-      lng: Number(lng), 
-      lat: Number(lat), 
-      parkingLotId 
-    })
-    .where('pl.id != :parkingLotId AND pl.status = :status', { 
-      parkingLotId, 
-      status: 'INACTIVE' 
-    })
-    .groupBy('pl.id')
-    .addGroupBy('pl.name')
-    .addGroupBy('pl.address')
-    .addGroupBy('pl.image')
-    .orderBy('distance', 'ASC')
-    .limit(4)
-    .getRawMany();
+      ) / 1000`,
+        'distance',
+      )
+      // QUAN TRỌNG: Phải setParameters ở đây để addSelect nhận được lat/lng
+      .setParameters({
+        lng: Number(lng),
+        lat: Number(lat),
+        parkingLotId,
+      })
+      .where('pl.id != :parkingLotId AND pl.status = :status', {
+        parkingLotId,
+        status: 'INACTIVE',
+      })
+      .groupBy('pl.id')
+      .addGroupBy('pl.name')
+      .addGroupBy('pl.address')
+      .addGroupBy('pl.image')
+      .orderBy('distance', 'ASC')
+      .limit(4)
+      .getRawMany();
   }
 
   //lấy bình luận
-  async getCommentUser(parkingLotId:number){
+  async getCommentUser(parkingLotId: number) {
     return this.reviewRepository.find({
-      where : {
-        lot : {id:parkingLotId}
+      where: {
+        lot: { id: parkingLotId },
       },
-      relations :['user.profile'],
-      order : {created_at : 'DESC'}
-    })
+      relations: ['user.profile'],
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  // ============ Đếm số bãi đỗ xe của chủ sở hữu ==================
+  async countParkingLotsByOwnerId(ownerId: string) {
+    return this.parkingLotRepository.count({
+      where: { owner: { id: ownerId } },
+    });
+  }
+
+  async countParkingLotsByOwnerIds(ownerIds: string[]) {
+    if (!ownerIds.length) {
+      return new Map<string, number>();
+    }
+
+    const rows = await this.parkingLotRepository
+      .createQueryBuilder('parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .select('owner.id', 'ownerId')
+      .addSelect('COUNT(parkingLot.id)', 'totalParkingLots')
+      .where('owner.id IN (:...ownerIds)', { ownerIds })
+      .groupBy('owner.id')
+      .getRawMany();
+
+    return new Map<string, number>(
+      rows.map((row) => [row.ownerId, Number(row.totalParkingLots) || 0]),
+    );
   }
 }

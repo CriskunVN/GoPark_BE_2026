@@ -38,17 +38,17 @@ export class BookingService {
     private readonly activityService: ActivityService,
   ) {}
 
-    //Booking
-    async createBooking(bookingdto: CreateBookingDto) {
-      try {
+  //Booking
+  async createBooking(bookingdto: CreateBookingDto) {
+    try {
       //dọn dẹp booking quá hạn
-        await this.bookingRepository
+      await this.bookingRepository
         .createQueryBuilder()
         .delete()
         .from(Booking)
-        .where("status = :status", { status: 'PENDING' })
-        .andWhere("created_at < :expiredTime", { 
-          expiredTime: new Date(Date.now() - 15 * 60 * 1000) // Quá 60 phút
+        .where('status = :status', { status: 'PENDING' })
+        .andWhere('created_at < :expiredTime', {
+          expiredTime: new Date(Date.now() - 15 * 60 * 1000), // Quá 60 phút
         })
         .execute();
 
@@ -58,24 +58,23 @@ export class BookingService {
         },
       });
 
-    if (!slot) {
-      throw new NotFoundException('Không tìm thấy chỗ đỗ');
-    }
+      if (!slot) {
+        throw new NotFoundException('Không tìm thấy chỗ đỗ');
+      }
 
       //kiểm tra trạng thái
       if (slot.status.toLowerCase() == 'booked') {
         throw new BadRequestException('Chỗ này đã được đặt');
       }
 
-
       //kiểm tra xem user đã có booking pending nào chưa
       let newbooking = await this.bookingRepository.findOne({
-        where : {
-          user : {id:bookingdto.user_id},
-          status : 'PENDING'
-      },
-        relations:['qrCode'],
-      })
+        where: {
+          user: { id: bookingdto.user_id },
+          status: 'PENDING',
+        },
+        relations: ['qrCode'],
+      });
 
       if (newbooking) {
         // 2. NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
@@ -85,73 +84,70 @@ export class BookingService {
         newbooking.parkingLot = { id: bookingdto.parking_lot_id } as any;
         newbooking.slot = { id: bookingdto.slot_id } as any;
         // Cập nhật lại ngày tạo để tính lại thời gian hết hạn 15 phút từ lúc này
-        newbooking.created_at = new Date(); 
-      }else{
-
+        newbooking.created_at = new Date();
+      } else {
         newbooking = this.bookingRepository.create({
-        start_time: bookingdto.start_time,
-        end_time: bookingdto.end_time,
-        status: bookingdto.status,
-        user: { id: bookingdto.user_id },
-        vehicle: { id: bookingdto.vehicle_id },
-        parkingLot: { id: bookingdto.parking_lot_id },
-        slot: { id: bookingdto.slot_id },
-      });
+          start_time: bookingdto.start_time,
+          end_time: bookingdto.end_time,
+          status: bookingdto.status,
+          user: { id: bookingdto.user_id },
+          vehicle: { id: bookingdto.vehicle_id },
+          parkingLot: { id: bookingdto.parking_lot_id },
+          slot: { id: bookingdto.slot_id },
+        });
       }
-      const savedBooking= await this.bookingRepository.save(newbooking);
+      const savedBooking = await this.bookingRepository.save(newbooking);
 
       //tạo qr
       let qrCode = await this.qrcodeRepository.findOne({
-        where: { booking: { id: savedBooking.id } }
+        where: { booking: { id: savedBooking.id } },
       });
       if (!qrCode) {
         qrCode = this.qrcodeRepository.create({
-        booking:savedBooking,
-        content:`PARK-${uuidv4()}`, // Tạo chuỗi ngẫu nhiên duy nhất
-        status : 'active'
-      })
+          booking: savedBooking,
+          content: `PARK-${uuidv4()}`, // Tạo chuỗi ngẫu nhiên duy nhất
+          status: 'active',
+        });
 
-      await this.qrcodeRepository.save(qrCode)
-        } else {
+        await this.qrcodeRepository.save(qrCode);
+      } else {
         // Nếu đã có QR rồi, có thể cập nhật nội dung mới nếu muốn, hoặc giữ nguyên
-        qrCode.status = 'active'; 
+        qrCode.status = 'active';
         await this.qrcodeRepository.save(qrCode);
       }
       // // --- GỬI EMAIL TỰ ĐỘNG ---
       // try {
       //   // Gọi hàm sendEmail bạn đã định nghĩa ở dưới
       //   // Lưu ý: Nên dùng setTimeout hoặc Background Job nếu muốn API phản hồi nhanh hơn
-      //   await this.sendEmail(savedBooking.id); 
+      //   await this.sendEmail(savedBooking.id);
       //   console.log(`Email QR đã được gửi cho booking: ${savedBooking.id}`);
       // } catch (emailError) {
       //   // Không throw lỗi ở đây để tránh làm hỏng giao dịch đặt chỗ nếu chỉ lỗi email
       //   console.error('Lỗi gửi email nhưng đặt chỗ vẫn thành công:', emailError);
       // }
-      
+
       // ======= add activity log ==================
 
-    await this.activityService.logActivity({
-      type: ActivityType.BOOKING_NEW,
-      content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #${bookingdto.parking_lot_id}`,
-      status: ActivityStatus.SUCCESS,
-      userId: bookingdto.user_id,
-      meta: {
-        parkingLotId: bookingdto.parking_lot_id,
-        slotId: bookingdto.slot_id,
-      },
-    });
-
+      await this.activityService.logActivity({
+        type: ActivityType.BOOKING_NEW,
+        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #${bookingdto.parking_lot_id}`,
+        status: ActivityStatus.SUCCESS,
+        userId: bookingdto.user_id,
+        meta: {
+          parkingLotId: bookingdto.parking_lot_id,
+          slotId: bookingdto.slot_id,
+        },
+      });
 
       return {
         ...savedBooking,
-        qrCodeContent:qrCode.content//trả về để app vẽ hình QR
-      }
-      } catch (error) {
+        qrCodeContent: qrCode.content, //trả về để app vẽ hình QR
+      };
+    } catch (error) {
       // In lỗi ra terminal để bạn đọc được nó bị gì
-      console.error("LỖI TẠI CREATE_BOOKING:", error); 
-      
+      console.error('LỖI TẠI CREATE_BOOKING:', error);
     }
-    }
+  }
 
   async scanQRCode(content: string, gateId: number) {
     const qrCode = await this.qrcodeRepository.findOne({
@@ -441,5 +437,102 @@ export class BookingService {
       .getRawOne();
 
     return parseFloat(revenue.total) || 0;
+  }
+
+  // =========== Đếm sô lượng booking của 1 user ================
+  async countBookingsByUserId(userId: string) {
+    return this.bookingRepository.count({
+      where: {
+        user: { id: userId },
+      },
+    });
+  }
+
+  // =========== Tính tổng chi tiêu của 1 user ================
+  async calculateTotalSpendingByUserId(userId: string) {
+    const result = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.invoice', 'invoice')
+      .leftJoin('booking.user', 'user')
+      .where('user.id = :userId', { userId })
+      .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(invoice.total)', 'total')
+      .getRawOne();
+
+    return parseFloat(result.total) || 0;
+  }
+
+  // =========== Tổng doanh thu booking của 1 bãi đỗ xe ================
+  async calculateTotalRevenueByOwnerId(ownerId: string) {
+    const result = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.invoice', 'invoice')
+      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(invoice.total)', 'total')
+      .getRawOne();
+
+    const rawTotal = parseFloat(result.total) || 0;
+    return this.formatToMillions(rawTotal);
+  }
+
+  // =========== Thêm một hàm helper nhỏ trong cùng class để tái sử dụng
+  private formatToMillions(amount: number): string {
+    if (amount === 0) return '0 Tr ₫';
+
+    // Chia cho 1 triệu để lấy phần nguyên và thập phân (VD: 5200000 -> 5.2)
+    const millions = amount / 1000000;
+
+    // Dùng Intl.NumberFormat với locale 'vi-VN' để tự động dùng dấu phẩy `,`
+    const formattedNumber = new Intl.NumberFormat('vi-VN', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1, // Lấy tối đa 1 chữ số thập phân giống trong ảnh
+    }).format(millions);
+
+    return `${formattedNumber} Tr ₫`;
+  }
+
+  // =========== Đếm số lượng booking của 1 bãi đỗ xe ================
+  async countBookingsByOwnerId(ownerId: string) {
+    return this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .getCount();
+  }
+
+  async getOwnerBookingStatsByOwnerIds(ownerIds: string[]) {
+    if (!ownerIds.length) {
+      return new Map<string, { totalBookings: number; totalRevenue: string }>();
+    }
+
+    const rows = await this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .leftJoin('booking.invoice', 'invoice')
+      .where('owner.id IN (:...ownerIds)', { ownerIds })
+      .select('owner.id', 'ownerId')
+      .addSelect('COUNT(DISTINCT booking.id)', 'totalBookings')
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN invoice.status = :paidStatus THEN invoice.total ELSE 0 END), 0)`,
+        'totalRevenue',
+      )
+      .setParameter('paidStatus', InvoiceStatus.PAID)
+      .groupBy('owner.id')
+      .getRawMany();
+
+    return new Map<string, { totalBookings: number; totalRevenue: string }>(
+      rows.map((row) => [
+        row.ownerId,
+        {
+          totalBookings: Number(row.totalBookings) || 0,
+          totalRevenue: this.formatToMillions(Number(row.totalRevenue) || 0),
+        },
+      ]),
+    );
   }
 }
