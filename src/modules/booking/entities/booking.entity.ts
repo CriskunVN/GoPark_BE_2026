@@ -7,6 +7,7 @@ import {
   OneToOne,
   OneToMany,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 import type { User } from '../../users/entities/user.entity';
 import type { Vehicle } from '../../users/entities/vehicle.entity';
@@ -19,6 +20,7 @@ import { Review } from 'src/modules/users/entities/review.entity';
 @Entity('bookings')
 export class Booking {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column({ type: 'timestamp' })

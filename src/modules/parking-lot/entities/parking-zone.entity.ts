@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -13,6 +14,7 @@ import { PricingRule } from 'src/modules/payment/entities/pricingrule.entity';
 @Entity('parking_zones')
 export class ParkingZone {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column()

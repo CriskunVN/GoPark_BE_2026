@@ -85,6 +85,26 @@ export class AdminService {
     };
   }
 
+  async getRequestStats() {
+    const totalRequests = await this.requestService.countTotalRequests();
+    const pendingRequests = await this.requestService.countRequestsByStatus(
+      RequestStatus.PENDING,
+    );
+    const approvedRequests = await this.requestService.countRequestsByStatus(
+      RequestStatus.APPROVED,
+    );
+    const rejectedRequests = await this.requestService.countRequestsByStatus(
+      RequestStatus.REJECTED,
+    );
+
+    return {
+      totalRequests,
+      pendingRequests,
+      approvedRequests,
+      rejectedRequests,
+    };
+  }
+
   //=========== Admin chấp nhận duyệt yêu cầu =================
   async approveRequest(
     requestId: string,

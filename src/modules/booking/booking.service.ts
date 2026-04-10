@@ -429,7 +429,10 @@ export class BookingService {
     const result = await this.bookingRepository
       .createQueryBuilder('booking')
       .leftJoin('booking.invoice', 'invoice')
-      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('booking.slot', 'slot')
+      .leftJoin('slot.parkingZone', 'zone')
+      .leftJoin('zone.parkingFloor', 'floor')
+      .leftJoin('floor.parkingLot', 'parkingLot')
       .leftJoin('parkingLot.owner', 'owner')
       .where('owner.id = :ownerId', { ownerId })
       .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
@@ -460,7 +463,10 @@ export class BookingService {
   async countBookingsByOwnerId(ownerId: string) {
     return this.bookingRepository
       .createQueryBuilder('booking')
-      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('booking.slot', 'slot')
+      .leftJoin('slot.parkingZone', 'zone')
+      .leftJoin('zone.parkingFloor', 'floor')
+      .leftJoin('floor.parkingLot', 'parkingLot')
       .leftJoin('parkingLot.owner', 'owner')
       .where('owner.id = :ownerId', { ownerId })
       .getCount();
@@ -473,7 +479,10 @@ export class BookingService {
 
     const rows = await this.bookingRepository
       .createQueryBuilder('booking')
-      .leftJoin('booking.parkingLot', 'parkingLot')
+      .leftJoin('booking.slot', 'slot')
+      .leftJoin('slot.parkingZone', 'zone')
+      .leftJoin('zone.parkingFloor', 'floor')
+      .leftJoin('floor.parkingLot', 'parkingLot')
       .leftJoin('parkingLot.owner', 'owner')
       .leftJoin('booking.invoice', 'invoice')
       .where('owner.id IN (:...ownerIds)', { ownerIds })

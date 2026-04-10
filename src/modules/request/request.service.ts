@@ -94,4 +94,14 @@ export class RequestService {
 
     return this.requestRepository.update(id, { status });
   }
+
+  async countTotalRequests() {
+    const count = await this.requestRepository.count();
+    return count;
+  }
+
+  async countRequestsByStatus(status: RequestStatus) {
+    const count = await this.requestRepository.count({ where: { status } });
+    return count;
+  }
 }

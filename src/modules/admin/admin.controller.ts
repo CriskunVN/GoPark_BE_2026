@@ -77,6 +77,12 @@ export class AdminController {
     };
   }
 
+  @Get('/stats/requests')
+  async getRequestStats() {
+    const stats = await this.adminService.getRequestStats();
+    return { data: stats };
+  }
+
   // =========== Thống kê tổng quan cho dashboard admin ================
   @Get('/stats/overview')
   async getOverviewStats() {

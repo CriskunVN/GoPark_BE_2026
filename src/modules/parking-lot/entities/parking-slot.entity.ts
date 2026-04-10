@@ -4,6 +4,7 @@ import {
   Column,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { ParkingZone } from './parking-zone.entity';
 import { SlotStatus } from 'src/common/enums/status.enum';
@@ -11,6 +12,7 @@ import { SlotStatus } from 'src/common/enums/status.enum';
 @Entity('parking_slots')
 export class ParkingSlot {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column()
