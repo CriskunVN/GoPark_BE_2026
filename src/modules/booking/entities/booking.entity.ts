@@ -27,7 +27,7 @@ export class Booking {
   @Column({ type: 'timestamp' })
   end_time: Date;
 
-  @Column()
+  @Column({ default: 'pending' })
   status: string;
 
   @CreateDateColumn({
