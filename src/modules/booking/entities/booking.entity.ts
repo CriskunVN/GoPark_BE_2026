@@ -17,6 +17,7 @@ import type { Payment } from '../../payment/entities/payment.entity';
 import type { Invoice } from '../../payment/entities/invoice.entity';
 import { CheckLog } from './check-log.entity';
 import { Review } from 'src/modules/users/entities/review.entity';
+import { BookingStatus } from 'src/common/enums/status.enum';
 
 @Entity('bookings')
 export class Booking {
@@ -29,8 +30,12 @@ export class Booking {
   @Column({ type: 'timestamp' })
   end_time: Date;
 
-  @Column()
-  status: string;
+  @Column({
+    type:'enum',
+    enum:BookingStatus,
+    default:BookingStatus.PENDING,
+  })
+  status: BookingStatus;
 
   @CreateDateColumn({type:'timestamp',nullable:true,default: () => 'CURRENT_TIMESTAMP'})
   created_at:Date;

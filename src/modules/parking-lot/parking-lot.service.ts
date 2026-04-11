@@ -14,7 +14,7 @@ import {
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
-import { ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
+import { BookingStatus, ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
@@ -391,7 +391,7 @@ export class ParkingLotService {
       }
 
       const booking = queryRunner.manager.create(Booking, {
-        status: 'IN_PROGRESS',
+        status: BookingStatus.ONGOING,
         start_time: new Date(),
         end_time: new Date(), // Set temporary end_time
         parkingLot: parkingLot,
@@ -436,14 +436,24 @@ export class ParkingLotService {
       where: { id: lotid },
       relations: [
         'owner',
-        'pricingRule','pricingRule.parkingZone',
+        'parkingFloor.parkingZones.pricingRule',
         'parkingFloor',
-        'parkingFloor.parkingZone',
-        'parkingFloor.parkingZone.slot',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.slot',
       ],
     });
 
     if (!lot) throw new NotFoundException('Not found Parking Lot');
+
+    const flatpricingRules = lot.parkingFloor.flatMap(floor => 
+      floor.parkingZones.flatMap(zone => 
+        zone.pricingRule.map(rule => ({
+          ...rule,
+          zone_name: zone.zone_name,
+          floor_name: floor.floor_name
+        }))
+      )
+    );
 
     //lấy danh sách xe của người dùng
     const vehicleUser = await this.vehicleRepository.find({
@@ -454,6 +464,7 @@ export class ParkingLotService {
     return {
       ...lot,
       userVehicles: vehicleUser,
+      pricingRules: flatpricingRules,
     };
   }
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
@@ -848,26 +859,26 @@ export class ParkingLotService {
       `ST_DistanceSphere(
         ST_MakePoint(pl.lng::float, pl.lat::float), 
         ST_MakePoint(:lng::float, :lat::float)
-      ) / 1000`, 
-      'distance'
-    )
-    // QUAN TRỌNG: Phải setParameters ở đây để addSelect nhận được lat/lng
-    .setParameters({ 
-      lng: Number(lng), 
-      lat: Number(lat), 
-      parkingLotId 
-    })
-    .where('pl.id != :parkingLotId AND pl.status = :status', { 
-      parkingLotId, 
-      status: 'INACTIVE' 
-    })
-    .groupBy('pl.id')
-    .addGroupBy('pl.name')
-    .addGroupBy('pl.address')
-    .addGroupBy('pl.image')
-    .orderBy('distance', 'ASC')
-    .limit(4)
-    .getRawMany();
+      ) / 1000`,
+        'distance',
+      )
+      // QUAN TRỌNG: Phải setParameters ở đây để addSelect nhận được lat/lng
+      .setParameters({
+        lng: Number(lng),
+        lat: Number(lat),
+        parkingLotId,
+      })
+      .where('pl.id != :parkingLotId AND pl.status = :status', {
+        parkingLotId,
+        status: 'ACTIVE',
+      })
+      .groupBy('pl.id')
+      .addGroupBy('pl.name')
+      .addGroupBy('pl.address')
+      .addGroupBy('pl.image')
+      .orderBy('distance', 'ASC')
+      .limit(4)
+      .getRawMany();
   }
 
   //lấy bình luận

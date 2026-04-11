@@ -55,7 +55,7 @@ export class PaymentController {
   @Post('vnpay/create-url')
   createPaymentUrl(
     @Req() req: any,
-    @Body() body: { amount: number; userId: string },
+    @Body() body: { amount: number; userId: string; bookingId?: number },
   ) {
     // VNPAY thường báo lỗi định dạng nếu IP là ::1, nên ở local ta fix cứng IPv4
     const ipAddr = '127.0.0.1';
@@ -68,7 +68,8 @@ export class PaymentController {
     const userId = body.userId || req.user?.id;
 
     // Xoá khoảng trắng để VNPAY không báo lỗi định dạng
-    const orderInfo = `NapTien_${userId}`;
+    // Phân loại: PayBooking cho thanh toán giữ chỗ, NapTien cho nạp ví
+    const orderInfo = body.bookingId ? `PayBooking_${userId}_${body.bookingId}` : `NapTien_${userId}`;
 
     const url = this.vnpayService.createPaymentUrl(
       body.amount,
@@ -92,14 +93,25 @@ export class PaymentController {
       if (verifyResult.code === '00') {
         try {
           const orderInfo = query['vnp_OrderInfo'];
-          // Bóc tách lại userId (vì đã bỏ khoảng trắng)
+          const amount = parseInt(query['vnp_Amount']) / 100; // VNPAY trả về x100, chia 100 bằng số tiền gốc
+          const refId = query['vnp_TxnRef']; // Mã giao dịch của VNPay
+
+          // Xử lý thanh toán Booking qua VNPAY
+          if (orderInfo && orderInfo.startsWith('PayBooking_')) {
+            const matched = orderInfo.match(/PayBooking_([\w-]+)_(\d+)/);
+            if (matched) {
+              const userId = matched[1];
+              const bookingId = parseInt(matched[2]);
+              await this.paymentService.handleBookingVnpayPayment(bookingId, amount, refId);
+              return { RspCode: '00', Message: 'Confirm Success' };
+            }
+          }
+
+          // Mặc định nạp tiền vào ví
           const matched = orderInfo.match(/NapTien_([\w-]+)/);
           const userId = matched ? matched[1] : null;
-          const amount = parseInt(query['vnp_Amount']) / 100; // VNPAY trả về x100, chia 100 bằng số tiền gốc
 
           if (userId) {
-            const refId = query['vnp_TxnRef']; // Mã giao dịch của VNPay
-
             // Xử lý nạp tiền vào ví
             await this.walletService.deposit(userId, amount, `VNPAY_${refId}`);
             return { RspCode: '00', Message: 'Confirm Success' };
@@ -110,7 +122,7 @@ export class PaymentController {
             };
           }
         } catch (error) {
-          console.error('Lỗi khi nạp tiền:', error);
+          console.error('Lỗi khi xử lý IPN:', error);
           return { RspCode: '99', Message: 'Unknown error' };
         }
       } else {
