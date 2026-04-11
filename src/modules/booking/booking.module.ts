@@ -10,6 +10,7 @@ import { ParkingZone } from '../parking-lot/entities/parking-zone.entity';
 import { CheckLog } from './entities/check-log.entity';
 import { AuthModule } from '../auth/auth.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { ActivityModule } from '../activity/activity.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { WalletModule } from '../wallet/wallet.module';
       CheckLog,
     ]),
       AuthModule,
+      ActivityModule,
       forwardRef(() => WalletModule),
   ],
   controllers: [BookingController],

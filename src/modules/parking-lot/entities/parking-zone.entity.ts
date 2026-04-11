@@ -30,7 +30,7 @@ export class ParkingZone {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 
-  @ManyToOne(() => ParkingFloor, (floor: ParkingFloor) => floor.parkingZone, {
+  @ManyToOne(() => ParkingFloor, (floor: ParkingFloor) => floor.parkingZones, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'parking_floor_id' })

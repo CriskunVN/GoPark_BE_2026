@@ -32,7 +32,7 @@ export class ParkingFloor {
   created_at: Date;
 
   @OneToMany(() => ParkingZone, (zone: ParkingZone) => zone.parkingFloor)
-  parkingZone: ParkingZone[];
+  parkingZones: ParkingZone[];
 
   @ManyToOne(() => ParkingLot, (lot: ParkingLot) => lot.parkingFloor, {
     onDelete: 'CASCADE',

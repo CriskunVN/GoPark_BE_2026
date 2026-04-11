@@ -35,6 +35,7 @@ export class BookingService {
     private checkLogRepository: Repository<CheckLog>,
 
     private readonly emailService: EmailService,
+    private readonly activityService: ActivityService,
   ) {}
 
   // ================= CREATE BOOKING =================
@@ -387,7 +388,7 @@ export class BookingService {
         code: booking.slot?.code,
         floor_number: booking.parkingLot?.parkingFloor?.[0]?.floor_number,
         floor_zone:
-          booking.parkingLot?.parkingFloor?.[0]?.parkingZone?.[0]?.zone_name,
+          booking.parkingLot?.parkingFloor?.[0]?.parkingZones?.[0]?.zone_name,
         startTime: new Date(booking.start_time).toLocaleString('vi-VN'),
       },
     );

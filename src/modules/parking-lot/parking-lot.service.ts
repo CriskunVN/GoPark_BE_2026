@@ -571,7 +571,7 @@ export class ParkingLotService {
 
     if (!floor) return;
 
-    const totalFloorSlots = floor.parkingZone.reduce(
+    const totalFloorSlots = floor.parkingZones.reduce(
       (sum, zone) => sum + (zone.total_slots || 0),
       0,
     );
