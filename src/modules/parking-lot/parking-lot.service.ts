@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -183,6 +183,14 @@ export class ParkingLotService {
     }));
   }
 
+  // ─── Get all parking lots (for all users) ─────────────────────────────────
+  async getAllParkingLots() {
+    return await this.parkingLotRepository.find({
+      where: { status: ParkingLotStatus.ACTIVE },
+      relations: ['parkingFloor', 'parkingFloor.parkingZones'],
+    });
+  }
+
   // ─── Get all parking lots by owner ─────────────────────────────────────────
   async getParkingLotsByOwner(
     ownerId: string,
@@ -245,7 +253,6 @@ export class ParkingLotService {
 
     const slotsToSave: ParkingSlot[] = [];
     for (const [index, slotConfig] of (parsedFloorSlots as any[]).entries()) {
-      const numSlots = Number(slotConfig.capacity || slotConfig || 0);
       const floorNum = slotConfig.floorNumber
         ? Number(slotConfig.floorNumber)
         : index + 1;
@@ -258,24 +265,35 @@ export class ParkingLotService {
       });
       const savedFloor = await this.parkingFloorRepository.save(floor);
 
-      // 2. Tạo một Zone mặc định cho mỗi tầng
-      const zone = this.parkingZoneRepository.create({
-        zone_name: 'Khu vực chính',
-        prefix: `F${floorNum}`,
-        parkingFloor: savedFloor,
-        total_slots: numSlots,
-      });
-      const savedZone = await this.parkingZoneRepository.save(zone);
+      let zonesConfig = slotConfig.zones;
+      if (!zonesConfig || !Array.isArray(zonesConfig)) {
+        const numSlots = Number(slotConfig.capacity || slotConfig || 0);
+        zonesConfig = [{ zoneNumber: 1, capacity: numSlots }];
+      }
 
-      for (let i = 1; i <= numSlots; i++) {
-        totalSlots++;
-        slotsToSave.push(
-          this.parkingSlotRepository.create({
-            code: `F${floorNum}-${String(i).padStart(3, '0')}`,
-            status: SlotStatus.AVAILABLE,
-            parkingZone: savedZone,
-          }),
-        );
+      for (const [zIdx, zConf] of zonesConfig.entries()) {
+        const numSlots = Number(zConf.capacity || 0);
+        const zNum = zConf.zoneNumber ? Number(zConf.zoneNumber) : zIdx + 1;
+
+        // 2. Tạo một Zone mặc định cho mỗi tầng
+        const zone = this.parkingZoneRepository.create({
+          zone_name: zonesConfig.length === 1 ? 'Khu vực chính' : `Khu ${zNum}`,
+          prefix: `F${floorNum}Z${zNum}`,
+          parkingFloor: savedFloor,
+          total_slots: numSlots,
+        });
+        const savedZone = await this.parkingZoneRepository.save(zone);
+
+        for (let i = 1; i <= numSlots; i++) {
+          totalSlots++;
+          slotsToSave.push(
+            this.parkingSlotRepository.create({
+              code: `F${floorNum}Z${zNum}-${String(i).padStart(3, '0')}`,
+              status: SlotStatus.AVAILABLE,
+              parkingZone: savedZone,
+            }),
+          );
+        }
       }
     }
     // 5. Cập nhật tổng số chỗ đậu xe và số chỗ đậu xe còn trống trong bản ghi ParkingLot dựa trên thông tin đã tạo.
@@ -455,7 +473,7 @@ export class ParkingLotService {
   }
 
   //Get bãi đỗ
-  async getMapForBooking(lotid: number, userId: string) {
+    async getMapForBooking(lotid: number, userId: string) {
     console.log('Getting map for booking - ParkingLotService', {
       lotid,
       userId,
@@ -465,11 +483,11 @@ export class ParkingLotService {
       where: { id: lotid },
       relations: [
         'owner',
-        'pricingRule',
-        'pricingRule.parkingZone',
+        'owner.profile',
         'parkingFloor',
-        'parkingFloor.parkingZone',
-        'parkingFloor.parkingZone.slot',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.pricingRule',
+        'parkingFloor.parkingZones.slot',
       ],
     });
 
@@ -481,9 +499,38 @@ export class ParkingLotService {
       relations: ['user'],
     });
 
+    // lấy giá của tất cả các rule để FE dễ dàng hiển thị giá khi user chọn zone nào đó (thay vì phải đợi đến lúc chọn zone mới gọi API lấy giá) => tối ưu trải nghiệm người dùng
+    const allPricingRules: any[] = [];
+    if (lot.parkingFloor) {
+      for (const floor of lot.parkingFloor) {
+        if (floor.parkingZones) {
+          for (const zone of floor.parkingZones) {
+            if (zone.pricingRule) {
+              for (const rule of zone.pricingRule) {
+                allPricingRules.push({
+                  ...rule,
+                  parkingZone: {
+                    id: zone.id,
+                    zone_name: zone.zone_name,
+                    prefix: zone.prefix,
+                    description: zone.description,
+                  },
+                  parkingFloor: {
+                    id: floor.id,
+                    floor_name: floor.floor_name,
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
     return {
       ...lot,
       userVehicles: vehicleUser,
+      pricingRule: allPricingRules,
     };
   }
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
