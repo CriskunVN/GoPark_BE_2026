@@ -14,7 +14,7 @@ import {
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
-import { ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
+import { BookingStatus, ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
@@ -438,7 +438,7 @@ export class ParkingLotService {
       }
 
       const booking = queryRunner.manager.create(Booking, {
-        status: 'IN_PROGRESS',
+        status: BookingStatus.ONGOING,
         start_time: new Date(),
         end_time: new Date(), // Set temporary end_time
         user: user,
@@ -493,6 +493,16 @@ export class ParkingLotService {
 
     if (!lot) throw new NotFoundException('Not found Parking Lot');
 
+    const flatpricingRules = lot.parkingFloor.flatMap(floor => 
+      floor.parkingZones.flatMap(zone => 
+        zone.pricingRule.map(rule => ({
+          ...rule,
+          zone_name: zone.zone_name,
+          floor_name: floor.floor_name
+        }))
+      )
+    );
+
     //lấy danh sách xe của người dùng
     const vehicleUser = await this.vehicleRepository.find({
       where: { user: { id: userId } },
@@ -530,7 +540,7 @@ export class ParkingLotService {
     return {
       ...lot,
       userVehicles: vehicleUser,
-      pricingRule: allPricingRules,
+      pricingRules: flatpricingRules,
     };
   }
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
@@ -1011,7 +1021,7 @@ export class ParkingLotService {
       })
       .where('pl.id != :parkingLotId AND pl.status = :status', {
         parkingLotId,
-        status: 'INACTIVE',
+        status: 'ACTIVE',
       })
       .groupBy('pl.id')
       .addGroupBy('pl.name')

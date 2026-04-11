@@ -14,7 +14,7 @@ import { Booking } from '../booking/entities/booking.entity';
 import { BookingService } from '../booking/booking.service';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityType } from 'src/common/enums/type.enum';
-import { ActivityStatus } from 'src/common/enums/status.enum';
+import { ActivityStatus, BookingStatus } from 'src/common/enums/status.enum';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 import { SlotStatus } from 'src/common/enums/status.enum';
 @Injectable()
@@ -150,12 +150,12 @@ export class WalletService {
 
       // Cập nhật trạng thái Booking sang 'confirmed'
       await queryRunner.manager.update(Booking, numericBookingId, {
-        status: 'confirmed',
+        status: BookingStatus.CONFIRMED,
       });
 
-      await queryRunner.manager.update(ParkingSlot, booking?.slot.id, {
-        status: SlotStatus.OCCUPIED,
-      });
+      await queryRunner.manager.update(ParkingSlot,booking?.slot.id,{
+        status : SlotStatus.OCCUPIED
+      })
       // Lưu toàn bộ phiên giao dịch nếu mọi thứ thành công
       await queryRunner.commitTransaction();
 
@@ -261,7 +261,7 @@ export class WalletService {
       });
       await queryRunner.commitTransaction();
       return savedTx;
-    } catch (error) {
+    } catch (error:any) {
       await queryRunner.rollbackTransaction();
       await this.activityService.logActivity({
         type: ActivityType.WALLET_DEPOSIT,
@@ -341,7 +341,7 @@ export class WalletService {
       await queryRunner.commitTransaction();
 
       return savedTx;
-    } catch (error) {
+    } catch (error:any) {
       await queryRunner.rollbackTransaction();
       await this.activityService.logActivity({
         type: ActivityType.WALLET_WITHDRAW,
