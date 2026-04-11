@@ -15,7 +15,12 @@ import { CreateBookingDto } from './dto/create.dto';
 import { EmailService } from '../auth/email/email.service';
 
 import { v4 as uuidv4 } from 'uuid';
-import { ActivityStatus, BookingStatus, InvoiceStatus, SlotStatus } from 'src/common/enums/status.enum';
+import {
+  ActivityStatus,
+  BookingStatus,
+  InvoiceStatus,
+  SlotStatus,
+} from 'src/common/enums/status.enum';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityType } from 'src/common/enums/type.enum';
 
@@ -117,7 +122,9 @@ export class BookingService {
         try {
           // Đợi một chút để DB kịp cập nhật quan hệ hoặc dùng trực tiếp savedBooking.id
           await this.sendEmail(savedBooking.id);
-          console.log(`Đã gửi email thành công cho booking tiền mặt: ${savedBooking.id}`);
+          console.log(
+            `Đã gửi email thành công cho booking tiền mặt: ${savedBooking.id}`,
+          );
         } catch (emailError) {
           console.error('Lỗi gửi email tiền mặt:', emailError);
           // Không throw lỗi ở đây để tránh rollback booking đã tạo thành công
@@ -171,45 +178,54 @@ export class BookingService {
     const booking = qrCode.booking;
 
     //check-in
-    if(booking.status === BookingStatus.CONFIRMED || booking.status === BookingStatus.PENDING) {
+    if (
+      booking.status === BookingStatus.CONFIRMED ||
+      booking.status === BookingStatus.PENDING
+    ) {
       const isAlreadyPaid = booking.status === BookingStatus.CONFIRMED;
       booking.status = BookingStatus.ONGOING;
-      
-    const newLog = this.checkLogRepository.create({
-      booking: booking,
-      gate_id: gateId,  
-      check_status: 'in',
-      time: new Date(),
-    });
 
-    await this.checkLogRepository.save(newLog);
-    await this.bookingRepository.save(booking);
-    return { message: isAlreadyPaid ?' Đã thu tiền và check-in thành công!':'Check in thành công', 
-             type: 'in' };
+      const newLog = this.checkLogRepository.create({
+        booking: booking,
+        gate_id: gateId,
+        check_status: 'in',
+        time: new Date(),
+      });
+
+      await this.checkLogRepository.save(newLog);
+      await this.bookingRepository.save(booking);
+      return {
+        message: isAlreadyPaid
+          ? ' Đã thu tiền và check-in thành công!'
+          : 'Check in thành công',
+        type: 'in',
+      };
     }
 
     //check-out
-    if(booking.status === BookingStatus.ONGOING) {
+    if (booking.status === BookingStatus.ONGOING) {
       booking.status = BookingStatus.COMPLETED;
-      qrCode.status = "used";
+      qrCode.status = 'used';
 
-    if(booking.slot) {
-      booking.slot.status = SlotStatus.AVAILABLE;
-      await this.parkingSlotRepository.save(booking.slot);
+      if (booking.slot) {
+        booking.slot.status = SlotStatus.AVAILABLE;
+        await this.parkingSlotRepository.save(booking.slot);
+      }
+
+      await this.checkLogRepository.save({
+        booking,
+        gate_id: gateId,
+        check_status: 'out',
+        time: new Date(),
+      });
+
+      await this.qrcodeRepository.save(qrCode);
+      await this.bookingRepository.save(booking);
+      return { message: 'checkout thành công', type: 'out' };
     }
-
-    await this.checkLogRepository.save({
-      booking,
-      gate_id:gateId,
-      check_status:'out',
-      time:new Date()
-    })
-
-    await this.qrcodeRepository.save(qrCode);
-    await this.bookingRepository.save(booking);
-    return {message:'checkout thành công',type:'out'}
-    }
-    throw new BadRequestException('trạng thái booking không hợp lệ để thực hiện')
+    throw new BadRequestException(
+      'trạng thái booking không hợp lệ để thực hiện',
+    );
   }
 
   // ================= GET ALL BOOKING =================
@@ -379,9 +395,8 @@ export class BookingService {
         parkingLot: parkingLot?.name,
         endTime: new Date(booking.end_time).toLocaleString('vi-VN'),
         code: booking.slot?.code,
-        floor_number: booking.parkingLot?.parkingFloor?.[0]?.floor_number,
-        floor_zone:
-          booking.parkingLot?.parkingFloor?.[0]?.parkingZones?.[0]?.zone_name,
+        floor_number: booking.slot?.parkingZone?.parkingFloor?.floor_number,
+        floor_zone: booking.slot?.parkingZone?.zone_name,
         startTime: new Date(booking.start_time).toLocaleString('vi-VN'),
       },
     );
