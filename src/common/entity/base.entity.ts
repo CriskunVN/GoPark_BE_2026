@@ -4,12 +4,14 @@ import {
   UpdateDateColumn,
   BeforeInsert,
   PrimaryColumn,
+  Index,
 } from 'typeorm';
 import { uuidv7 } from 'uuidv7';
 
 export abstract class BaseEntity {
   @PrimaryColumn('uuid')
   @Expose()
+  @Index()
   id: string;
 
   @CreateDateColumn({ type: 'timestamptz' }) // 'timestamptz' là chuẩn cho Postgres (có múi giờ)

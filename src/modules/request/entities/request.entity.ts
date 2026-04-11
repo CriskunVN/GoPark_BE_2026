@@ -10,6 +10,7 @@ export enum RequestType {
   WITHDRAW_FUND = 'WITHDRAW_FUND',
   REFUND = 'REFUND',
   NEW_PARKING_LOT = 'NEW_PARKING_LOT',
+  OTHER = 'OTHER',
 }
 
 @Entity('system_requests')

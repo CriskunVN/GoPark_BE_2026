@@ -85,8 +85,6 @@ export class PaymentService {
     const newRule = this.pricingRuleRepository.create({
       price_per_hour: dto.price_per_hour,
       price_per_day: dto.price_per_day,
-      parkingLot: dto.parking_lot_id ? { id: dto.parking_lot_id } : undefined,
-      parkingFloor: { id: dto.parking_floor_id },
       parkingZone: { id: dto.parking_zone_id },
     });
 
@@ -96,7 +94,7 @@ export class PaymentService {
   async getPricingRuleByZone(zoneId: number) {
     return await this.pricingRuleRepository.find({
       where: { parkingZone: { id: zoneId } },
-      relations: ['parkingZone', 'parkingLot'],
+      relations: ['parkingZone'],
     });
   }
 
@@ -110,9 +108,13 @@ export class PaymentService {
     const rule = await this.pricingRuleRepository.findOne({
       where: {
         id,
-        parkingLot: { id: lotId },
-        parkingFloor: { id: floorId },
-        parkingZone: { id: zoneId },
+        parkingZone: {
+          id: zoneId,
+          parkingFloor: {
+            id: floorId,
+            parkingLot: { id: lotId },
+          },
+        },
       },
     });
     if (!rule) {

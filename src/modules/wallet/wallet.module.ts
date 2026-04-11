@@ -6,10 +6,14 @@ import { WalletService } from './wallet.service';
 import { WalletController } from './wallet.controller';
 import { Booking } from '../booking/entities/booking.entity';
 import { BookingModule } from '../booking/booking.module';
+import { ActivityModule } from '../activity/activity.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Wallet, WalletTransaction,Booking]),
-  forwardRef(() => BookingModule),],
+  imports: [
+    TypeOrmModule.forFeature([Wallet, WalletTransaction, Booking]),
+    ActivityModule,
+    forwardRef(() => BookingModule),
+  ],
   controllers: [WalletController],
   providers: [WalletService],
   exports: [TypeOrmModule, WalletService],

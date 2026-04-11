@@ -7,13 +7,14 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
 import { Profile } from './entities/profile.entity';
 import { UserResDto } from './dto/user-res.dto';
 import { Review } from './entities/review.entity';
+import { UserRoleEnum } from '../../common/enums/role.enum';
 
 @Injectable()
 export class UsersService {
@@ -26,8 +27,8 @@ export class UsersService {
     private userRoleRepository: Repository<UserRole>,
     @InjectRepository(Profile)
     private profileRepository: Repository<Profile>,
-    @InjectRepository (Review)
-    private ratingUser : Repository<Review>
+    @InjectRepository(Review)
+    private ratingUser: Repository<Review>,
   ) {}
   // Tạo người dùng mới với vai trò mặc định là "USER" và thông tin hồ sơ nếu có
   async create(createUserDto: CreateUserDto) {
@@ -104,14 +105,69 @@ export class UsersService {
       },
     };
   }
+  // ========== Lấy danh sách người dùng có phân trang và tìm kiếm theo email hoặc tên, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ ================
+  async findAllPaginatedWithSearch(
+    page = 1,
+    limit = 10,
+    search?: string,
+    roleName?: UserRoleEnum,
+  ) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
+    let queryBuilder = this.usersRepository
+      .createQueryBuilder('user')
+      .leftJoin('user.userRoles', 'userRoles')
+      .leftJoin('userRoles.role', 'role')
+      .leftJoinAndSelect('user.profile', 'profile')
+      .select([
+        'user.id',
+        'user.email',
+        'user.status',
+        'user.createdAt',
+        'profile.id',
+        'profile.name',
+        'profile.phone',
+      ])
+      .where('role.name = :roleName', { roleName: roleName });
+    if (search) {
+      queryBuilder = queryBuilder.andWhere(
+        'user.email ILIKE :search OR profile.name ILIKE :search',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [items, totalItems] = await queryBuilder
+      .orderBy('user.createdAt', 'DESC')
+      .skip((currentPage - 1) * itemsPerPage)
+      .take(itemsPerPage)
+      .getManyAndCount();
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
+  }
+
   // Lấy thông tin chi tiết một người dùng theo ID, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findOne(id: string) {
     const user = await this.usersRepository.findOne({
       where: { id },
-      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles',
-      'bookings',
-      'bookings.qrCode',
-      'bookings.vehicle'],
+      relations: [
+        'userRoles',
+        'userRoles.role',
+        'profile',
+        'vehicles',
+        'bookings',
+        'bookings.qrCode',
+        'bookings.vehicle',
+      ],
     });
     if (!user)
       throw new NotFoundException(`Không tìm thấy người dùng với ID ${id}`);
@@ -219,4 +275,98 @@ export class UsersService {
     return user.profile?.name || 'Tên không có';
   }
 
+  // =========== Đếm tổng số người dùng và owners ================
+  async countTotalUserWithRole(role: UserRoleEnum) {
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+      },
+    });
+  }
+
+  async countTotalUsers() {
+    return this.usersRepository.count();
+  }
+
+  // =========== Đếm số người dùng mới trong 1 tháng qua ================
+  async countNewUsersInLastMonth() {
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    return this.usersRepository.count({
+      where: {
+        createdAt: MoreThanOrEqual(oneMonthAgo),
+      },
+    });
+  }
+  // =========== Đếm số người dùng mới trong 1 tháng qua theo role ================
+  async countNewUsersInLastMonthWithRole(role: UserRoleEnum) {
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+        createdAt: MoreThanOrEqual(oneMonthAgo),
+      },
+    });
+  }
+
+  // =========== đếm số user bị khóa ================
+  async countBlockedUsers() {
+    return this.usersRepository.count({
+      where: {
+        status: 'BLOCKED',
+      },
+    });
+  }
+
+  // ============ đếm số user bị khóa theo role ================
+  async countBlockedUsersWithRole(role: UserRoleEnum) {
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        status: 'BLOCKED',
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+      },
+    });
+  }
+
+  // =========== đếm số user còn hoạt động ================
+  async countActiveUsers() {
+    return this.usersRepository.count({
+      where: {
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  // =========== đếm số user còn hoạt động theo role ================
+  async countActiveUserWithRole(role: UserRoleEnum) {
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        status: 'ACTIVE',
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+      },
+    });
+  }
 }

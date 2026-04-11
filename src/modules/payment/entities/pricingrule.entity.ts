@@ -20,18 +20,6 @@ export class PricingRule {
   @Column()
   price_per_day: number;
 
-  @ManyToOne('ParkingLot', (lot: ParkingLot) => lot.pricingRule, {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({ name: 'parking_lot_id' })
-  parkingLot: ParkingLot;
-
-  @ManyToOne('ParkingFloor', (floor: ParkingFloor) => floor.pricingRule, {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({ name: 'parking_floor_id' })
-  parkingFloor: ParkingFloor;
-
   @ManyToOne('ParkingZone', (zone: ParkingZone) => zone.pricingRule, {
     onDelete: 'CASCADE',
   })

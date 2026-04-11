@@ -76,4 +76,72 @@ export class AdminController {
       data: result,
     };
   }
+
+  @Get('/stats/requests')
+  async getRequestStats() {
+    const stats = await this.adminService.getRequestStats();
+    return { data: stats };
+  }
+
+  // =========== Thống kê tổng quan cho dashboard admin ================
+  @Get('/stats/overview')
+  async getOverviewStats() {
+    const stats = await this.adminService.getOverviewStats();
+    return { data: stats };
+  }
+
+  // =========== Hoạt động gần đây nhất (recent activities) cho dashboard admin ================
+  @Get('/stats/activities-recent')
+  async getRecentActivities() {
+    const activities = await this.adminService.getRecentActivities();
+    return { data: activities };
+  }
+
+  // =========== Thống kê quản lý người dùng ================
+  @Get('/stats/users')
+  async getUserStats() {
+    const stats = await this.adminService.getUserStats();
+    return { data: stats };
+  }
+
+  // =========== Lấy danh sách người dùng ================
+  @Get('/users/list')
+  async getUserList(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    const data = await this.adminService.getUserList(
+      Number(page),
+      Number(limit),
+      search,
+    );
+    return {
+      message: 'Lấy danh sách người dùng thành công',
+      data,
+    };
+  }
+
+  @Get('/stats/owners')
+  async getOwnerStats() {
+    const stats = await this.adminService.getOwnerStats();
+    return { data: stats };
+  }
+
+  @Get('/owners/list')
+  async getOwnerList(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    const data = await this.adminService.getOwnerList(
+      Number(page),
+      Number(limit),
+      search,
+    );
+    return {
+      message: 'Lấy danh sách chủ bãi thành công',
+      data,
+    };
+  }
 }

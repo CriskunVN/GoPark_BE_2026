@@ -6,7 +6,7 @@ import {
   IsEnum,
   IsOptional,
 } from 'class-validator';
-import { Role } from '../../../common/enums/role.enum';
+import { UserRoleEnum } from '../../../common/enums/role.enum';
 
 export class RegisterDto {
   @IsEmail({}, { message: 'Email không hợp lệ' })

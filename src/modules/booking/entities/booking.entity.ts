@@ -7,14 +7,13 @@ import {
   OneToOne,
   OneToMany,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 import type { User } from '../../users/entities/user.entity';
 import type { Vehicle } from '../../users/entities/vehicle.entity';
-import type { ParkingLot } from '../../parking-lot/entities/parking-lot.entity';
 import type { ParkingSlot } from '../../parking-lot/entities/parking-slot.entity';
-import type { QRCode } from './qr-code.entity';
-import type { Payment } from '../../payment/entities/payment.entity';
-import type { Invoice } from '../../payment/entities/invoice.entity';
+import { QRCode } from './qr-code.entity';
+import { Invoice } from '../../payment/entities/invoice.entity';
 import { CheckLog } from './check-log.entity';
 import { Review } from 'src/modules/users/entities/review.entity';
 import { BookingStatus } from 'src/common/enums/status.enum';
@@ -22,6 +21,7 @@ import { BookingStatus } from 'src/common/enums/status.enum';
 @Entity('bookings')
 export class Booking {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column({ type: 'timestamp' })
@@ -37,9 +37,13 @@ export class Booking {
   })
   status: BookingStatus;
 
-  @CreateDateColumn({type:'timestamp',nullable:true,default: () => 'CURRENT_TIMESTAMP'})
-  created_at:Date;
-  
+  @CreateDateColumn({
+    type: 'timestamp',
+    nullable: true,
+    default: () => 'CURRENT_TIMESTAMP',
+  })
+  created_at: Date;
+
   @ManyToOne('User', (user: User) => user.bookings, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
@@ -49,10 +53,6 @@ export class Booking {
   })
   @JoinColumn({ name: 'vehicle_id' })
   vehicle: Vehicle;
-
-  @ManyToOne('ParkingLot', { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'parking_lot_id' })
-  parkingLot: ParkingLot;
 
   @ManyToOne('ParkingSlot', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'slot_id' })
@@ -64,9 +64,9 @@ export class Booking {
   @OneToMany('Invoice', (invoice: Invoice) => invoice.booking)
   invoice: Invoice[];
 
-  @OneToMany('CheckLog', (checkout : CheckLog) => checkout.booking)
+  @OneToMany('CheckLog', (checkout: CheckLog) => checkout.booking)
   checkout: CheckLog[];
 
-  @OneToMany('Review',(review : Review)=> review.booking)
-  review:Review
+  @OneToMany('Review', (review: Review) => review.booking)
+  review: Review;
 }

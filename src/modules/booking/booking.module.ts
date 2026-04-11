@@ -28,6 +28,6 @@ import { ActivityModule } from '../activity/activity.module';
   ],
   controllers: [BookingController],
   providers: [BookingService],
-  exports: [TypeOrmModule,BookingService],
+  exports: [TypeOrmModule, BookingService],
 })
 export class BookingModule {}

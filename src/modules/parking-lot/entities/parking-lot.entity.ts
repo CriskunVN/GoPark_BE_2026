@@ -5,14 +5,11 @@ import {
   OneToMany,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
-import type { ParkingSlot } from './parking-slot.entity';
 import type { User } from '../../users/entities/user.entity';
 import { ParkingFloor } from './parking-floor.entity';
 import { ParkingLotStatus } from 'src/common/enums/status.enum';
-import { Max, Min } from 'class-validator';
-import { PricingRule } from 'src/modules/payment/entities/pricingrule.entity';
-import { Booking } from 'src/modules/booking/entities/booking.entity';
 import { Review } from 'src/modules/users/entities/review.entity';
 
 type ParkingLotImages = {
@@ -27,6 +24,7 @@ type ParkingLotImages = {
 @Entity('parking_lots')
 export class ParkingLot {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column()
@@ -47,24 +45,17 @@ export class ParkingLot {
   @Column()
   available_slots: number;
 
-  @Column({nullable: true})
+  @Column({ nullable: true })
   description?: string;
 
-  @Column ({type: 'timestamp',nullable:true})
-  open_time:Date
+  @Column({ type: 'timestamp', nullable: true })
+  open_time: Date;
 
-  @Column ({type: 'timestamp',nullable:true})
-  close_time:Date
+  @Column({ type: 'timestamp', nullable: true })
+  close_time: Date;
 
-  @Column({nullable:true})
-  operating_days:string
-
-  @Column({
-    type: 'decimal',
-    precision: 2,
-    scale: 1,
-    default: 0,
-  })
+  @Column({ nullable: true })
+  operating_days: string;
 
   @Column({
     type: 'jsonb',
@@ -84,19 +75,9 @@ export class ParkingLot {
   @JoinColumn({ name: 'user_id' })
   owner: User;
 
-  @OneToMany('ParkingSlot', (slot: ParkingSlot) => slot.parkingLot)
-  parkingSlots: ParkingSlot[];
-
   @OneToMany('ParkingFloor', (floor: ParkingFloor) => floor.parkingLot)
   parkingFloor: ParkingFloor[];
 
-  @OneToMany ('PricingRule',(pricingRule : PricingRule) => pricingRule.parkingLot)
-  pricingRule: PricingRule[];
-
-  @OneToMany('Booking',(booking : Booking) => booking.parkingLot)
-  booking: Booking[];
-
-  @OneToMany('Review',(review : Review)=> review.lot)
-  review: Review[]
-
+  @OneToMany('Review', (review: Review) => review.lot)
+  review: Review[];
 }
