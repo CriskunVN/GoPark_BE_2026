@@ -28,6 +28,8 @@ import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { UpdateFloorDto } from './dto/update-floor.dto';
+import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
+
 
 // chia vung ra roi thay nghe
 
@@ -65,8 +67,26 @@ export class ParkingLotController {
   @Get('map/:lotid')
   async getMapBooing(@Param('lotid') lotid: number, @Req() req: any) {
     const userId = req.user['userId'];
-    return this.parkingLotService.getMapForBooking(lotid,userId);
+    return this.parkingLotService.getMapForBooking(lotid, userId);
   }
+
+  // Lấy bản đồ bãi đỗ với trạng thái slot theo khung giờ (Cinema Style)
+  @UseGuards(JwtAuthGuard)
+  @Get(':parkingLotId/available-map')
+  async getAvailableMap(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Query() dto: CheckAvailableSlotsDto,
+    @Req() req: any,
+  ) {
+    const userId = req.user['userId'];
+    return this.parkingLotService.getAvailableMapByTime(
+      parkingLotId,
+      userId,
+      dto.start_time,
+      dto.end_time,
+    );
+  }
+
 
   //bãi đỗ gần nhất
   @Get('nearby/:lotid')

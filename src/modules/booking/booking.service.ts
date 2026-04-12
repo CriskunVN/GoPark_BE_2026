@@ -217,6 +217,61 @@ export class BookingService {
     });
   }
 
+  // ================= BOOKING BY PARKING LOT =================
+
+  async getBookingByParkingLot(
+    lotId: number,
+    search?: string,
+    startDate?: string,
+    endDate?: string,
+  ) {
+    const query = this.bookingRepository
+      .createQueryBuilder('booking')
+      .leftJoinAndSelect('booking.user', 'user')
+      .leftJoinAndSelect('user.profile', 'profile')
+      .leftJoinAndSelect('booking.vehicle', 'vehicle')
+      .leftJoinAndSelect('booking.slot', 'slot')
+      .leftJoinAndSelect('slot.parkingZone', 'parkingZone')
+      .leftJoinAndSelect('parkingZone.parkingFloor', 'parkingFloor')
+      .leftJoinAndSelect('parkingFloor.parkingLot', 'parkingLot')
+      .leftJoinAndSelect('booking.invoice', 'invoice')
+      .leftJoinAndSelect('booking.qrCode', 'qrCode')
+      .where('parkingLot.id = :lotId', { lotId });
+
+    if (startDate && endDate) {
+      query.andWhere('booking.start_time BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      });
+    } else if (startDate) {
+      query.andWhere('booking.start_time >= :startDate', { startDate });
+    }
+
+    if (search) {
+      const isNumeric = !isNaN(Number(search));
+      if (isNumeric) {
+        query.andWhere(
+          '(booking.id = :searchId OR LOWER(vehicle.license_plate) LIKE LOWER(:searchLike) OR LOWER(qrCode.content) LIKE LOWER(:searchLike))',
+          {
+            searchId: Number(search),
+            searchLike: `%${search}%`,
+          },
+        );
+      } else {
+        query.andWhere(
+          '(LOWER(vehicle.license_plate) LIKE LOWER(:searchLike) OR LOWER(qrCode.content) LIKE LOWER(:searchLike))',
+          {
+            searchLike: `%${search}%`,
+          },
+        );
+      }
+    }
+
+    query.orderBy('booking.created_at', 'DESC');
+
+    return query.getMany();
+  }
+
   // ================= UPDATE BOOKING =================
 
   async updateBooking(id: number, bookingdto: any) {
@@ -383,7 +438,135 @@ export class BookingService {
       .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
       .select('SUM(invoice.total)', 'total')
       .getRawOne();
+  }
 
-    return parseFloat(revenue.total) || 0;
+  // ================= OWNER ANALYTICS =================
+
+  async getOwnerMetrics(ownerId: string, lotId?: number) {
+    const today = new Date();
+    const firstDayOfThisMonth = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      1,
+    );
+    const firstDayOfNextMonth = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      1,
+    );
+    const firstDayOfLastMonth = new Date(
+      today.getFullYear(),
+      today.getMonth() - 1,
+      1,
+    );
+
+    // This month revenue
+    const thisMonthData = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoin('b.invoice', 'i')
+      .leftJoin('b.slot', 's')
+      .leftJoin('s.parkingZone', 'z')
+      .leftJoin('z.parkingFloor', 'f')
+      .leftJoin('f.parkingLot', 'l')
+      .leftJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere(lotId ? 'l.id = :lotId' : '1=1', { lotId })
+      .andWhere('b.start_time >= :start AND b.start_time < :end', {
+        start: firstDayOfThisMonth,
+        end: firstDayOfNextMonth,
+      })
+      .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(i.total)', 'total')
+      .getRawOne();
+
+    // Last month revenue
+    const lastMonthData = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoin('b.invoice', 'i')
+      .leftJoin('b.slot', 's')
+      .leftJoin('s.parkingZone', 'z')
+      .leftJoin('z.parkingFloor', 'f')
+      .leftJoin('f.parkingLot', 'l')
+      .leftJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere(lotId ? 'l.id = :lotId' : '1=1', { lotId })
+      .andWhere('b.start_time >= :start AND b.start_time < :end', {
+        start: firstDayOfLastMonth,
+        end: firstDayOfThisMonth,
+      })
+      .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(i.total)', 'total')
+      .getRawOne();
+
+    const monthlyRevenue = parseFloat(thisMonthData?.total || '0') || 0;
+    const lastMonthRevenue = parseFloat(lastMonthData?.total || '0') || 0;
+
+    let growthPercent = 0;
+    if (lastMonthRevenue > 0) {
+      growthPercent =
+        ((monthlyRevenue - lastMonthRevenue) / lastMonthRevenue) * 100;
+    } else if (monthlyRevenue > 0) {
+      growthPercent = 100;
+    }
+
+    // Total Bookings this month
+    const totalBookings = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoin('b.slot', 's')
+      .leftJoin('s.parkingZone', 'z')
+      .leftJoin('z.parkingFloor', 'f')
+      .leftJoin('f.parkingLot', 'l')
+      .leftJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere(lotId ? 'l.id = :lotId' : '1=1', { lotId })
+      .andWhere('b.start_time >= :start AND b.start_time < :end', {
+        start: firstDayOfThisMonth,
+        end: firstDayOfNextMonth,
+      })
+      .getCount();
+
+    return {
+      monthlyRevenue,
+      lastMonthRevenue,
+      growthPercent: parseFloat(growthPercent.toFixed(2)),
+      totalBookings,
+    };
+  }
+
+  async getRevenueByMonth(ownerId: string, year: number, lotId?: number) {
+    const rawData = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoin('b.invoice', 'i')
+      .leftJoin('b.slot', 's')
+      .leftJoin('s.parkingZone', 'z')
+      .leftJoin('z.parkingFloor', 'f')
+      .leftJoin('f.parkingLot', 'l')
+      .leftJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere(lotId ? 'l.id = :lotId' : '1=1', { lotId })
+      .andWhere('EXTRACT(YEAR FROM b.start_time) = :year', { year })
+      .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+      .select('EXTRACT(MONTH FROM b.start_time)', 'month')
+      .addSelect('SUM(i.total)', 'revenue')
+      .addSelect('COUNT(b.id)', 'bookingcount')
+      .groupBy('EXTRACT(MONTH FROM b.start_time)')
+      .getRawMany();
+
+    const monthlyStats = Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1,
+      revenue: 0,
+      bookingCount: 0,
+    }));
+
+    rawData.forEach((row) => {
+      const monthIdx = parseInt(row.month, 10) - 1;
+      if (monthIdx >= 0 && monthIdx < 12) {
+        monthlyStats[monthIdx].revenue = parseFloat(row.revenue) || 0;
+        monthlyStats[monthIdx].bookingCount =
+          parseInt(row.bookingcount, 10) || 0;
+      }
+    });
+
+    return monthlyStats;
   }
 }

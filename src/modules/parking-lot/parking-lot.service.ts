@@ -465,11 +465,10 @@ export class ParkingLotService {
       where: { id: lotid },
       relations: [
         'owner',
-        'pricingRule',
-        'pricingRule.parkingZone',
         'parkingFloor',
-        'parkingFloor.parkingZone',
-        'parkingFloor.parkingZone.slot',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.slot',
+        'parkingFloor.parkingZones.pricingRule',
       ],
     });
 
@@ -486,6 +485,66 @@ export class ParkingLotService {
       userVehicles: vehicleUser,
     };
   }
+
+  /**
+   * Lấy sơ đồ bãi đỗ và tính toán lại trạng thái slot dựa trên khung giờ yêu cầu
+   * (Dành cho chức năng đặt chỗ rạp chiếu phim - Cinema Style)
+   */
+  async getAvailableMapByTime(
+    lotid: number,
+    userId: string,
+    startTime: string,
+    endTime: string,
+  ) {
+    // 1. Lấy sơ đồ gốc và xe của user (tận dụng logic getMapForBooking)
+    const lotData: any = await this.getMapForBooking(lotid, userId);
+
+    // 2. Tìm tất cả các booking trùng lặp thời gian trong bãi này
+    // Điều kiện overlap: (b.start_time < requested_end) AND (b.end_time > requested_start)
+    const busyBookings = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoinAndSelect('b.slot', 'slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .where('floor.parkingLot = :lotId', { lotId: lotid })
+      .andWhere('b.status NOT IN (:...excludeStatuses)', {
+        excludeStatuses: ['completed', 'cancelled', 'COMPLETED', 'CANCELLED'],
+      })
+      .andWhere('b.start_time < :endTime', { endTime: new Date(endTime) })
+      .andWhere('b.end_time > :startTime', { startTime: new Date(startTime) })
+      .getMany();
+
+    // 3. Tạo tập hợp các Slot ID đã bị đặt
+    const busySlotIds = new Set(
+      busyBookings.map((b) => b.slot?.id).filter((id) => id !== undefined),
+    );
+
+    // 4. Duyệt qua cấu trúc phân cấp và cập nhật trạng thái slot dựa trên logic rạp phim
+    if (lotData.parkingFloor) {
+      lotData.parkingFloor.forEach((floor: any) => {
+        if (floor.parkingZones) {
+          floor.parkingZones.forEach((zone: any) => {
+            if (zone.slot) {
+              zone.slot.forEach((slot: any) => {
+                // Nếu slot thực tế đang AVAILABLE nhưng lại nằm trong danh sách bận của khung giờ này
+                if (
+                  slot.status === SlotStatus.AVAILABLE &&
+                  busySlotIds.has(slot.id)
+                ) {
+                  // Ghi đè thành RESERVED để FE đổi màu xám/đỏ khách không chọn được
+                  slot.status = SlotStatus.RESERVED;
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+
+    return lotData;
+  }
+
+
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
 
   async getFloorsByParkingLot(lotId: number) {
