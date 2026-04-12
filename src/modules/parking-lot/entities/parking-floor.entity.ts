@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -12,6 +13,7 @@ import { ParkingLot } from './parking-lot.entity';
 @Entity('parking_floors')
 export class ParkingFloor {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column()

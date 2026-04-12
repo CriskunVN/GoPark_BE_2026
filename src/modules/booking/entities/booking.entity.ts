@@ -7,6 +7,7 @@ import {
   OneToOne,
   OneToMany,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 import type { User } from '../../users/entities/user.entity';
 import type { Vehicle } from '../../users/entities/vehicle.entity';
@@ -15,10 +16,12 @@ import { QRCode } from './qr-code.entity';
 import { Invoice } from '../../payment/entities/invoice.entity';
 import { CheckLog } from './check-log.entity';
 import { Review } from 'src/modules/users/entities/review.entity';
+import { BookingStatus } from 'src/common/enums/status.enum';
 
 @Entity('bookings')
 export class Booking {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column({ type: 'timestamp' })
@@ -27,8 +30,12 @@ export class Booking {
   @Column({ type: 'timestamp' })
   end_time: Date;
 
-  @Column()
-  status: string;
+  @Column({
+    type:'enum',
+    enum:BookingStatus,
+    default:BookingStatus.PENDING,
+  })
+  status: BookingStatus;
 
   @CreateDateColumn({
     type: 'timestamp',

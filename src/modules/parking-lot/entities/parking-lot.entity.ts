@@ -5,6 +5,7 @@ import {
   OneToMany,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import type { User } from '../../users/entities/user.entity';
 import { ParkingFloor } from './parking-floor.entity';
@@ -23,6 +24,7 @@ type ParkingLotImages = {
 @Entity('parking_lots')
 export class ParkingLot {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column()

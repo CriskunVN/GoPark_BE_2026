@@ -44,3 +44,10 @@ export enum ActivityStatus {
   ERROR = 'ERROR',
   INFO = 'INFO',
 }
+
+export enum BookingStatus {
+  CONFIRMED = 'CONFIRMED',
+  ONGOING = 'ONGOING',
+  PENDING = 'PENDING',
+  COMPLETED = 'COMPLETED'
+}

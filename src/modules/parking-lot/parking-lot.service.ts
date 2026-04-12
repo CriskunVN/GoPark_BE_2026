@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -14,7 +14,11 @@ import {
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
-import { ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
+import {
+  BookingStatus,
+  ParkingLotStatus,
+  SlotStatus,
+} from 'src/common/enums/status.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
@@ -183,6 +187,14 @@ export class ParkingLotService {
     }));
   }
 
+  // ─── Get all parking lots (for all users) ─────────────────────────────────
+  async getAllParkingLots() {
+    return await this.parkingLotRepository.find({
+      where: { status: ParkingLotStatus.ACTIVE },
+      relations: ['parkingFloor', 'parkingFloor.parkingZones'],
+    });
+  }
+
   // ─── Get all parking lots by owner ─────────────────────────────────────────
   async getParkingLotsByOwner(
     ownerId: string,
@@ -245,7 +257,6 @@ export class ParkingLotService {
 
     const slotsToSave: ParkingSlot[] = [];
     for (const [index, slotConfig] of (parsedFloorSlots as any[]).entries()) {
-      const numSlots = Number(slotConfig.capacity || slotConfig || 0);
       const floorNum = slotConfig.floorNumber
         ? Number(slotConfig.floorNumber)
         : index + 1;
@@ -258,24 +269,35 @@ export class ParkingLotService {
       });
       const savedFloor = await this.parkingFloorRepository.save(floor);
 
-      // 2. Tạo một Zone mặc định cho mỗi tầng
-      const zone = this.parkingZoneRepository.create({
-        zone_name: 'Khu vực chính',
-        prefix: `F${floorNum}`,
-        parkingFloor: savedFloor,
-        total_slots: numSlots,
-      });
-      const savedZone = await this.parkingZoneRepository.save(zone);
+      let zonesConfig = slotConfig.zones;
+      if (!zonesConfig || !Array.isArray(zonesConfig)) {
+        const numSlots = Number(slotConfig.capacity || slotConfig || 0);
+        zonesConfig = [{ zoneNumber: 1, capacity: numSlots }];
+      }
 
-      for (let i = 1; i <= numSlots; i++) {
-        totalSlots++;
-        slotsToSave.push(
-          this.parkingSlotRepository.create({
-            code: `F${floorNum}-${String(i).padStart(3, '0')}`,
-            status: SlotStatus.AVAILABLE,
-            parkingZone: savedZone,
-          }),
-        );
+      for (const [zIdx, zConf] of zonesConfig.entries()) {
+        const numSlots = Number(zConf.capacity || 0);
+        const zNum = zConf.zoneNumber ? Number(zConf.zoneNumber) : zIdx + 1;
+
+        // 2. Tạo một Zone mặc định cho mỗi tầng
+        const zone = this.parkingZoneRepository.create({
+          zone_name: zonesConfig.length === 1 ? 'Khu vực chính' : `Khu ${zNum}`,
+          prefix: `F${floorNum}Z${zNum}`,
+          parkingFloor: savedFloor,
+          total_slots: numSlots,
+        });
+        const savedZone = await this.parkingZoneRepository.save(zone);
+
+        for (let i = 1; i <= numSlots; i++) {
+          totalSlots++;
+          slotsToSave.push(
+            this.parkingSlotRepository.create({
+              code: `F${floorNum}Z${zNum}-${String(i).padStart(3, '0')}`,
+              status: SlotStatus.AVAILABLE,
+              parkingZone: savedZone,
+            }),
+          );
+        }
       }
     }
     // 5. Cập nhật tổng số chỗ đậu xe và số chỗ đậu xe còn trống trong bản ghi ParkingLot dựa trên thông tin đã tạo.
@@ -420,7 +442,7 @@ export class ParkingLotService {
       }
 
       const booking = queryRunner.manager.create(Booking, {
-        status: 'IN_PROGRESS',
+        status: BookingStatus.ONGOING,
         start_time: new Date(),
         end_time: new Date(), // Set temporary end_time
         user: user,
@@ -465,14 +487,25 @@ export class ParkingLotService {
       where: { id: lotid },
       relations: [
         'owner',
+        'owner.profile',
         'parkingFloor',
         'parkingFloor.parkingZones',
-        'parkingFloor.parkingZones.slot',
         'parkingFloor.parkingZones.pricingRule',
+        'parkingFloor.parkingZones.slot',
       ],
     });
 
     if (!lot) throw new NotFoundException('Not found Parking Lot');
+
+    const flatpricingRules = lot.parkingFloor.flatMap((floor) =>
+      floor.parkingZones.flatMap((zone) =>
+        zone.pricingRule.map((rule) => ({
+          ...rule,
+          zone_name: zone.zone_name,
+          floor_name: floor.floor_name,
+        })),
+      ),
+    );
 
     //lấy danh sách xe của người dùng
     const vehicleUser = await this.vehicleRepository.find({
@@ -480,9 +513,38 @@ export class ParkingLotService {
       relations: ['user'],
     });
 
+    // lấy giá của tất cả các rule để FE dễ dàng hiển thị giá khi user chọn zone nào đó (thay vì phải đợi đến lúc chọn zone mới gọi API lấy giá) => tối ưu trải nghiệm người dùng
+    const allPricingRules: any[] = [];
+    if (lot.parkingFloor) {
+      for (const floor of lot.parkingFloor) {
+        if (floor.parkingZones) {
+          for (const zone of floor.parkingZones) {
+            if (zone.pricingRule) {
+              for (const rule of zone.pricingRule) {
+                allPricingRules.push({
+                  ...rule,
+                  parkingZone: {
+                    id: zone.id,
+                    zone_name: zone.zone_name,
+                    prefix: zone.prefix,
+                    description: zone.description,
+                  },
+                  parkingFloor: {
+                    id: floor.id,
+                    floor_name: floor.floor_name,
+                  },
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
     return {
       ...lot,
       userVehicles: vehicleUser,
+      pricingRules: flatpricingRules,
     };
   }
 
@@ -543,7 +605,6 @@ export class ParkingLotService {
 
     return lotData;
   }
-
 
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
 
@@ -1019,7 +1080,7 @@ export class ParkingLotService {
       })
       .where('pl.id != :parkingLotId AND pl.status = :status', {
         parkingLotId,
-        status: 'INACTIVE',
+        status: 'ACTIVE',
       })
       .groupBy('pl.id')
       .addGroupBy('pl.name')
@@ -1039,5 +1100,31 @@ export class ParkingLotService {
       relations: ['user.profile'],
       order: { created_at: 'DESC' },
     });
+  }
+
+  // ============ Đếm số bãi đỗ xe của chủ sở hữu ==================
+  async countParkingLotsByOwnerId(ownerId: string) {
+    return this.parkingLotRepository.count({
+      where: { owner: { id: ownerId } },
+    });
+  }
+
+  async countParkingLotsByOwnerIds(ownerIds: string[]) {
+    if (!ownerIds.length) {
+      return new Map<string, number>();
+    }
+
+    const rows = await this.parkingLotRepository
+      .createQueryBuilder('parkingLot')
+      .leftJoin('parkingLot.owner', 'owner')
+      .select('owner.id', 'ownerId')
+      .addSelect('COUNT(parkingLot.id)', 'totalParkingLots')
+      .where('owner.id IN (:...ownerIds)', { ownerIds })
+      .groupBy('owner.id')
+      .getRawMany();
+
+    return new Map<string, number>(
+      rows.map((row) => [row.ownerId, Number(row.totalParkingLots) || 0]),
+    );
   }
 }

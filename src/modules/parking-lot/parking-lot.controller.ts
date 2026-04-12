@@ -37,6 +37,11 @@ import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
 export class ParkingLotController {
   constructor(private readonly parkingLotService: ParkingLotService) {}
 
+  @Get('all')
+  async getAllParkingLots() {
+    return this.parkingLotService.getAllParkingLots();
+  }
+
   // ─── Routes: owner (đặt TRƯỚC :parkingLotId để tránh route collision) ──────
 
   @Get('owner/:ownerId')

@@ -1,11 +1,11 @@
 import { IsDateString, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class CreateBookingDto {
-  @IsDateString()
-  start_time: Date;
+  @IsString()
+  start_time: string;
 
-  @IsDateString()
-  end_time: Date;
+  @IsString()
+  end_time: string;
 
   @IsString()
   status: string;
