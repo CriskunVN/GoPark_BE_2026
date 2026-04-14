@@ -16,6 +16,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { RequestModule } from './modules/request/request.module';
 import { NotificationModule } from './modules/notification/notification.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { BullModule } from '@nestjs/bull';
 
 @Module({
@@ -43,6 +44,7 @@ import { BullModule } from '@nestjs/bull';
     AdminModule,
     RequestModule,
     NotificationModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
