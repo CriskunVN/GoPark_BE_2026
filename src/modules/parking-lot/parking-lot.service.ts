@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -34,6 +34,8 @@ import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { Review } from '../users/entities/review.entity';
+import { PricingRule } from '../payment/entities/pricingrule.entity';
+import { ManualBookingDto } from './dto/manual-booking.dto';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -63,6 +65,9 @@ export class ParkingLotService {
     private parkingZoneRepository: Repository<ParkingZone>,
     @InjectRepository(Review)
     private reviewRepository: Repository<Review>,
+
+    @InjectRepository(PricingRule)
+    private pricingRuleRepository: Repository<PricingRule>,
 
     private requestService: RequestService,
 
@@ -476,6 +481,167 @@ export class ParkingLotService {
     }
   }
 
+  // ─── Manual Booking (Owner đặt chỗ thủ công cho khách vãng lai) ───────────
+  async handleManualBooking(
+    parkingLotId: number,
+    dto: ManualBookingDto,
+    ownerId: string,
+  ) {
+    // 1. Xác minh bãi tồn tại và thuộc owner
+    const parkingLot = await this.parkingLotRepository.findOne({
+      where: { id: parkingLotId, owner: { id: ownerId } },
+      relations: ['owner'],
+    });
+    if (!parkingLot) {
+      throw new NotFoundException(
+        'Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập',
+      );
+    }
+
+    // 2. Xác minh slot thuộc bãi này và load thông tin zone + pricing
+    const slot = await this.parkingSlotRepository.findOne({
+      where: { id: dto.slotId },
+      relations: [
+        'parkingZone',
+        'parkingZone.parkingFloor',
+        'parkingZone.parkingFloor.parkingLot',
+        'parkingZone.pricingRule',
+      ],
+    });
+
+    if (
+      !slot ||
+      slot.parkingZone?.parkingFloor?.parkingLot?.id !== parkingLotId
+    ) {
+      throw new NotFoundException(
+        'Không tìm thấy vị trí đỗ hoặc vị trí không thuộc bãi này',
+      );
+    }
+
+    if (slot.status !== SlotStatus.AVAILABLE) {
+      throw new BadRequestException(
+        `Vị trí đỗ ${slot.code} hiện không khả dụng (${slot.status})`,
+      );
+    }
+
+    // 3. Lấy thông tin giá từ zone
+    const pricingRule = slot.parkingZone.pricingRule?.[0] ?? null;
+    const pricePerHour = pricingRule?.price_per_hour ?? 0;
+    const pricePerDay = pricingRule?.price_per_day ?? 0;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 4. Tìm/Tạo ghost user theo SĐT
+      let user = await queryRunner.manager
+        .createQueryBuilder(User, 'user')
+        .innerJoinAndSelect('user.profile', 'profile')
+        .where('profile.phone = :phone', { phone: dto.phoneNumber })
+        .getOne();
+
+      if (!user) {
+        const email = `guest_${dto.phoneNumber}@gopark.local`;
+        const randomPassword = Math.random().toString(36).slice(-8);
+
+        const newUser = queryRunner.manager.create(User, {
+          email,
+          password: randomPassword,
+          status: 'ACTIVE',
+        });
+        user = await queryRunner.manager.save(User, newUser);
+
+        const profile = queryRunner.manager.create(Profile, {
+          name: dto.name,
+          phone: dto.phoneNumber,
+          user: user,
+        });
+        await queryRunner.manager.save(Profile, profile);
+        user.profile = profile;
+      }
+
+      // 5. Tìm/Tạo vehicle theo biển số
+      const standardizedPlate = dto.licensePlate
+        .toUpperCase()
+        .replace(/\W/g, '');
+
+      let vehicle = await queryRunner.manager.findOne(Vehicle, {
+        where: { plate_number: standardizedPlate },
+        relations: ['user'],
+      });
+
+      if (!vehicle) {
+        vehicle = queryRunner.manager.create(Vehicle, {
+          plate_number: standardizedPlate,
+          user: user,
+        });
+        vehicle = await queryRunner.manager.save(Vehicle, vehicle);
+      } else if (vehicle.user.id !== user.id) {
+        vehicle.user = user;
+        vehicle = await queryRunner.manager.save(Vehicle, vehicle);
+      }
+
+      // 6. Tạo booking ONGOING (owner đặt = check-in luôn)
+      const booking = queryRunner.manager.create(Booking, {
+        status: BookingStatus.ONGOING,
+        start_time: new Date(dto.startTime),
+        end_time: new Date(dto.startTime), // placeholder — cập nhật khi checkout
+        user: user,
+        vehicle: vehicle,
+        slot: slot,
+      });
+      await queryRunner.manager.save(Booking, booking);
+
+      // 7. Cập nhật trạng thái slot → OCCUPIED
+      await queryRunner.manager.update(
+        ParkingSlot,
+        { id: slot.id },
+        { status: SlotStatus.OCCUPIED },
+      );
+
+      // 8. Giảm available_slots của bãi
+      await queryRunner.manager.decrement(
+        ParkingLot,
+        { id: parkingLotId },
+        'available_slots',
+        1,
+      );
+
+      await queryRunner.commitTransaction();
+
+      return {
+        message: 'Đặt chỗ thủ công thành công',
+        bookingId: booking.id,
+        slotCode: slot.code,
+        zoneName: slot.parkingZone.zone_name,
+        floorName: slot.parkingZone.parkingFloor.floor_name,
+        startTime: booking.start_time,
+        customerName: dto.name,
+        phoneNumber: dto.phoneNumber,
+        licensePlate: standardizedPlate,
+        pricing: {
+          pricePerHour,
+          pricePerDay,
+        },
+      };
+    } catch (error: unknown) {
+      await queryRunner.rollbackTransaction();
+      console.error('Manual Booking Error:', error);
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        'Không thể tạo đặt chỗ thủ công, vui lòng thử lại',
+      );
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   //Get bãi đỗ
   async getMapForBooking(lotid: number, userId: string) {
     console.log('Getting map for booking - ParkingLotService', {
@@ -604,6 +770,66 @@ export class ParkingLotService {
     }
 
     return lotData;
+  }
+
+  /**
+   * Lấy lịch trình chi tiết của 1 Slot cụ thể trong 1 ngày
+   * Giúp Owner biết slot đó bận/trống vào lúc nào trong ngày
+   */
+  async getSlotAvailability(slotId: number, dateStr: string) {
+    const startOfDay = new Date(dateStr);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(dateStr);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const slot = await this.parkingSlotRepository.findOne({
+      where: { id: slotId },
+      relations: [
+        'parkingZone',
+        'parkingZone.parkingFloor',
+        'parkingZone.parkingFloor.parkingLot',
+      ],
+    });
+
+    if (!slot) {
+      throw new NotFoundException('Không tìm thấy vị trí đỗ');
+    }
+
+    const bookings = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoinAndSelect('b.user', 'user')
+      .leftJoinAndSelect('user.profile', 'profile')
+      .leftJoinAndSelect('b.vehicle', 'vehicle')
+      .where('b.slot_id = :slotId', { slotId }) // Dùng slot_id là tên cột trong DB
+      .andWhere('b.status NOT IN (:...excludeStatuses)', {
+        excludeStatuses: [
+          'CANCELLED',
+          'cancelled',
+          BookingStatus.COMPLETED, // Thường owner chỉ quan tâm các lịch sắp tới hoặc đang diễn ra
+        ],
+      })
+      .andWhere('b.start_time <= :endOfDay', { endOfDay })
+      .andWhere('b.end_time >= :startOfDay', { startOfDay })
+      .orderBy('b.start_time', 'ASC')
+      .getMany();
+
+    return {
+      slotId: slot.id,
+      slotCode: slot.code,
+      zoneName: slot.parkingZone.zone_name,
+      floorName: slot.parkingZone.parkingFloor.floor_name,
+      parkingLotName: slot.parkingZone.parkingFloor.parkingLot.name,
+      date: dateStr,
+      bookings: bookings.map((b) => ({
+        id: b.id,
+        startTime: b.start_time,
+        endTime: b.end_time,
+        status: b.status,
+        userName: b.user?.profile?.name || b.user?.email || 'N/A',
+        licensePlate: b.vehicle?.plate_number || 'N/A',
+      })),
+    };
   }
 
   // ─── Floor & Zone Management (Customization) ──────────────────────────────

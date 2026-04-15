@@ -305,7 +305,7 @@ export class BookingService {
       const isNumeric = !isNaN(Number(search));
       if (isNumeric) {
         query.andWhere(
-          '(booking.id = :searchId OR LOWER(vehicle.license_plate) LIKE LOWER(:searchLike) OR LOWER(qrCode.content) LIKE LOWER(:searchLike))',
+          '(booking.id = :searchId OR LOWER(vehicle.plate_number) LIKE LOWER(:searchLike) OR LOWER(qrCode.content) LIKE LOWER(:searchLike))',
           {
             searchId: Number(search),
             searchLike: `%${search}%`,
@@ -313,7 +313,7 @@ export class BookingService {
         );
       } else {
         query.andWhere(
-          '(LOWER(vehicle.license_plate) LIKE LOWER(:searchLike) OR LOWER(qrCode.content) LIKE LOWER(:searchLike))',
+          '(LOWER(vehicle.plate_number) LIKE LOWER(:searchLike) OR LOWER(qrCode.content) LIKE LOWER(:searchLike))',
           {
             searchLike: `%${search}%`,
           },

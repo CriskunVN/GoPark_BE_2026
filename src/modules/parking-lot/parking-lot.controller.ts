@@ -29,6 +29,8 @@ import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { UpdateFloorDto } from './dto/update-floor.dto';
 import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
+import { GetSlotAvailabilityDto } from './dto/get-slot-availability.dto';
+import { ManualBookingDto } from './dto/manual-booking.dto';
 
 
 // chia vung ra roi thay nghe
@@ -92,6 +94,16 @@ export class ParkingLotController {
     );
   }
 
+  // Lấy lịch trình chi tiết của 1 Slot cụ thể trong 1 ngày
+  @Get('slots/:slotId/availability')
+  async getSlotAvailability(
+    @Param('slotId', ParseIntPipe) slotId: number,
+    @Query() dto: GetSlotAvailabilityDto,
+  ) {
+    return this.parkingLotService.getSlotAvailability(slotId, dto.date);
+  }
+
+
 
   //bãi đỗ gần nhất
   @Get('nearby/:lotid')
@@ -131,12 +143,29 @@ export class ParkingLotController {
     return await this.parkingLotService.extractLicensePlate(file);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post(':parkingLotId/walk-in')
   async handleWalkIn(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Body() dto: WalkInDto,
   ) {
     return await this.parkingLotService.handleWalkIn(parkingLotId, dto);
+  }
+
+  // ─── Route: Manual Booking (Owner đặt chỗ thủ công) ─────────────────────────
+  @UseGuards(JwtAuthGuard)
+  @Post(':parkingLotId/manual-booking')
+  async handleManualBooking(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: ManualBookingDto,
+    @Req() req: any,
+  ) {
+    const ownerId = req.user['userId'];
+    return await this.parkingLotService.handleManualBooking(
+      parkingLotId,
+      dto,
+      ownerId,
+    );
   }
 
   // ─── Customization Endpoints (Floors & Zones) ─────────────────────────────
