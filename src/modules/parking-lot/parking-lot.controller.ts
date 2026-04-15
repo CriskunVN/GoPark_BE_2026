@@ -28,6 +28,10 @@ import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { UpdateFloorDto } from './dto/update-floor.dto';
+import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
+import { GetSlotAvailabilityDto } from './dto/get-slot-availability.dto';
+import { ManualBookingDto } from './dto/manual-booking.dto';
+
 
 // chia vung ra roi thay nghe
 
@@ -70,8 +74,36 @@ export class ParkingLotController {
   @Get('map/:lotid')
   async getMapBooing(@Param('lotid') lotid: number, @Req() req: any) {
     const userId = req.user['userId'];
-    return this.parkingLotService.getMapForBooking(lotid,userId);
+    return this.parkingLotService.getMapForBooking(lotid, userId);
   }
+
+  // Lấy bản đồ bãi đỗ với trạng thái slot theo khung giờ (Cinema Style)
+  @UseGuards(JwtAuthGuard)
+  @Get(':parkingLotId/available-map')
+  async getAvailableMap(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Query() dto: CheckAvailableSlotsDto,
+    @Req() req: any,
+  ) {
+    const userId = req.user['userId'];
+    return this.parkingLotService.getAvailableMapByTime(
+      parkingLotId,
+      userId,
+      dto.start_time,
+      dto.end_time,
+    );
+  }
+
+  // Lấy lịch trình chi tiết của 1 Slot cụ thể trong 1 ngày
+  @Get('slots/:slotId/availability')
+  async getSlotAvailability(
+    @Param('slotId', ParseIntPipe) slotId: number,
+    @Query() dto: GetSlotAvailabilityDto,
+  ) {
+    return this.parkingLotService.getSlotAvailability(slotId, dto.date);
+  }
+
+
 
   //bãi đỗ gần nhất
   @Get('nearby/:lotid')
@@ -111,12 +143,29 @@ export class ParkingLotController {
     return await this.parkingLotService.extractLicensePlate(file);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post(':parkingLotId/walk-in')
   async handleWalkIn(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Body() dto: WalkInDto,
   ) {
     return await this.parkingLotService.handleWalkIn(parkingLotId, dto);
+  }
+
+  // ─── Route: Manual Booking (Owner đặt chỗ thủ công) ─────────────────────────
+  @UseGuards(JwtAuthGuard)
+  @Post(':parkingLotId/manual-booking')
+  async handleManualBooking(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: ManualBookingDto,
+    @Req() req: any,
+  ) {
+    const ownerId = req.user['userId'];
+    return await this.parkingLotService.handleManualBooking(
+      parkingLotId,
+      dto,
+      ownerId,
+    );
   }
 
   // ─── Customization Endpoints (Floors & Zones) ─────────────────────────────
