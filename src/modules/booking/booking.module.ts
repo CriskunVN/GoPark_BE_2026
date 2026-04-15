@@ -9,6 +9,7 @@ import { ParkingFloor } from '../parking-lot/entities/parking-floor.entity';
 import { ParkingZone } from '../parking-lot/entities/parking-zone.entity';
 import { CheckLog } from './entities/check-log.entity';
 import { AuthModule } from '../auth/auth.module';
+import { Gate } from '../parking-lot/entities/gate.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { ActivityModule } from '../activity/activity.module';
 
@@ -21,6 +22,7 @@ import { ActivityModule } from '../activity/activity.module';
       ParkingFloor,
       ParkingZone,
       CheckLog,
+      Gate,
     ]),
       AuthModule,
       ActivityModule,

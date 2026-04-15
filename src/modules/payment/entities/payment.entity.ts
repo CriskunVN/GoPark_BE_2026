@@ -5,7 +5,6 @@ import {
   ManyToOne,
   JoinColumn,
   OneToMany,
-  OneToOne,
   CreateDateColumn,
 } from 'typeorm';
 import { PaymentStatus } from 'src/common/enums/status.enum';
@@ -33,6 +32,7 @@ export class Payment {
   @OneToMany('Transaction', (transaction: Transaction) => transaction.payment)
   transactions: Transaction[];
 
-  @OneToOne('Invoice', (invoice: Invoice) => invoice.payment)
+  @ManyToOne('Invoice', (invoice: Invoice) => invoice.payment, { nullable: true })
+  @JoinColumn({ name: 'invoice_id' })
   invoice: Invoice;
 }

@@ -1,5 +1,6 @@
 import { Column, Entity,JoinColumn,ManyToOne,PrimaryGeneratedColumn } from "typeorm";
 import { Booking } from "./booking.entity";
+import { Gate } from "../../parking-lot/entities/gate.entity";
 
 @Entity('check_logs')
 export class CheckLog{
@@ -7,8 +8,9 @@ export class CheckLog{
     @PrimaryGeneratedColumn()
     id:number;
 
-    @Column()
-    gate_id:number;
+    @ManyToOne(() => Gate, (gate) => gate.checkLogs)
+    @JoinColumn({ name: 'gate_id' })
+    gate: Gate;
 
     @Column({type : 'timestamp'})
     time: Date;

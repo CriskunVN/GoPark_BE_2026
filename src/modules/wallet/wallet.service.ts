@@ -17,6 +17,8 @@ import { ActivityType } from 'src/common/enums/type.enum';
 import { ActivityStatus, BookingStatus } from 'src/common/enums/status.enum';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 import { SlotStatus } from 'src/common/enums/status.enum';
+import { Invoice } from '../payment/entities/invoice.entity';
+import { InvoiceStatus } from 'src/common/enums/status.enum';
 @Injectable()
 export class WalletService {
   constructor(
@@ -156,6 +158,34 @@ export class WalletService {
       await queryRunner.manager.update(ParkingSlot,booking?.slot.id,{
         status : SlotStatus.OCCUPIED
       })
+
+
+      // 2. Trong try block của processPayment:
+      const invoiceData = {
+        total: amount,
+        tax: 0,
+        status: InvoiceStatus.PAID,
+        payment_method: 'WALLET',
+        booking: { id: numericBookingId } as any,
+      };
+
+      // Tìm xem đã có invoice nào cho booking này chưa
+      const existingInvoice = await queryRunner.manager.findOne(Invoice, {
+        where: { booking: { id: numericBookingId } }
+      });
+
+      if (existingInvoice) {
+        // Nếu có rồi (do tạo lúc nhấn thanh toán) thì chỉ cập nhật status
+        await queryRunner.manager.update(Invoice, existingInvoice.id, {
+          status: InvoiceStatus.PAID,
+          total: amount
+        });
+      } else {
+        // Nếu chưa có thì mới tạo mới
+        const newInvoice = queryRunner.manager.create(Invoice, invoiceData);
+        await queryRunner.manager.save(newInvoice);
+      }
+
       // Lưu toàn bộ phiên giao dịch nếu mọi thứ thành công
       await queryRunner.commitTransaction();
 

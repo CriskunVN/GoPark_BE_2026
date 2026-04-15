@@ -11,6 +11,7 @@ import { ParkingLotService } from './parking-lot.service';
 import { RequestModule } from '../request/request.module';
 import { UsersModule } from '../users/users.module';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
+import { Gate } from './entities/gate.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
 
 @Module({
@@ -22,6 +23,7 @@ import { PricingRule } from '../payment/entities/pricingrule.entity';
       ParkingZone,
       ParkingFloor,
       Vehicle,
+      Gate,
       PricingRule,
     ]),
     RequestModule,

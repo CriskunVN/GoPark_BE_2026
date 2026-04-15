@@ -23,6 +23,7 @@ import {
 } from 'src/common/enums/status.enum';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityType } from 'src/common/enums/type.enum';
+import { Gate } from '../parking-lot/entities/gate.entity';
 
 @Injectable()
 export class BookingService {
@@ -46,16 +47,16 @@ export class BookingService {
   // ================= CREATE BOOKING =================
   async createBooking(bookingdto: CreateBookingDto) {
     try {
-      // Dọn dẹp booking quá hạn
-      await this.bookingRepository
+      // Dọn dẹp booking quá hạn (Chạy ngầm, không đợi để tăng tốc response)
+      this.bookingRepository
         .createQueryBuilder()
         .delete()
         .from(Booking)
         .where('status = :status', { status: 'PENDING' })
         .andWhere('created_at < :expiredTime', {
-          expiredTime: new Date(Date.now() - 15 * 60 * 1000), // Quá 15 phút
+          expiredTime: new Date(Date.now() - 15 * 60 * 1000),
         })
-        .execute();
+        .execute().catch(e => console.error("Cleanup error:", e));
 
       const slot = await this.parkingSlotRepository.findOne({
         where: { id: bookingdto.slot_id },
@@ -117,42 +118,30 @@ export class BookingService {
         await this.qrcodeRepository.save(qrCode);
       }
 
-      //thanh toán bằng tiền mặt
-      if (savedBooking.status === 'PENDING') {
-        try {
-          // Đợi một chút để DB kịp cập nhật quan hệ hoặc dùng trực tiếp savedBooking.id
-          await this.sendEmail(savedBooking.id);
-          console.log(
-            `Đã gửi email thành công cho booking tiền mặt: ${savedBooking.id}`,
-          );
-        } catch (emailError) {
-          console.error('Lỗi gửi email tiền mặt:', emailError);
-          // Không throw lỗi ở đây để tránh rollback booking đã tạo thành công
-        }
-      }
+      // //thanh toán bằng tiền mặt
+      // if (savedBooking.status === 'PENDING') {
+      //   try {
+      //     // Đợi một chút để DB kịp cập nhật quan hệ hoặc dùng trực tiếp savedBooking.id
+      //     await this.sendEmail(savedBooking.id);
+      //     console.log(
+      //       `Đã gửi email thành công cho booking tiền mặt: ${savedBooking.id}`,
+      //     );
+      //   } catch (emailError) {
+      //     console.error('Lỗi gửi email tiền mặt:', emailError);
+      //     // Không throw lỗi ở đây để tránh rollback booking đã tạo thành công
+      //   }
+      // }
 
-      // Activity log
-      await this.activityService.logActivity({
+      // Activity log - Bỏ qua await để trả kết quả về FE nhanh hơn
+      this.activityService.logActivity({
         type: ActivityType.BOOKING_NEW,
-        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ`,
+        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ thành công`,
         status: ActivityStatus.SUCCESS,
         userId: bookingdto.user_id,
         meta: {
           slotId: bookingdto.slot_id,
         },
-      });
-
-      // ======= add activity log ==================
-
-      await this.activityService.logActivity({
-        type: ActivityType.BOOKING_NEW,
-        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ tại bãi #`,
-        status: ActivityStatus.SUCCESS,
-        userId: bookingdto.user_id,
-        meta: {
-          slotId: bookingdto.slot_id,
-        },
-      });
+      }).catch(e => console.error("Log activity error:", e));
 
       return {
         ...savedBooking,
@@ -166,6 +155,15 @@ export class BookingService {
 
   // ================= scanQR =================
   async scanQRCode(content: string, gateId: number) {
+    // 1. Kiểm tra sự tồn tại và loại của cổng (IN/OUT/BOTH)
+    const gate = await this.checkLogRepository.manager.findOne(Gate, {
+      where: { id: gateId },
+    });
+
+    if (!gate) {
+      throw new NotFoundException('Cổng không tồn tại trong hệ thống');
+    }
+
     const qrCode = await this.qrcodeRepository.findOne({
       where: { content, status: 'active' },
       relations: ['booking', 'booking.slot'],
@@ -182,12 +180,19 @@ export class BookingService {
       booking.status === BookingStatus.CONFIRMED ||
       booking.status === BookingStatus.PENDING
     ) {
+      // Ràng buộc: Check-in không được phép tại cổng chỉ dành cho lối ra (OUT)
+      if (gate.type === 'OUT') {
+        throw new BadRequestException(
+          `Cổng "${gate.name}" chỉ dành cho lối ra. Vui lòng quét tại cổng lối vào.`,
+        );
+      }
+
       const isAlreadyPaid = booking.status === BookingStatus.CONFIRMED;
       booking.status = BookingStatus.ONGOING;
 
       const newLog = this.checkLogRepository.create({
         booking: booking,
-        gate_id: gateId,
+        gate: { id: gateId } as any, // Sử dụng quan hệ gate với ID truyền vào từ mobile/camera
         check_status: 'in',
         time: new Date(),
       });
@@ -204,6 +209,13 @@ export class BookingService {
 
     //check-out
     if (booking.status === BookingStatus.ONGOING) {
+      // Ràng buộc: Check-out không được phép tại cổng chỉ dành cho lối vào (IN)
+      if (gate.type === 'IN') {
+        throw new BadRequestException(
+          `Cổng "${gate.name}" chỉ dành cho lối vào. Vui lòng quét tại cổng lối ra.`,
+        );
+      }
+
       booking.status = BookingStatus.COMPLETED;
       qrCode.status = 'used';
 
@@ -212,12 +224,14 @@ export class BookingService {
         await this.parkingSlotRepository.save(booking.slot);
       }
 
-      await this.checkLogRepository.save({
-        booking,
-        gate_id: gateId,
+      const newLog = this.checkLogRepository.create({
+        booking: booking,
+        gate: { id: gateId } as any, // Lưu vết lại xe ra ở cổng nào
         check_status: 'out',
         time: new Date(),
       });
+
+      await this.checkLogRepository.save(newLog);
 
       await this.qrcodeRepository.save(qrCode);
       await this.bookingRepository.save(booking);
