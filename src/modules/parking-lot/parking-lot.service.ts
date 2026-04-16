@@ -1448,6 +1448,29 @@ export class ParkingLotService {
     return { totalSlots, availableSlots };
   }
 
+  // =========== Đếm slot còn trống theo Mảng ZONE ID==================
+  async countAvailableSpacesByZoneIds(
+    zoneIds: number[],
+  ): Promise<Map<number, number>> {
+    if (!zoneIds || zoneIds.length === 0) return new Map();
+
+    const result = await this.parkingSlotRepository
+      .createQueryBuilder('slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .select('zone.id', 'zoneId')
+      .addSelect('COUNT(slot.id)', 'count')
+      .where('zone.id IN (:...zoneIds)', { zoneIds })
+      .andWhere('slot.status = :status', { status: SlotStatus.AVAILABLE })
+      .groupBy('zone.id')
+      .getRawMany();
+
+    const map = new Map<number, number>();
+    result.forEach((row) => {
+      map.set(Number(row.zoneId), Number(row.count));
+    });
+    return map;
+  }
+
   // ============ lấy giá giờ của bãi đỗ xe (ADMIN) ==================
   async getParkingLotPricing(parkingLotId: number) {
     const pricingRules = await this.pricingRuleRepository

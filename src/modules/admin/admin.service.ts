@@ -396,6 +396,18 @@ export class AdminService {
         search,
       );
 
+    // --- Tối ưu hóa N+1 (Gom nhóm Query) ---
+    // Lấy ra tất cả zoneIds của các bãi đỗ xe trên page hiện tại
+    const allZoneIds = items
+      .flatMap((lot) =>
+        (lot.parkingFloor || []).flatMap((floor) => floor.parkingZones || []),
+      )
+      .map((zone) => zone.id);
+
+    // Thực hiện 1 truy vấn duy nhất để đếm availableSlots cho toàn bộ zones
+    const availableZoneMap =
+      await this.parkingLotService.countAvailableSpacesByZoneIds(allZoneIds);
+
     const data = await Promise.all(
       items.map(async (parkingLot) => {
         // lấy số lượng chỗ trống và tổng chỗ
@@ -446,7 +458,7 @@ export class AdminService {
             id: zone.id,
             name: zone.zone_name,
             totalSlots: zone.total_slots || 0,
-            availableSlots: zone.total_slots || 0, // Hiện tại dummy = total_slots
+            availableSlots: availableZoneMap.get(zone.id) || 0, // Lookup nhanh O(1) từ bộ nhớ
           }));
 
         // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
@@ -467,8 +479,7 @@ export class AdminService {
           owner: parkingLot.owner?.profile || null,
           availableSpaces,
           totalSpaces,
-          pricePerHour:
-            pricePerHour.length > 0 ? pricePerHour[0].pricePerHour : 0,
+          pricePerHour,
           averageRating,
           totalReviews,
           totalBookings,
