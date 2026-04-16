@@ -5,12 +5,13 @@ import { PricingRule } from './entities/pricingrule.entity';
 import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
 import { UpdatePricingRuleDto } from './dto/update-pricing-rule.dto';
 import { Payment } from './entities/payment.entity';
+import { Invoice } from './entities/invoice.entity';
 import { Transaction } from './entities/transaction.entity';
 import {
   BookingStatus,
   PaymentStatus,
   SlotStatus,
-  TransactionStatus,
+  TransactionStatus, InvoiceStatus,
 } from 'src/common/enums/status.enum';
 import { BookingService } from '../booking/booking.service';
 import { Booking } from '../booking/entities/booking.entity';
@@ -25,85 +26,91 @@ export class PaymentService {
     private readonly pricingRuleRepository: Repository<PricingRule>,
     @InjectRepository(Payment)
     private readonly paymentRepository: Repository<Payment>,
+    @InjectRepository(Invoice)
+    private readonly invoiceRepository: Repository<Invoice>,
     @InjectRepository(Transaction)
     private readonly transactionRepository: Repository<Transaction>,
     private readonly bookingService: BookingService,
     @InjectRepository(Booking)
     private readonly bookingRepository: Repository<Booking>,
-    private dataSource: DataSource,
+    private dataSource:  DataSource,
     private readonly walletService: WalletService,
-  ) {}
+  ) { }
 
   async handleBookingVnpayPayment(
     bookingId: number,
     amount: number,
     transactionRef: string,
   ) {
-    // Tạo một queryRunner để quản lý transaction
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  const queryRunner = this.dataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
-    try {
-      // 1. Lấy thông tin booking (phải dùng manager của queryRunner)
-      const booking = await queryRunner.manager.findOne(Booking, {
-        where: { id: bookingId },
-        relations: ['slot'],
+  try {
+    // 1. Lấy thông tin booking
+    const booking = await queryRunner.manager.findOne(Booking, {
+      where: { id: bookingId },
+      relations: ['slot'],
+    });
+
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    // 2. TẠO INVOICE TRƯỚC (Để lấy ID gán cho Payment)
+    // Tên file pdf tạm thời dùng timestamp
+    const tempFileName = `inv-${bookingId}-${Date.now()}.pdf`;
+    const invoiceFileUrl = `/invoices/${bookingId}/${tempFileName}`;
+    
+    const invoice = queryRunner.manager.create(Invoice, {
+      total: amount,
+      tax: 0,
+      status: InvoiceStatus.PAID,
+      file_url: invoiceFileUrl,
+      booking: { id: bookingId }, 
+    });
+    const savedInvoice = await queryRunner.manager.save(invoice);
+
+    // 3. TẠO PAYMENT (Gán luôn invoice vừa tạo vào đây)
+    const payment = queryRunner.manager.create(Payment, {
+      amount,
+      method: 'VNPAY',
+      status: PaymentStatus.PAID, // VNPAY trả về success nên để PAID luôn
+      invoice: savedInvoice,      // QUAN TRỌNG: Gán quan hệ ở đây để DB có invoice_id
+    });
+    const savedPayment = await queryRunner.manager.save(payment);
+
+    // 4. LƯU TRANSACTION (Liên kết với Payment vừa tạo)
+    const transaction = queryRunner.manager.create(Transaction, {
+      gateway_txn_id: transactionRef,
+      amount,
+      payment: savedPayment,
+      status:  TransactionStatus.SUCCESS,
+    });
+    await queryRunner.manager.save(transaction);
+
+    // 5. Cập nhật trạng thái Booking và Slot
+    await queryRunner.manager.update(Booking, bookingId, { status: BookingStatus.CONFIRMED });
+
+    if (booking?.slot) {
+      await queryRunner.manager.update(ParkingSlot, booking.slot.id, {
+        status: SlotStatus.OCCUPIED,
       });
-
-      // 2. Cập nhật trạng thái Booking
-      await queryRunner.manager.update(Booking, bookingId, {
-        status: BookingStatus.CONFIRMED,
-      });
-
-      // 3. Cập nhật trạng thái Slot
-      if (booking?.slot) {
-        await queryRunner.manager.update(ParkingSlot, booking.slot.id, {
-          status: SlotStatus.OCCUPIED,
-        });
-      }
-
-      // 4. Lưu Payment & Transaction
-      const payment = queryRunner.manager.create(Payment, {
-        amount,
-        method: 'VNPAY',
-        status: PaymentStatus.PAID,
-      });
-      const savedPayment = await queryRunner.manager.save(payment);
-
-      const transaction = queryRunner.manager.create(Transaction, {
-        gateway_txn_id: transactionRef,
-        amount,
-        payment: savedPayment,
-        status: TransactionStatus.SUCCESS,
-      });
-      await queryRunner.manager.save(transaction);
-
-      // NẾU ĐẾN ĐÂY KHÔNG CÓ LỖI -> LƯU TẤT CẢ
-      await queryRunner.commitTransaction();
-
-      // --- Các tác vụ sau commit (không ảnh hưởng DB chính nếu lỗi) ---
-
-      // Gửi email xác nhận cho khách hàng
-      this.bookingService
-        .sendEmail(bookingId)
-        .catch((err) => console.error('[Payment] Lỗi gửi email:', err));
-
-      // Cộng tiền vào ví Owner của bãi đỗ xe
-      this.creditOwnerWallet(bookingId, amount, transactionRef).catch((err) =>
-        console.error('[Payment] Lỗi cộng tiền ví owner:', err),
-      );
-
-      return savedPayment;
-    } catch (err) {
-      // NẾU CÓ BẤT KỲ LỖI NÀO -> HỦY HẾT, DB KHÔNG THAY ĐỔI GÌ
-      await queryRunner.rollbackTransaction();
-      throw err;
-    } finally {
-      // Giải phóng kết nối
-      await queryRunner.release();
     }
+
+    // 6. Hoàn tất giao dịch
+    await queryRunner.commitTransaction();
+
+    // Gửi email
+    this.bookingService.sendEmail(bookingId).catch(err => console.error("Email error:", err));
+
+    return savedPayment;
+  } catch (err) {
+    await queryRunner.rollbackTransaction();
+    console.error("TRANSACTION ERROR:", err);
+    throw err;
+  } finally {
+    await queryRunner.release();
   }
+}
 
   /**
    * Tìm ownerId qua chuỗi quan hệ: Booking → Slot → Zone → Floor → Lot → Owner
@@ -200,5 +207,29 @@ export class PaymentService {
 
     Object.assign(rule, dto);
     return await this.pricingRuleRepository.save(rule);
+  }
+
+  async getInvoiceByBooking(bookingId: number) {
+    const numericId = Number(bookingId);
+    // Fetch invoice directly to avoid joining payments (DB may not have invoice_id column yet)
+    const invoice = await this.invoiceRepository.findOne({
+      where: { booking: { id: numericId } },
+      relations: [
+        'booking',
+        'booking.slot',
+        'booking.slot.parkingZone',
+        'booking.slot.parkingZone.parkingFloor',
+        'booking.slot.parkingZone.parkingFloor.parkingLot',
+        'booking.user',
+        'booking.user.profile',
+      ],
+    });
+
+    if (!invoice) {
+      console.log(`Không tìm thấy Invoice cho Booking ID: ${numericId}`);
+      throw new NotFoundException(`Không tìm thấy hóa đơn cho mã đặt chỗ ${numericId}`);
+    }
+
+    return invoice;
   }
 }

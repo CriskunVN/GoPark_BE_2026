@@ -22,7 +22,7 @@ export class PaymentController {
     private readonly vnpayService: VnpayService,
     private readonly walletService: WalletService,
     private readonly paymentService: PaymentService,
-  ) {}
+  ) { }
 
   @Post('pricing-rule')
   async createPricingRule(@Body() dto: CreatePricingRuleDto) {
@@ -150,5 +150,11 @@ export class PaymentController {
     } else {
       return { success: false, message: 'Chữ ký không hợp lệ', data: query };
     }
+  }
+
+  // GET invoice by booking id
+  @Get('invoice/booking/:bookingId')
+  async getInvoiceByBooking(@Param('bookingId') bookingId: number) {
+    return await this.paymentService.getInvoiceByBooking(bookingId);
   }
 }

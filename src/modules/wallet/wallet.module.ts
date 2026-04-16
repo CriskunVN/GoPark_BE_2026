@@ -18,4 +18,4 @@ import { ActivityModule } from '../activity/activity.module';
   providers: [WalletService],
   exports: [TypeOrmModule, WalletService],
 })
-export class WalletModule {}
+export class WalletModule { }
