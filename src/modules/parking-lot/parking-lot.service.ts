@@ -5,7 +5,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Not, EntityManager } from 'typeorm';
+import { Repository, DataSource, Not, EntityManager, ILike } from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -1352,5 +1352,124 @@ export class ParkingLotService {
     return new Map<string, number>(
       rows.map((row) => [row.ownerId, Number(row.totalParkingLots) || 0]),
     );
+  }
+
+  // ============ Đếm số bãi đỗ xe theo trạng thái (ADMIN) ==================
+  async countParkingLotsByStatus(status: string) {
+    return this.parkingLotRepository.count({
+      where: { status },
+    });
+  }
+  // =========== Đếm số slot theo trạng thái (ADMIN) vd: 33/100 ==================
+  async countAllAvailableSpacesParkingSlot() {
+    const totalSlots = await this.parkingSlotRepository.count();
+    const availableSlots = await this.parkingSlotRepository.count({
+      where: { status: SlotStatus.AVAILABLE },
+    });
+    return `${availableSlots}/${totalSlots}`;
+  }
+
+  // ============ Tính trung bình đánh giá của tất cả bãi đỗ xe (ADMIN) theo 0-5.0 ==================
+  async calculateAverageRating() {
+    const result = await this.reviewRepository
+      .createQueryBuilder('review')
+      .select('ROUND(AVG(review.rating), 1)', 'avgRating')
+      .getRawOne();
+
+    return result?.avgRating || '0.0';
+  }
+
+  // ============ Tính trung bình đánh giá của 1 bãi đỗ xe (ADMIN) theo 0-5.0 ==================
+  async calculateAverageRatingByParkingLotId(parkingLotId: number) {
+    const result = await this.reviewRepository
+      .createQueryBuilder('review')
+      .where('review.parking_lot_id = :parkingLotId', { parkingLotId })
+      .select('ROUND(AVG(review.rating), 1)', 'avgRating')
+      .getRawOne();
+
+    return result?.avgRating || '0.0';
+  }
+
+  // ============ Lấy danh sách bãi đỗ xe (ADMIN) với phân trang ==================
+  // return: {items , meta}
+  async findAllPaginatedWithSearch(
+    page: number,
+    limit: number,
+    search?: string,
+  ) {
+    const [items, total] = await this.parkingLotRepository.findAndCount({
+      where: search ? { name: ILike(`%${search}%`) } : {}, // Nếu có search thì filter theo tên, không thì lấy tất cả
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+      ], // Kéo thêm dữ liệu các bảng liên kết
+      order: { id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items,
+      meta: {
+        totalItems: total,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      },
+    };
+  }
+
+  // =========== Đếm slot còn trống theo từng bãi đỗ xe (ADMIN) ==================
+  async countAvailableSpaces(parkingLotId: number) {
+    const totalSlots = await this.parkingSlotRepository.count({
+      where: {
+        parkingZone: {
+          parkingFloor: {
+            parkingLot: { id: parkingLotId },
+          },
+        },
+      },
+    });
+
+    const availableSlots = await this.parkingSlotRepository.count({
+      where: {
+        parkingZone: {
+          parkingFloor: {
+            parkingLot: { id: parkingLotId },
+          },
+        },
+        status: SlotStatus.AVAILABLE,
+      },
+    });
+
+    return { totalSlots, availableSlots };
+  }
+
+  // ============ lấy giá giờ của bãi đỗ xe (ADMIN) ==================
+  async getParkingLotPricing(parkingLotId: number) {
+    const pricingRules = await this.pricingRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .where('lot.id = :parkingLotId', { parkingLotId })
+      .select([
+        'zone.zone_name AS zoneName',
+        'rule.price_per_hour AS pricePerHour',
+        'rule.price_per_day AS pricePerDay',
+      ])
+      .getRawMany();
+
+    return pricingRules;
+  }
+
+  // =========== Đếm tổng review của bãi đỗ xe (ADMIN) ==================
+  async countTotalReviewsByParkingLotId(parkingLotId: number) {
+    return await this.reviewRepository.count({
+      where: { lot: { id: parkingLotId } },
+    });
   }
 }

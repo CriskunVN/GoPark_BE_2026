@@ -109,7 +109,7 @@ export class AdminService {
   async approveRequest(
     requestId: string,
     adminId: string,
-    approvalNote?: string,
+    approvalNote: string,
   ) {
     const request = await this.requestRepository.findOne({
       where: { id: requestId },
@@ -131,7 +131,7 @@ export class AdminService {
         break;
       // xử lý logic duyệt yêu cầu trở thành chủ bãi
       case RequestType.BECOME_OWNER:
-        // await this.handleApproveBecomeOwner(request, adminId);
+        await this.handleApproveBecomeOwner(request, adminId);
         break;
       // xử lý logic duyệt yêu cầu thanh toán
       case RequestType.PAYMENT:
@@ -196,6 +196,20 @@ export class AdminService {
         );
 
         // Send email
+        // await this.emailService.sendApprovalEmail(request.requester.email);
+      },
+    );
+  }
+  // =========== admin xử lý chấp nhận yêu cầu trở thành chủ bãi =================
+  private async handleApproveBecomeOwner(request: Request, adminId: string) {
+    const requesterId = request.requester.id;
+
+    await this.requestRepository.manager.transaction(
+      async (transactionalEntityManager) => {
+        // Cập nhật role của user thành OWNER
+        await this.userService.makeOwner(requesterId);
+
+        // TODO: Gửi email thông báo
         // await this.emailService.sendApprovalEmail(request.requester.email);
       },
     );
@@ -344,6 +358,137 @@ export class AdminService {
       newOwnersLastMonth,
       activeOwners,
       blockedOwners,
+    };
+  }
+
+  async getParkingLotStats() {
+    // Tổng bãi đỗ xe
+    const totalParkingLots =
+      await this.parkingLotService.countTotalParkingLots();
+    // Số bãi đỗ xe theo từng trạng thái
+    const activeParkingLots =
+      await this.parkingLotService.countParkingLotsByStatus(
+        ParkingLotStatus.ACTIVE,
+      );
+    // Tất cả chỗ đỗ đang trống 33/100
+    const availableSpacesParkingSlot =
+      await this.parkingLotService.countAllAvailableSpacesParkingSlot();
+
+    // Đánh giá trung bình của các bãi đỗ xe
+    const averageRating = await this.parkingLotService.calculateAverageRating();
+
+    return {
+      totalParkingLots,
+      activeParkingLots,
+      availableSpacesParkingSlot,
+      averageRating,
+    };
+  }
+
+  // =========== Lấy danh sách bãi đỗ xe  ================
+  // Data : Thông tin bãi đỗ xe, Tên chủ bãi , số lượng chỗ trống / tổng chỗ, giá giờ , đánh giá trung bình, trạng thái hoạt động
+  async getParkingLotList(page = 1, limit = 10, search?: string) {
+    // Lấy danh sách bãi đỗ xe có phân trang và tìm kiếm
+    const { items, meta } =
+      await this.parkingLotService.findAllPaginatedWithSearch(
+        page,
+        limit,
+        search,
+      );
+
+    const data = await Promise.all(
+      items.map(async (parkingLot) => {
+        // lấy số lượng chỗ trống và tổng chỗ
+        const availableSpaces =
+          await this.parkingLotService.countAvailableSpaces(parkingLot.id);
+        const totalSpaces = parkingLot.total_slots;
+        // lấy giá giờ từ bảng pricing
+        const pricePerHour = await this.parkingLotService.getParkingLotPricing(
+          parkingLot.id,
+        );
+        // tính đánh giá trung bình của bãi đỗ xe
+        const averageRating =
+          await this.parkingLotService.calculateAverageRatingByParkingLotId(
+            parkingLot.id,
+          );
+
+        const totalReviews =
+          await this.parkingLotService.countTotalReviewsByParkingLotId(
+            parkingLot.id,
+          );
+
+        const totalBookings = await this.bookingService.countBookingsByOwnerId(
+          parkingLot.owner.id,
+        );
+
+        const totalRevenue =
+          await this.bookingService.calculateTotalRevenueByOwnerId(
+            parkingLot.owner.id,
+          );
+
+        // Mock data về tiện ích của bãi đỗ xe, sau này có thể lấy từ database nếu có trường amenities trong bảng parking_lots
+        const amenities = [
+          'EV Charging',
+          'Covered Parking',
+          'Security',
+          'CCTV',
+          'Handicap Accessible',
+          'Car Wash',
+          'Valet Service',
+          '24/7 Access',
+        ];
+
+        // Lấy zones của bãi đỗ xe
+        const zones = (parkingLot.parkingFloor || [])
+          .map((floor) => floor.parkingZones || [])
+          .flat()
+          .map((zone) => ({
+            id: zone.id,
+            name: zone.zone_name,
+            totalSlots: zone.total_slots || 0,
+            availableSlots: zone.total_slots || 0, // Hiện tại dummy = total_slots
+          }));
+
+        // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
+        const formatTime = (date?: Date) => {
+          if (!date) return '00:00';
+          const d = new Date(date);
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        };
+
+        return {
+          id: parkingLot.id,
+          name: parkingLot.name,
+          location: parkingLot.address,
+          description: parkingLot.description,
+          status: parkingLot.status,
+          type: 'Floor',
+          occupiedSlots: totalSpaces - availableSpaces.availableSlots,
+          owner: parkingLot.owner?.profile || null,
+          availableSpaces,
+          totalSpaces,
+          pricePerHour:
+            pricePerHour.length > 0 ? pricePerHour[0].pricePerHour : 0,
+          averageRating,
+          totalReviews,
+          totalBookings,
+          totalRevenue,
+          openTime: formatTime(parkingLot.open_time),
+          closeTime: formatTime(parkingLot.close_time),
+          amenities,
+          zones,
+        };
+      }),
+    );
+
+    return {
+      success: true,
+      message: 'Lấy danh sách bãi đỗ xe thành công',
+      data,
+      meta: {
+        ...meta,
+        itemCount: data.length, // Cập nhật lại itemCount dựa trên số lượng phần tử thực tế trong data
+      },
     };
   }
 }
