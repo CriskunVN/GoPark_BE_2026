@@ -2,7 +2,9 @@
   Injectable,
   NotFoundException,
   BadRequestException,
+  InternalServerErrorException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -19,6 +21,7 @@ import { UserRoleEnum } from '../../common/enums/role.enum';
 @Injectable()
 export class UsersService {
   constructor(
+    private readonly configService: ConfigService,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @InjectRepository(Role)
@@ -261,6 +264,76 @@ export class UsersService {
       await this.profileRepository.save(user.profile);
     }
     return this.findOne(userId);
+  }
+
+  // Upload ảnh đại diện của người dùng lên Supabase Storage, sau đó cập nhật URL ảnh vào hồ sơ người dùng
+  async uploadAvatar(userId: string, file: Express.Multer.File) {
+    const supabaseUrl = this.configService.get<string>('SUPABASE_URL')?.trim();
+    const serviceRoleKey = this.configService
+      .get<string>('SUPABASE_SERVICE_ROLE_KEY')
+      ?.trim()
+      .replace(/^['"]|['"]$/g, '');
+    const bucket =
+      this.configService.get<string>('SUPABASE_BUCKET')?.trim() || 'IMG_GOPARK2026';
+    const avatarFolder =
+      this.configService.get<string>('SUPABASE_AVATAR_FOLDER')?.trim() || 'avatars';
+
+    if (!supabaseUrl || !serviceRoleKey) throw new InternalServerErrorException('Thiếu cấu hình SUPABASE');
+
+    const extension = (file.originalname?.split('.').pop() || 'jpg').toLowerCase();
+    const safeExt = extension.replace(/[^a-z0-9]/g, '') || 'jpg';
+    const filePath = `${avatarFolder}/${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+    const candidateBuckets = Array.from(new Set([bucket, 'img_GoPark2026', 'IMG_GOPARK2026'].filter(Boolean)));
+    let usedBucket: string | null = null;
+
+    for (const candidateBucket of candidateBuckets) {
+      const uploadUrl = `${supabaseUrl}/storage/v1/object/${candidateBucket}/${filePath}`;
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+          'Content-Type': file.mimetype,
+          'x-upsert': 'false',
+        },
+        body: new Uint8Array(file.buffer),
+      });
+
+      if (uploadResponse.ok) {
+        usedBucket = candidateBucket;
+        break;
+      }
+    }
+
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${usedBucket}/${filePath}`;
+    let resolvedImageUrl = publicUrl;
+
+    if (usedBucket) {
+      try {
+        const signUrl = `${supabaseUrl}/storage/v1/object/sign/${usedBucket}/${filePath}`;
+        const signResponse = await fetch(signUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${serviceRoleKey}`,
+            apikey: serviceRoleKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 365 }),
+        });
+
+        if (signResponse.ok) {
+          const signData = await signResponse.json();
+          const signedPath = signData?.signedURL || signData?.signedUrl;
+          if (signedPath) {
+            // FIX: prepend /storage/v1 since Supabase signedURL returns a path without it
+            const fixPath = signedPath.startsWith('/storage/v1') ? signedPath : `/storage/v1${signedPath.startsWith('/') ? '' : '/'}${signedPath}`;
+            resolvedImageUrl = signedPath.startsWith('http') ? signedPath : `${supabaseUrl}${fixPath}`;
+          }
+        }
+      } catch (e) {}
+    }
+
+    return this.updateProfile(userId, { image: resolvedImageUrl });
   }
 
   // =========== Lấy name bằng userId ================
