@@ -21,7 +21,7 @@ import {
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor, FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
 import { WalkInDto } from './dto/walk-in.dto';
 import { CreateFloorDto } from './dto/create-floor.dto';
@@ -31,7 +31,7 @@ import { UpdateFloorDto } from './dto/update-floor.dto';
 import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
 import { GetSlotAvailabilityDto } from './dto/get-slot-availability.dto';
 import { ManualBookingDto } from './dto/manual-booking.dto';
-
+import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
 
 // chia vung ra roi thay nghe
 
@@ -119,8 +119,31 @@ export class ParkingLotController {
 
   // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
   @Post()
-  async createParkingLot(@Body() createParkingLotDto: CreateParkingLotReqDto) {
-    return this.parkingLotService.createParkingLot(createParkingLotDto);
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('images'))
+  async createParkingLot(
+    @Req() req: any,
+    @Body() createParkingLotDto: CreateParkingLotReqDto,
+    @UploadedFiles() files?: Array<Express.Multer.File>,
+  ) {
+    if (!createParkingLotDto.ownerId) {
+      createParkingLotDto.ownerId = req.user['userId'];
+    }
+    return this.parkingLotService.createParkingLot(createParkingLotDto, files);
+  }
+
+  // ─── Route: update parking lot (chỉ dành cho owner) ─────────────────────────
+  @Patch(':parkingLotId')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('images'))
+  async updateParkingLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() updateParkingLotDto: UpdateParkingLotReqDto,
+    @Req() req: any,
+    @UploadedFiles() files?: Array<Express.Multer.File>,
+  ) {
+    const ownerId = req.user['userId'];
+    return this.parkingLotService.updateParkingLot(parkingLotId, updateParkingLotDto, ownerId, files);
   }
 
   @UseGuards(JwtAuthGuard)
