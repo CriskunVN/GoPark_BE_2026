@@ -1448,6 +1448,41 @@ export class ParkingLotService {
     return { totalSlots, availableSlots };
   }
 
+  // =========== Đếm slot còn trống theo Mảng LOT ID (Solve N+1) ==================
+  async countAvailableSpacesByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { totalSlots: number; availableSlots: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    const result = await this.parkingSlotRepository
+      .createQueryBuilder('slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .select('lot.id', 'lotId')
+      .addSelect('COUNT(slot.id)', 'totalSlots')
+      .addSelect(
+        "SUM(CASE WHEN slot.status = 'AVAILABLE' THEN 1 ELSE 0 END)",
+        'availableSlots',
+      )
+      .where('lot.id IN (:...lotIds)', { lotIds })
+      .groupBy('lot.id')
+      .getRawMany();
+
+    const map = new Map<
+      number,
+      { totalSlots: number; availableSlots: number }
+    >();
+    result.forEach((row) => {
+      map.set(Number(row.lotId), {
+        totalSlots: Number(row.totalSlots) || 0,
+        availableSlots: Number(row.availableSlots) || 0,
+      });
+    });
+
+    return map;
+  }
+
   // =========== Đếm slot còn trống theo Mảng ZONE ID==================
   async countAvailableSpacesByZoneIds(
     zoneIds: number[],
@@ -1489,10 +1524,72 @@ export class ParkingLotService {
     return pricingRules;
   }
 
+  // ============ lấy giá đồng loạt của nhiều bãi đỗ xe ==================
+  async getPricingByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { pricePerHour: number; pricePerDay: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    // Tìm rules thuộc các lotIds
+    const results = await this.pricingRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .where('lot.id IN (:...lotIds)', { lotIds })
+      .select([
+        'lot.id AS "lotId"',
+        'rule.price_per_hour AS "pricePerHour"',
+        'rule.price_per_day AS "pricePerDay"',
+      ])
+      .getRawMany();
+
+    // Gom nhóm rule đầu tiên hoặc lớn nhất vào Map
+    const map = new Map<
+      number,
+      { pricePerHour: number; pricePerDay: number }
+    >();
+    results.forEach((row) => {
+      const lotId = Number(row.lotId);
+      if (!map.has(lotId)) {
+        map.set(lotId, {
+          pricePerHour: Number(row.pricePerHour) || 0,
+          pricePerDay: Number(row.pricePerDay) || 0,
+        });
+      }
+    });
+    return map;
+  }
+
   // =========== Đếm tổng review của bãi đỗ xe (ADMIN) ==================
   async countTotalReviewsByParkingLotId(parkingLotId: number) {
     return await this.reviewRepository.count({
       where: { lot: { id: parkingLotId } },
     });
+  }
+
+  // =========== Tính Rate và Review đồng loạt cho nhiều bãi ==================
+  async getReviewStatsByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { avgRating: string; totalReviews: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    const results = await this.reviewRepository
+      .createQueryBuilder('review')
+      .where('review.parking_lot_id IN (:...lotIds)', { lotIds })
+      .select('review.parking_lot_id', 'lotId')
+      .addSelect('ROUND(AVG(review.rating), 1)', 'avg')
+      .addSelect('COUNT(review.id)', 'count')
+      .groupBy('review.parking_lot_id')
+      .getRawMany();
+
+    const map = new Map<number, { avgRating: string; totalReviews: number }>();
+    results.forEach((row) => {
+      map.set(Number(row.lotId), {
+        avgRating: row.avg ? String(row.avg) : '0.0',
+        totalReviews: Number(row.count) || 0,
+      });
+    });
+    return map;
   }
 }

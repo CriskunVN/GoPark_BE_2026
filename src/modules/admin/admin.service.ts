@@ -397,100 +397,113 @@ export class AdminService {
       );
 
     // --- Tối ưu hóa N+1 (Gom nhóm Query) ---
-    // Lấy ra tất cả zoneIds của các bãi đỗ xe trên page hiện tại
+    const lotIds = items.map((lot) => lot.id);
+    const ownerIds = items.map((lot) => lot.owner?.id).filter(Boolean);
     const allZoneIds = items
       .flatMap((lot) =>
         (lot.parkingFloor || []).flatMap((floor) => floor.parkingZones || []),
       )
       .map((zone) => zone.id);
 
-    // Thực hiện 1 truy vấn duy nhất để đếm availableSlots cho toàn bộ zones
-    const availableZoneMap =
-      await this.parkingLotService.countAvailableSpacesByZoneIds(allZoneIds);
+    // Thực hiện truy vấn 1 lần cho từng thành phần
+    const [
+      availableZoneMap,
+      availableLotMap,
+      pricingMap,
+      reviewStatsMap,
+      bookingStatsMap,
+    ] = await Promise.all([
+      this.parkingLotService.countAvailableSpacesByZoneIds(allZoneIds),
+      this.parkingLotService.countAvailableSpacesByLotIds(lotIds),
+      this.parkingLotService.getPricingByLotIds(lotIds),
+      this.parkingLotService.getReviewStatsByLotIds(lotIds),
+      this.bookingService.getOwnerBookingStatsByOwnerIds(ownerIds),
+    ]);
 
-    const data = await Promise.all(
-      items.map(async (parkingLot) => {
-        // lấy số lượng chỗ trống và tổng chỗ
-        const availableSpaces =
-          await this.parkingLotService.countAvailableSpaces(parkingLot.id);
-        const totalSpaces = parkingLot.total_slots;
-        // lấy giá giờ từ bảng pricing
-        const pricePerHour = await this.parkingLotService.getParkingLotPricing(
-          parkingLot.id,
-        );
-        // tính đánh giá trung bình của bãi đỗ xe
-        const averageRating =
-          await this.parkingLotService.calculateAverageRatingByParkingLotId(
-            parkingLot.id,
-          );
+    const data = items.map((parkingLot) => {
+      // lấy số lượng chỗ trống và tổng chỗ
+      const lotSpaces = availableLotMap.get(parkingLot.id) || {
+        totalSlots: 0,
+        availableSlots: 0,
+      };
+      const totalSpaces = parkingLot.total_slots;
 
-        const totalReviews =
-          await this.parkingLotService.countTotalReviewsByParkingLotId(
-            parkingLot.id,
-          );
+      // lấy giá giờ từ bảng pricing (chỉ lấy 1 rule đầu tiên hoặc lớn nhất như đã gom nhóm)
+      const pricing = pricingMap.get(parkingLot.id);
+      const pricePerHour = pricing
+        ? [
+            {
+              pricePerHour: pricing.pricePerHour,
+              pricePerDay: pricing.pricePerDay,
+            },
+          ]
+        : [];
 
-        const totalBookings = await this.bookingService.countBookingsByOwnerId(
-          parkingLot.owner.id,
-        );
+      // tính đánh giá trung bình của bãi đỗ xe
+      const reviewStats = reviewStatsMap.get(parkingLot.id) || {
+        avgRating: '0.0',
+        totalReviews: 0,
+      };
 
-        const totalRevenue =
-          await this.bookingService.calculateTotalRevenueByOwnerId(
-            parkingLot.owner.id,
-          );
+      const ownerStats = parkingLot.owner?.id
+        ? bookingStatsMap.get(parkingLot.owner.id)
+        : null;
 
-        // Mock data về tiện ích của bãi đỗ xe, sau này có thể lấy từ database nếu có trường amenities trong bảng parking_lots
-        const amenities = [
-          'EV Charging',
-          'Covered Parking',
-          'Security',
-          'CCTV',
-          'Handicap Accessible',
-          'Car Wash',
-          'Valet Service',
-          '24/7 Access',
-        ];
+      const totalBookings = ownerStats?.totalBookings || 0;
+      const totalRevenue = ownerStats?.totalRevenue || '0 Tr ₫';
 
-        // Lấy zones của bãi đỗ xe
-        const zones = (parkingLot.parkingFloor || [])
-          .map((floor) => floor.parkingZones || [])
-          .flat()
-          .map((zone) => ({
-            id: zone.id,
-            name: zone.zone_name,
-            totalSlots: zone.total_slots || 0,
-            availableSlots: availableZoneMap.get(zone.id) || 0, // Lookup nhanh O(1) từ bộ nhớ
-          }));
+      // Mock data về tiện ích của bãi đỗ xe
+      const amenities = [
+        'EV Charging',
+        'Covered Parking',
+        'Security',
+        'CCTV',
+        'Handicap Accessible',
+        'Car Wash',
+        'Valet Service',
+        '24/7 Access',
+      ];
 
-        // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
-        const formatTime = (date?: Date) => {
-          if (!date) return '00:00';
-          const d = new Date(date);
-          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-        };
+      // Lấy zones của bãi đỗ xe
+      const zones = (parkingLot.parkingFloor || [])
+        .map((floor) => floor.parkingZones || [])
+        .flat()
+        .map((zone) => ({
+          id: zone.id,
+          name: zone.zone_name,
+          totalSlots: zone.total_slots || 0,
+          availableSlots: availableZoneMap.get(zone.id) || 0, // Lookup nhanh O(1) từ bộ nhớ
+        }));
 
-        return {
-          id: parkingLot.id,
-          name: parkingLot.name,
-          location: parkingLot.address,
-          description: parkingLot.description,
-          status: parkingLot.status,
-          type: 'Floor',
-          occupiedSlots: totalSpaces - availableSpaces.availableSlots,
-          owner: parkingLot.owner?.profile || null,
-          availableSpaces,
-          totalSpaces,
-          pricePerHour,
-          averageRating,
-          totalReviews,
-          totalBookings,
-          totalRevenue,
-          openTime: formatTime(parkingLot.open_time),
-          closeTime: formatTime(parkingLot.close_time),
-          amenities,
-          zones,
-        };
-      }),
-    );
+      // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
+      const formatTime = (date?: Date) => {
+        if (!date) return '00:00';
+        const d = new Date(date);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      };
+
+      return {
+        id: parkingLot.id,
+        name: parkingLot.name,
+        location: parkingLot.address,
+        description: parkingLot.description,
+        status: parkingLot.status,
+        type: 'Floor',
+        occupiedSlots: totalSpaces - lotSpaces.availableSlots,
+        owner: parkingLot.owner?.profile || null,
+        availableSpaces: lotSpaces,
+        totalSpaces,
+        pricePerHour,
+        averageRating: reviewStats.avgRating,
+        totalReviews: reviewStats.totalReviews,
+        totalBookings,
+        totalRevenue,
+        openTime: formatTime(parkingLot.open_time),
+        closeTime: formatTime(parkingLot.close_time),
+        amenities,
+        zones,
+      };
+    });
 
     return {
       success: true,
