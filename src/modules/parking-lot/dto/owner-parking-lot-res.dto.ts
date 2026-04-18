@@ -9,6 +9,8 @@ export class OwnerParkingLotResDto {
   totalSlots: number;
   availableSlots: number;
   status: string;
+  description?: string;
+  image?: any;
 
   static fromEntity(lot: ParkingLot): OwnerParkingLotResDto {
     return {
@@ -20,6 +22,8 @@ export class OwnerParkingLotResDto {
       totalSlots: lot.total_slots,
       availableSlots: lot.available_slots,
       status: lot.status,
+      description: lot.description,
+      image: lot.image,
     };
   }
 

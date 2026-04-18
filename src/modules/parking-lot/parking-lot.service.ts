@@ -36,6 +36,8 @@ import { UpdateZoneDto } from './dto/update-zone.dto';
 import { Review } from '../users/entities/review.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
 import { ManualBookingDto } from './dto/manual-booking.dto';
+import { SupabaseService } from '../../common/supabase/supabase.service';
+import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -73,10 +75,26 @@ export class ParkingLotService {
 
     private usersService: UsersService,
     private dataSource: DataSource,
+    private readonly supabaseService: SupabaseService,
   ) {}
 
-  async createParkingLot(createParkingLotDto: CreateParkingLotReqDto) {
-    const parkingLot = this.parkingLotRepository.create({
+  async createParkingLot(
+    createParkingLotDto: CreateParkingLotReqDto,
+    files?: Array<Express.Multer.File>,
+  ) {
+    let thumbnail: string | undefined = undefined;
+    let gallery: string[] | undefined = undefined;
+
+    if (files && files.length > 0) {
+      const uploadPromises = files.map((file) => this.supabaseService.uploadFile(file, 'parkinglot'));
+      const uploadedUrls = await Promise.all(uploadPromises);
+      thumbnail = uploadedUrls[0];
+      if (uploadedUrls.length > 1) {
+        gallery = uploadedUrls.slice(1);
+      }
+    }
+
+    const parkingLot: ParkingLot = this.parkingLotRepository.create({
       name: createParkingLotDto.name,
       address: createParkingLotDto.address,
       lat: createParkingLotDto.lat,
@@ -86,6 +104,8 @@ export class ParkingLotService {
         createParkingLotDto.availableSlots ??
         createParkingLotDto.totalSlots ??
         0,
+      description: createParkingLotDto.description,
+      image: { thumbnail, gallery },
       status: ParkingLotStatus.INACTIVE,
       owner: { id: createParkingLotDto.ownerId } as User,
     });
@@ -109,6 +129,49 @@ export class ParkingLotService {
     });
 
     return OwnerParkingLotResDto.fromEntity(savedParkingLot);
+  }
+
+  // ─── Update parking lot ────────────────────────────────────────────────────
+  async updateParkingLot(
+    parkingLotId: number,
+    updateDto: UpdateParkingLotReqDto,
+    ownerId: string,
+    files?: Array<Express.Multer.File>,
+  ) {
+    const parkingLot = await this.parkingLotRepository.findOne({
+      where: { id: parkingLotId, owner: { id: ownerId } },
+      relations: ['owner'],
+    });
+
+    if (!parkingLot) {
+      throw new NotFoundException('Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập');
+    }
+
+    if (updateDto.name) {
+      parkingLot.name = updateDto.name;
+    }
+    
+    if (updateDto.description !== undefined) {
+      parkingLot.description = updateDto.description;
+    }
+
+    if (files && files.length > 0) {
+      const uploadPromises = files.map((file) => this.supabaseService.uploadFile(file, 'parkinglot'));
+      const uploadedUrls = await Promise.all(uploadPromises);
+
+      const currentImage = parkingLot.image || {};
+      const newThumbnail = uploadedUrls[0];
+      const newGallery = uploadedUrls.slice(1);
+
+      parkingLot.image = {
+        ...currentImage,
+        thumbnail: newThumbnail,
+        gallery: newGallery.length > 0 ? newGallery : currentImage.gallery,
+      };
+    }
+
+    const updatedParkingLot = await this.parkingLotRepository.save(parkingLot);
+    return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
   }
 
   // ─── Get users of a parking lot (with optional search) ───────────────────
