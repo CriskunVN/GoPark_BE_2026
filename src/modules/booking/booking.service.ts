@@ -56,7 +56,8 @@ export class BookingService {
         .andWhere('created_at < :expiredTime', {
           expiredTime: new Date(Date.now() - 15 * 60 * 1000),
         })
-        .execute().catch(e => console.error("Cleanup error:", e));
+        .execute()
+        .catch((e) => console.error('Cleanup error:', e));
 
       const slot = await this.parkingSlotRepository.findOne({
         where: { id: bookingdto.slot_id },
@@ -133,15 +134,17 @@ export class BookingService {
       // }
 
       // Activity log - Bỏ qua await để trả kết quả về FE nhanh hơn
-      this.activityService.logActivity({
-        type: ActivityType.BOOKING_NEW,
-        content: `Người dùng ${bookingdto.user_id} đã đặt chỗ thành công`,
-        status: ActivityStatus.SUCCESS,
-        userId: bookingdto.user_id,
-        meta: {
-          slotId: bookingdto.slot_id,
-        },
-      }).catch(e => console.error("Log activity error:", e));
+      this.activityService
+        .logActivity({
+          type: ActivityType.BOOKING_NEW,
+          content: `Người dùng ${bookingdto.user_id} đã đặt chỗ thành công`,
+          status: ActivityStatus.SUCCESS,
+          userId: bookingdto.user_id,
+          meta: {
+            slotId: bookingdto.slot_id,
+          },
+        })
+        .catch((e) => console.error('Log activity error:', e));
 
       return {
         ...savedBooking,
@@ -506,6 +509,8 @@ export class BookingService {
       .andWhere('invoice.status = :status', { status: InvoiceStatus.PAID })
       .select('SUM(invoice.total)', 'total')
       .getRawOne();
+
+    return parseFloat(revenue.total) || 0;
   }
 
   // ================= OWNER ANALYTICS =================
