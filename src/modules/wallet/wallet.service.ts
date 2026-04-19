@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  NotFoundException,
   forwardRef,
   Inject,
 } from '@nestjs/common';
@@ -447,5 +448,106 @@ export class WalletService {
       where: { wallet_id: wallet.id },
       order: { created_at: 'DESC' },
     });
+  }
+
+  // ============== ADMIN: YÊU CẦU RÚT TIỀN ==============
+
+  async getWithdrawRequests(): Promise<WalletTransaction[]> {
+    return this.transactionRepository.find({
+      where: {
+        type: TransactionType.WITHDRAW,
+        status: TransactionStatus.PENDING,
+      },
+      relations: ['wallet', 'wallet.user', 'wallet.user.profile'] as any, // Try to load user profile to display receiver's info
+      order: { created_at: 'ASC' },
+    });
+  }
+
+  async approveWithdrawRequest(transactionId: string): Promise<WalletTransaction> {
+    const transaction = await this.transactionRepository.findOne({
+      where: { id: transactionId },
+      relations: ['wallet'],
+    });
+
+    if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch!');
+    if (transaction.type !== TransactionType.WITHDRAW || transaction.status !== TransactionStatus.PENDING) {
+      throw new BadRequestException('Giao dịch không hợp lệ để duyệt!');
+    }
+
+    transaction.status = TransactionStatus.SUCCESS;
+    await this.transactionRepository.save(transaction);
+
+    await this.activityService.logActivity({
+      type: ActivityType.WALLET_WITHDRAW,
+      content: `Yêu cầu rút tiền ${Math.abs(transaction.amount)}đ đã được xác nhận (Thành công)`,
+      status: ActivityStatus.SUCCESS,
+      userId: transaction.wallet?.user_id,
+      meta: { transactionId },
+    });
+
+    return transaction;
+  }
+
+  async rejectWithdrawRequest(transactionId: string): Promise<WalletTransaction> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const transaction = await queryRunner.manager.findOne(WalletTransaction, {
+        where: { id: transactionId },
+        relations: ['wallet'],
+      });
+
+      if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch!');
+      if (transaction.type !== TransactionType.WITHDRAW || transaction.status !== TransactionStatus.PENDING) {
+        throw new BadRequestException('Giao dịch không hợp lệ để từ chối!');
+      }
+
+      // Khóa ví để hoàn tiền
+      const wallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.id = :walletId', { walletId: transaction.wallet_id })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!wallet) throw new NotFoundException('Không tìm thấy ví trích xuất!');
+
+      const amountToRefund = Math.abs(Number(transaction.amount));
+
+      // Hoàn lại tiền ảo đã trừ lúc yêu cầu
+      wallet.balance = Number(wallet.balance) + amountToRefund;
+      await queryRunner.manager.save(wallet);
+
+      // Cập nhật trạng thái
+      transaction.status = TransactionStatus.FAILED;
+      await queryRunner.manager.save(transaction);
+
+      // Thêm 1 Transaction Hoàn lại do huỷ rút tiền để rõ ràng lịch sử (tuỳ chọn, nhưng cập nhật FAILED và refund là đủ)
+
+      await this.activityService.logActivity({
+        type: ActivityType.WALLET_WITHDRAW,
+        content: `Yêu cầu rút tiền ${amountToRefund}đ đã bị từ chối, đã hoàn lại tiền vào ví`,
+        status: ActivityStatus.ERROR,
+        userId: wallet.user_id,
+        meta: { transactionId },
+      });
+
+      await queryRunner.commitTransaction();
+      return transaction;
+    } catch (error: any) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async getTransactionById(transactionId: string): Promise<WalletTransaction> {
+    const tx = await this.transactionRepository.findOne({
+      where: { id: transactionId },
+    });
+    if (!tx) throw new NotFoundException('Không tìm thấy giao dịch!');
+    return tx;
   }
 }
