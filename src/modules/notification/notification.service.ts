@@ -40,7 +40,19 @@ export class NotificationService {
     await this.notificationRepository.save(notification);
 
     // tạo thông báo cho tất cả người dùng thuộc vai trò mục tiêu
-    // Logic để tạo thông báo cho tất cả người dùng thuộc vai trò mục tiêu
+    const notificationPayload = {
+      ...createNotificationDto,
+      id: notification.id,
+    };
+
+    if (notification.target_role === 'ALL') {
+      await this.broadcastNotification(notificationPayload);
+    } else if (
+      notification.target_role === 'OWNER' ||
+      notification.target_role === 'USER'
+    ) {
+      await this.sendNotificationToRole(notificationPayload);
+    }
 
     return notification;
   }
@@ -225,6 +237,7 @@ export class NotificationService {
       return {
         id: n.id,
         title: n.title,
+        content: n.content,
         type: n.type,
         targetRole: n.target_role,
         isRead:
