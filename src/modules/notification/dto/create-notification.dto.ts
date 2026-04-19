@@ -1,4 +1,5 @@
 export class CreateNotificationDto {
+  id?: string;
   title: string;
   content: string;
   target_role: string;

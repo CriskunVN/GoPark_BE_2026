@@ -243,13 +243,20 @@ export class AdminService {
     );
 
     // get new users in the last month
-    const newUsersLastMonth = await this.userService.countNewUsersInLastMonth();
+    const newUsersLastMonth =
+      await this.userService.countNewUsersInLastMonthWithRole(
+        UserRoleEnum.USER,
+      );
 
     // get active users
-    const activeUsers = await this.userService.countActiveUsers();
+    const activeUsers = await this.userService.countActiveUserWithRole(
+      UserRoleEnum.USER,
+    );
 
     // get blocked users
-    const blockedUsers = await this.userService.countBlockedUsers();
+    const blockedUsers = await this.userService.countBlockedUsersWithRole(
+      UserRoleEnum.USER,
+    );
 
     return {
       totalUsers,

@@ -75,22 +75,39 @@ export class NotificationWorker {
   ): Promise<NotificationJobResult> {
     const data = job.data as any;
 
-    // 1. Tạo notification
-    const notification = this.notificationRepository.create({
-      title: data.notificationDto.title,
-      content: data.notificationDto.content,
-      target_role: data.notificationDto.target_role,
-      type: data.notificationDto.type,
-    });
-    await this.notificationRepository.save(notification);
+    // 1. Tạo notification hoặc lấy existing
+    let notification;
+    if (data.notificationDto.id) {
+      notification = await this.notificationRepository.findOne({
+        where: { id: data.notificationDto.id },
+      });
+    }
+
+    if (!notification) {
+      notification = this.notificationRepository.create({
+        title: data.notificationDto.title,
+        content: data.notificationDto.content,
+        target_role: data.notificationDto.target_role,
+        type: data.notificationDto.type,
+      });
+      await this.notificationRepository.save(notification);
+    }
+
+    // Lọc ra các user thực sự tồn tại trong hệ thống để tránh lỗi Foreign Key
+    const validUsers = await this.userRepository
+      .createQueryBuilder('user')
+      .where('user.id IN (:...userIds)', { userIds: data.userIds })
+      .select(['user.id'])
+      .getMany();
+
+    const validUserIds = validUsers.map((u) => u.id);
 
     // 2. Tạo recipients theo batch để tránh memory spike
-    const userIds = data.userIds;
     const batchSize = 100;
     let createdCount = 0;
 
-    for (let i = 0; i < userIds.length; i += batchSize) {
-      const batch = userIds.slice(i, i + batchSize);
+    for (let i = 0; i < validUserIds.length; i += batchSize) {
+      const batch = validUserIds.slice(i, i + batchSize);
       const recipients = batch.map((userId) =>
         this.notificationRecipientRepository.create({
           notification,
@@ -102,7 +119,7 @@ export class NotificationWorker {
       createdCount += recipients.length;
 
       // Report progress
-      await job.progress((createdCount / userIds.length) * 100);
+      await job.progress((createdCount / validUserIds.length) * 100);
     }
 
     return {
@@ -120,14 +137,23 @@ export class NotificationWorker {
   ): Promise<NotificationJobResult> {
     const data = job.data as any;
 
-    // 1. Tạo notification
-    const notification = this.notificationRepository.create({
-      title: data.notificationDto.title,
-      content: data.notificationDto.content,
-      target_role: data.notificationDto.target_role,
-      type: data.notificationDto.type,
-    });
-    await this.notificationRepository.save(notification);
+    // 1. Tạo notification hoặc lấy existing
+    let notification;
+    if (data.notificationDto.id) {
+      notification = await this.notificationRepository.findOne({
+        where: { id: data.notificationDto.id },
+      });
+    }
+
+    if (!notification) {
+      notification = this.notificationRepository.create({
+        title: data.notificationDto.title,
+        content: data.notificationDto.content,
+        target_role: data.notificationDto.target_role,
+        type: data.notificationDto.type,
+      });
+      await this.notificationRepository.save(notification);
+    }
 
     // 2. Lấy danh sách user theo role
     const normalizedRole = data.targetRole.toUpperCase();
@@ -174,14 +200,23 @@ export class NotificationWorker {
     const data = job.data as any;
     const batchSize = data.batchSize || 500;
 
-    // 1. Tạo notification
-    const notification = this.notificationRepository.create({
-      title: data.notificationDto.title,
-      content: data.notificationDto.content,
-      target_role: data.notificationDto.target_role,
-      type: data.notificationDto.type,
-    });
-    await this.notificationRepository.save(notification);
+    // 1. Tạo notification hoặc lấy existing
+    let notification;
+    if (data.notificationDto.id) {
+      notification = await this.notificationRepository.findOne({
+        where: { id: data.notificationDto.id },
+      });
+    }
+
+    if (!notification) {
+      notification = this.notificationRepository.create({
+        title: data.notificationDto.title,
+        content: data.notificationDto.content,
+        target_role: data.notificationDto.target_role,
+        type: data.notificationDto.type,
+      });
+      await this.notificationRepository.save(notification);
+    }
 
     // 2. Lấy tất cả user (với pagination)
     const totalUsers = await this.userRepository.count();
