@@ -5,7 +5,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Not, EntityManager } from 'typeorm';
+import { Repository, DataSource, Not, EntityManager, ILike } from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -36,6 +36,8 @@ import { UpdateZoneDto } from './dto/update-zone.dto';
 import { Review } from '../users/entities/review.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
 import { ManualBookingDto } from './dto/manual-booking.dto';
+import { SupabaseService } from '../../common/supabase/supabase.service';
+import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -73,10 +75,26 @@ export class ParkingLotService {
 
     private usersService: UsersService,
     private dataSource: DataSource,
+    private readonly supabaseService: SupabaseService,
   ) {}
 
-  async createParkingLot(createParkingLotDto: CreateParkingLotReqDto) {
-    const parkingLot = this.parkingLotRepository.create({
+  async createParkingLot(
+    createParkingLotDto: CreateParkingLotReqDto,
+    files?: Array<Express.Multer.File>,
+  ) {
+    let thumbnail: string | undefined = undefined;
+    let gallery: string[] | undefined = undefined;
+
+    if (files && files.length > 0) {
+      const uploadPromises = files.map((file) => this.supabaseService.uploadFile(file, 'parkinglot'));
+      const uploadedUrls = await Promise.all(uploadPromises);
+      thumbnail = uploadedUrls[0];
+      if (uploadedUrls.length > 1) {
+        gallery = uploadedUrls.slice(1);
+      }
+    }
+
+    const parkingLot: ParkingLot = this.parkingLotRepository.create({
       name: createParkingLotDto.name,
       address: createParkingLotDto.address,
       lat: createParkingLotDto.lat,
@@ -86,6 +104,8 @@ export class ParkingLotService {
         createParkingLotDto.availableSlots ??
         createParkingLotDto.totalSlots ??
         0,
+      description: createParkingLotDto.description,
+      image: { thumbnail, gallery },
       status: ParkingLotStatus.INACTIVE,
       owner: { id: createParkingLotDto.ownerId } as User,
     });
@@ -109,6 +129,49 @@ export class ParkingLotService {
     });
 
     return OwnerParkingLotResDto.fromEntity(savedParkingLot);
+  }
+
+  // ─── Update parking lot ────────────────────────────────────────────────────
+  async updateParkingLot(
+    parkingLotId: number,
+    updateDto: UpdateParkingLotReqDto,
+    ownerId: string,
+    files?: Array<Express.Multer.File>,
+  ) {
+    const parkingLot = await this.parkingLotRepository.findOne({
+      where: { id: parkingLotId, owner: { id: ownerId } },
+      relations: ['owner'],
+    });
+
+    if (!parkingLot) {
+      throw new NotFoundException('Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập');
+    }
+
+    if (updateDto.name) {
+      parkingLot.name = updateDto.name;
+    }
+    
+    if (updateDto.description !== undefined) {
+      parkingLot.description = updateDto.description;
+    }
+
+    if (files && files.length > 0) {
+      const uploadPromises = files.map((file) => this.supabaseService.uploadFile(file, 'parkinglot'));
+      const uploadedUrls = await Promise.all(uploadPromises);
+
+      const currentImage = parkingLot.image || {};
+      const newThumbnail = uploadedUrls[0];
+      const newGallery = uploadedUrls.slice(1);
+
+      parkingLot.image = {
+        ...currentImage,
+        thumbnail: newThumbnail,
+        gallery: newGallery.length > 0 ? newGallery : currentImage.gallery,
+      };
+    }
+
+    const updatedParkingLot = await this.parkingLotRepository.save(parkingLot);
+    return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
   }
 
   // ─── Get users of a parking lot (with optional search) ───────────────────
@@ -1352,5 +1415,244 @@ export class ParkingLotService {
     return new Map<string, number>(
       rows.map((row) => [row.ownerId, Number(row.totalParkingLots) || 0]),
     );
+  }
+
+  // ============ Đếm số bãi đỗ xe theo trạng thái (ADMIN) ==================
+  async countParkingLotsByStatus(status: string) {
+    return this.parkingLotRepository.count({
+      where: { status },
+    });
+  }
+  // =========== Đếm số slot theo trạng thái (ADMIN) vd: 33/100 ==================
+  async countAllAvailableSpacesParkingSlot() {
+    const totalSlots = await this.parkingSlotRepository.count();
+    const availableSlots = await this.parkingSlotRepository.count({
+      where: { status: SlotStatus.AVAILABLE },
+    });
+    return `${availableSlots}/${totalSlots}`;
+  }
+
+  // ============ Tính trung bình đánh giá của tất cả bãi đỗ xe (ADMIN) theo 0-5.0 ==================
+  async calculateAverageRating() {
+    const result = await this.reviewRepository
+      .createQueryBuilder('review')
+      .select('ROUND(AVG(review.rating), 1)', 'avgRating')
+      .getRawOne();
+
+    return result?.avgRating || '0.0';
+  }
+
+  // ============ Tính trung bình đánh giá của 1 bãi đỗ xe (ADMIN) theo 0-5.0 ==================
+  async calculateAverageRatingByParkingLotId(parkingLotId: number) {
+    const result = await this.reviewRepository
+      .createQueryBuilder('review')
+      .where('review.parking_lot_id = :parkingLotId', { parkingLotId })
+      .select('ROUND(AVG(review.rating), 1)', 'avgRating')
+      .getRawOne();
+
+    return result?.avgRating || '0.0';
+  }
+
+  // ============ Lấy danh sách bãi đỗ xe (ADMIN) với phân trang ==================
+  // return: {items , meta}
+  async findAllPaginatedWithSearch(
+    page: number,
+    limit: number,
+    search?: string,
+  ) {
+    const [items, total] = await this.parkingLotRepository.findAndCount({
+      where: search ? { name: ILike(`%${search}%`) } : {}, // Nếu có search thì filter theo tên, không thì lấy tất cả
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+      ], // Kéo thêm dữ liệu các bảng liên kết
+      order: { id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items,
+      meta: {
+        totalItems: total,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      },
+    };
+  }
+
+  // =========== Đếm slot còn trống theo từng bãi đỗ xe (ADMIN) ==================
+  async countAvailableSpaces(parkingLotId: number) {
+    const totalSlots = await this.parkingSlotRepository.count({
+      where: {
+        parkingZone: {
+          parkingFloor: {
+            parkingLot: { id: parkingLotId },
+          },
+        },
+      },
+    });
+
+    const availableSlots = await this.parkingSlotRepository.count({
+      where: {
+        parkingZone: {
+          parkingFloor: {
+            parkingLot: { id: parkingLotId },
+          },
+        },
+        status: SlotStatus.AVAILABLE,
+      },
+    });
+
+    return { totalSlots, availableSlots };
+  }
+
+  // =========== Đếm slot còn trống theo Mảng LOT ID (Solve N+1) ==================
+  async countAvailableSpacesByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { totalSlots: number; availableSlots: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    const result = await this.parkingSlotRepository
+      .createQueryBuilder('slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .select('lot.id', 'lotId')
+      .addSelect('COUNT(slot.id)', 'totalSlots')
+      .addSelect(
+        "SUM(CASE WHEN slot.status = 'AVAILABLE' THEN 1 ELSE 0 END)",
+        'availableSlots',
+      )
+      .where('lot.id IN (:...lotIds)', { lotIds })
+      .groupBy('lot.id')
+      .getRawMany();
+
+    const map = new Map<
+      number,
+      { totalSlots: number; availableSlots: number }
+    >();
+    result.forEach((row) => {
+      map.set(Number(row.lotId), {
+        totalSlots: Number(row.totalSlots) || 0,
+        availableSlots: Number(row.availableSlots) || 0,
+      });
+    });
+
+    return map;
+  }
+
+  // =========== Đếm slot còn trống theo Mảng ZONE ID==================
+  async countAvailableSpacesByZoneIds(
+    zoneIds: number[],
+  ): Promise<Map<number, number>> {
+    if (!zoneIds || zoneIds.length === 0) return new Map();
+
+    const result = await this.parkingSlotRepository
+      .createQueryBuilder('slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .select('zone.id', 'zoneId')
+      .addSelect('COUNT(slot.id)', 'count')
+      .where('zone.id IN (:...zoneIds)', { zoneIds })
+      .andWhere('slot.status = :status', { status: SlotStatus.AVAILABLE })
+      .groupBy('zone.id')
+      .getRawMany();
+
+    const map = new Map<number, number>();
+    result.forEach((row) => {
+      map.set(Number(row.zoneId), Number(row.count));
+    });
+    return map;
+  }
+
+  // ============ lấy giá giờ của bãi đỗ xe (ADMIN) ==================
+  async getParkingLotPricing(parkingLotId: number) {
+    const pricingRules = await this.pricingRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .where('lot.id = :parkingLotId', { parkingLotId })
+      .select([
+        'zone.zone_name AS zoneName',
+        'rule.price_per_hour AS pricePerHour',
+        'rule.price_per_day AS pricePerDay',
+      ])
+      .getRawMany();
+
+    return pricingRules;
+  }
+
+  // ============ lấy giá đồng loạt của nhiều bãi đỗ xe ==================
+  async getPricingByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { pricePerHour: number; pricePerDay: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    // Tìm rules thuộc các lotIds
+    const results = await this.pricingRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .where('lot.id IN (:...lotIds)', { lotIds })
+      .select([
+        'lot.id AS "lotId"',
+        'rule.price_per_hour AS "pricePerHour"',
+        'rule.price_per_day AS "pricePerDay"',
+      ])
+      .getRawMany();
+
+    // Gom nhóm rule đầu tiên hoặc lớn nhất vào Map
+    const map = new Map<
+      number,
+      { pricePerHour: number; pricePerDay: number }
+    >();
+    results.forEach((row) => {
+      const lotId = Number(row.lotId);
+      if (!map.has(lotId)) {
+        map.set(lotId, {
+          pricePerHour: Number(row.pricePerHour) || 0,
+          pricePerDay: Number(row.pricePerDay) || 0,
+        });
+      }
+    });
+    return map;
+  }
+
+  // =========== Đếm tổng review của bãi đỗ xe (ADMIN) ==================
+  async countTotalReviewsByParkingLotId(parkingLotId: number) {
+    return await this.reviewRepository.count({
+      where: { lot: { id: parkingLotId } },
+    });
+  }
+
+  // =========== Tính Rate và Review đồng loạt cho nhiều bãi ==================
+  async getReviewStatsByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { avgRating: string; totalReviews: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    const results = await this.reviewRepository
+      .createQueryBuilder('review')
+      .where('review.parking_lot_id IN (:...lotIds)', { lotIds })
+      .select('review.parking_lot_id', 'lotId')
+      .addSelect('ROUND(AVG(review.rating), 1)', 'avg')
+      .addSelect('COUNT(review.id)', 'count')
+      .groupBy('review.parking_lot_id')
+      .getRawMany();
+
+    const map = new Map<number, { avgRating: string; totalReviews: number }>();
+    results.forEach((row) => {
+      map.set(Number(row.lotId), {
+        avgRating: row.avg ? String(row.avg) : '0.0',
+        totalReviews: Number(row.count) || 0,
+      });
+    });
+    return map;
   }
 }

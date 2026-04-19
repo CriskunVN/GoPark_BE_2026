@@ -190,20 +190,29 @@ export class UsersService {
   }
   // Cấp quyền OWNER cho người dùng, nếu họ chưa có quyền này
   async makeOwner(userId: string) {
-    const user = await this.findOne(userId);
     let ownerRole = await this.roleRepository.findOne({
-      where: { name: 'OWNER' },
+      where: { name: UserRoleEnum.OWNER },
     });
+
     if (!ownerRole) {
-      ownerRole = this.roleRepository.create({ name: 'OWNER' });
-      await this.roleRepository.save(ownerRole);
+      ownerRole = this.roleRepository.create({ name: UserRoleEnum.OWNER });
+      ownerRole = await this.roleRepository.save(ownerRole);
     }
-    // Kiểm tra xem người dùng đã có quyền OWNER chưa, nếu chưa thì gán quyền này cho họ
-    const hasOwnerRole = user.userRoles?.some(
-      (ur) => ur.role?.name === 'OWNER',
-    );
-    if (!hasOwnerRole) {
-      const newRole = this.userRoleRepository.create({ user, role: ownerRole });
+
+    // Kiểm tra xem người dùng đã có quyền OWNER chưa
+    const existingOwnerRole = await this.userRoleRepository.findOne({
+      where: {
+        user: { id: userId },
+        role: { id: ownerRole.id },
+      },
+    });
+
+    // Nếu chưa có thì mới thêm vào (giữ nguyên các quyền cũ như USER)
+    if (!existingOwnerRole) {
+      const newRole = this.userRoleRepository.create({
+        user: { id: userId } as any,
+        role: { id: ownerRole.id } as any,
+      });
       await this.userRoleRepository.save(newRole);
     }
     return true;

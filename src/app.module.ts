@@ -18,6 +18,7 @@ import { RequestModule } from './modules/request/request.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { BullModule } from '@nestjs/bull';
+import { SupabaseModule } from './common/supabase/supabase.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { BullModule } from '@nestjs/bull';
     RequestModule,
     NotificationModule,
     AnalyticsModule,
+    SupabaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],
