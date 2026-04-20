@@ -4,18 +4,26 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { Booking } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create.dto';
 import { CreateQrcodeDto } from './dto/createQR.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ParkingLotService } from '../parking-lot/parking-lot.service';
 
 @Controller('booking')
 export class BookingController {
-  constructor(private readonly bookingService: BookingService) {}
+  constructor(
+    private readonly bookingService: BookingService,
+    private readonly parkingLotService: ParkingLotService,
+  ) {}
   //Booking
   @Get()
   find() {
@@ -75,9 +83,27 @@ export class BookingController {
   }
 
   @Post('scan')
-  async handleScan(@Body() data: { content: string; gateId: number }) {
-    return await this.bookingService.scanQRCode(data.content, data.gateId);
+  @UseInterceptors(FileInterceptor('image'))
+  async handleScan(
+    @Body() data: { content: string; gateId: string },
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    // 1. Gọi hàm OCR của bạn Dũng để lấy text từ ảnh (Gửi ảnh sang bên thứ 3)
+    const plateText = await this.parkingLotService.extractLicensePlate(file);
+
+    // 2. Truyền plateText vào logic so khớp và check-in
+    return await this.bookingService.scanQRCode(data.content, Number(data.gateId), plateText);
   }
+
+  // gia hạn booking
+  @Patch(':id/extend')
+  async extendBooking(
+    @Param('id') id: number,
+    @Body() extendDto: { new_end_time: string, isPreview?: boolean }
+  ) {
+    return this.bookingService.extendBooking(id, extendDto);
+  }
+
 
   @Put(':id')
   update(@Param('id') id: number, @Body() bookingdto: CreateBookingDto) {

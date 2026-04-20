@@ -2,8 +2,10 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  forwardRef, Inject
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import dayjs from 'dayjs';
 import { Between, Repository } from 'typeorm';
 
 import { Booking } from './entities/booking.entity';
@@ -24,6 +26,11 @@ import {
 import { ActivityService } from '../activity/activity.service';
 import { ActivityType } from 'src/common/enums/type.enum';
 import { Gate } from '../parking-lot/entities/gate.entity';
+import { DataSource } from 'typeorm';
+import { WalletService } from '../wallet/wallet.service';
+import { Invoice } from '../payment/entities/invoice.entity';
+import { PricingRule } from '../payment/entities/pricingrule.entity';
+
 
 @Injectable()
 export class BookingService {
@@ -42,22 +49,50 @@ export class BookingService {
 
     private readonly emailService: EmailService,
     private readonly activityService: ActivityService,
+
+    private dataSource: DataSource,
+
+    @Inject(forwardRef(() => WalletService)) 
+    private walletService: WalletService,
   ) {}
 
   // ================= CREATE BOOKING =================
   async createBooking(bookingdto: CreateBookingDto) {
     try {
-      // Dọn dẹp booking quá hạn (Chạy ngầm, không đợi để tăng tốc response)
-      this.bookingRepository
+      //1. Dọn dẹp booking quá hạn (Cần await để tránh race condition xóa nhầm bản ghi đang xử lý)
+      await this.bookingRepository
         .createQueryBuilder()
         .delete()
         .from(Booking)
         .where('status = :status', { status: 'PENDING' })
         .andWhere('created_at < :expiredTime', {
-          expiredTime: new Date(Date.now() - 15 * 60 * 1000),
+          expiredTime: new Date(Date.now() - 2 * 60 * 1000),
         })
-        .execute()
-        .catch((e) => console.error('Cleanup error:', e));
+        .execute();
+
+      //2. kiểm tra xe có đang bận ở vị trí khác không
+        const startTime = new Date(bookingdto.start_time);
+        const endTime = new Date(bookingdto.end_time);
+        
+        const conflictingVehicle = await this.bookingRepository
+        .createQueryBuilder('booking')
+        .where('booking.vehicle = :vehicleId', { vehicleId: bookingdto.vehicle_id })
+        // Chỉ check các booking "sống": Đã thanh toán, đang đỗ, hoặc đang chờ thanh toán
+        .andWhere('booking.status IN (:...statuses)', {
+          statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ONGOING],
+        })
+        // Công thức overlap: (Start1 < End2) AND (End1 > Start2)
+        .andWhere('booking.start_time < :endTime', { endTime })
+        .andWhere('booking.end_time > :startTime', { startTime })
+        .getOne();
+
+      if (conflictingVehicle) {
+        throw new BadRequestException(
+        `Xe này đã có lịch đặt chỗ trong khoảng thời gian từ ${dayjs(conflictingVehicle.start_time).format('HH:mm')} đến ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`
+        );
+      }
+      
+
 
       const slot = await this.parkingSlotRepository.findOne({
         where: { id: bookingdto.slot_id },
@@ -119,20 +154,6 @@ export class BookingService {
         await this.qrcodeRepository.save(qrCode);
       }
 
-      // //thanh toán bằng tiền mặt
-      // if (savedBooking.status === 'PENDING') {
-      //   try {
-      //     // Đợi một chút để DB kịp cập nhật quan hệ hoặc dùng trực tiếp savedBooking.id
-      //     await this.sendEmail(savedBooking.id);
-      //     console.log(
-      //       `Đã gửi email thành công cho booking tiền mặt: ${savedBooking.id}`,
-      //     );
-      //   } catch (emailError) {
-      //     console.error('Lỗi gửi email tiền mặt:', emailError);
-      //     // Không throw lỗi ở đây để tránh rollback booking đã tạo thành công
-      //   }
-      // }
-
       // Activity log - Bỏ qua await để trả kết quả về FE nhanh hơn
       this.activityService
         .logActivity({
@@ -153,30 +174,161 @@ export class BookingService {
     } catch (error) {
       // In lỗi ra terminal để bạn đọc được nó bị gì
       console.error('LỖI TẠI CREATE_BOOKING:', error);
+      throw error; // Phải throw lỗi để NestJS trả về HTTP 500/400 cho Frontend
     }
   }
 
-  // ================= scanQR =================
-  async scanQRCode(content: string, gateId: number) {
-    // 1. Kiểm tra sự tồn tại và loại của cổng (IN/OUT/BOTH)
-    const gate = await this.checkLogRepository.manager.findOne(Gate, {
-      where: { id: gateId },
+  // =================  BOOKING (GIA HẠN) =================
+  async extendBooking(id: number, extendDto: { new_end_time: string, isPreview?: boolean }, currentUserId?: string) {
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Lấy thông tin booking và các quan hệ
+      const booking = await manager.findOne(Booking, {
+        where: { id },
+        relations: [
+          'slot', 
+          'user', 
+          'slot.parkingZone',
+          'slot.parkingZone.parkingFloor',
+          'slot.parkingZone.parkingFloor.parkingLot',
+          'slot.parkingZone.parkingFloor.parkingLot.owner'
+        ],
+      });
+
+      if (!booking) throw new NotFoundException('Không tìm thấy đơn đặt chỗ');
+      
+      // SECURITY CHECK: Chỉ chủ nhân đơn hàng mới được gia hạn
+      if (currentUserId && booking.user.id !== currentUserId) {
+        throw new BadRequestException('Bạn không có quyền gia hạn đơn hàng này');
+      }
+
+      // 2. Lấy đơn giá thực tế theo Zone (Khu vực) từ Database
+      const pricing = await manager.findOne(PricingRule, {
+        where: { parkingZone: { id: booking.slot.parkingZone.id } },
+        order: { id: 'DESC' } 
+      });
+
+      const pricePerHour = pricing?.price_per_hour || 0;
+      const priceDay = pricing?.price_per_day || 0;
+      const zoneName = booking.slot.parkingZone.zone_name || 'Khu vực';
+
+      const oldEndTime = dayjs(booking.end_time);
+      const newEndTime = dayjs(extendDto.new_end_time);
+
+      if (newEndTime.isBefore(oldEndTime) || newEndTime.isSame(oldEndTime)) {
+        throw new BadRequestException('Giờ kết thúc mới phải sau giờ hiện tại');
+      }
+
+      // 3. Kiểm tra xung đột Slot
+      const conflict = await manager.createQueryBuilder(Booking, 'b')
+        .where('b.slot_id = :slotId', { slotId: booking.slot.id })
+        .andWhere('b.id != :id', { id })
+        .andWhere('b.status IN (:...st)', { st: [BookingStatus.CONFIRMED, BookingStatus.ONGOING] })
+        .andWhere('b.start_time < :newEndTime', { newEndTime: newEndTime.toISOString() })
+        .andWhere('b.end_time > :oldEndTime', { oldEndTime: oldEndTime.toISOString() })
+        .getOne();
+
+      if (conflict) throw new BadRequestException('Vị trí này đã có người đặt trước trong khung giờ bạn muốn gia hạn!');
+
+      // 4. ÁP DỤNG CÔNG THỨC ĐỒNG NHẤT VỚI FRONTEND
+      const totalMinutesExtend = newEndTime.diff(oldEndTime, 'minute');
+      
+      // Tính số ngày và số phút lẻ
+      const days = Math.floor(totalMinutesExtend / 1440);
+      const remainingMinutes = totalMinutesExtend % 1440;
+      
+      // Công thức: (Ngày * Giá ngày) + (Phút lẻ * Giá giờ/60)
+      const pricePerMin = pricePerHour / 60;
+      const extraAmount = Math.round((days * priceDay) + (remainingMinutes * pricePerMin));
+
+      // Trả về Preview cho Dũng hiển thị trên UI
+      if (extendDto.isPreview) {
+        return { 
+          data: { 
+            extraAmount: extraAmount > 0 ? extraAmount : 0,
+            pricePerHour,
+            priceDay,
+            zoneName,
+            totalMinutesExtend,
+            days,
+            remainingMinutes
+          } 
+        };
+      }
+
+      // 5. Thanh toán thực tế
+      if (extraAmount > 0) {
+        // SỬA LỖI: Chuyển tiền từ Khách sang Chủ (không dùng withdraw)
+        const ownerId = booking.slot.parkingZone.parkingFloor.parkingLot.owner?.id;
+        if (!ownerId) throw new BadRequestException('Không tìm thấy thông tin chủ bãi để thanh toán');
+        
+        await this.walletService.processPayment(booking.user.id, ownerId, extraAmount, id.toString());
+
+        // Tạo hóa đơn gia hạn
+        const invoiceData: any = {
+          booking: booking, 
+          total: extraAmount,
+          tax:0,
+          description: `Gia hạn thêm ${days > 0 ? days + ' ngày ' : ''}${remainingMinutes} phút tại ${zoneName}`,
+          status: 'PAID',
+        };
+
+        const newInvoice = manager.create(Invoice, invoiceData);
+        await manager.save(newInvoice);
+      }
+
+      // 6. Cập nhật giờ mới vào database
+      booking.end_time = newEndTime.toDate();
+      const updatedBooking = await manager.save(booking);
+
+      return {
+        message: "Gia hạn thành công",
+        data: updatedBooking
+      };
     });
+  }
 
-    if (!gate) {
-      throw new NotFoundException('Cổng không tồn tại trong hệ thống');
-    }
+  // ================= scanQR =================
+  async scanQRCode(content: string, gateId: number, detectedPlate?: string) {
+    // 1. Kiểm tra cổng
+    const gate = await this.checkLogRepository.manager.findOne(Gate, { where: { id: gateId } });
+    if (!gate) throw new NotFoundException('Cổng không tồn tại');
 
+    // 2. Kiểm tra mã QR
     const qrCode = await this.qrcodeRepository.findOne({
       where: { content, status: 'active' },
-      relations: ['booking', 'booking.slot'],
+      relations: ['booking', 'booking.slot', 'booking.vehicle'],
     });
 
-    if (!qrCode) {
-      throw new NotFoundException('Mã QR không hợp lệ hoặc đã được sử dụng');
-    }
+    if (!qrCode) throw new NotFoundException('Mã QR không hợp lệ hoặc đã sử dụng');
 
     const booking = qrCode.booking;
+
+    // 3. SO KHỚP BIỂN SỐ XE (ĐÃ TỐI ƯU)
+    if (detectedPlate && booking.vehicle) {
+      // Bước A: Chuẩn hóa chuỗi thô từ OCR (Viết hoa, xóa dấu cách, gạch ngang, dấu chấm)
+      const rawOcr = detectedPlate.toUpperCase().replace(/[\s.-]/g, '');
+      const cleanRegistered = booking.vehicle.plate_number.toUpperCase().replace(/[\s.-]/g, '');
+
+      // Bước B: Dùng Regex để tìm cụm ký tự có định dạng biển số VN
+      // Định dạng: 2 số đầu - 1 chữ cái + 1 số/chữ - Dãy 4 hoặc 5 số cuối
+      const plateRegex = /[0-9]{2}[A-Z][0-9A-Z][0-9]{4,5}/;
+      const match = rawOcr.match(plateRegex);
+
+      // Nếu tìm thấy cụm khớp định dạng thì lấy cụm đó, không thì dùng chuỗi gốc để so sánh tiếp
+      const cleanDetected = match ? match[0] : rawOcr;
+
+      console.log('Biển số lọc được:', cleanDetected);
+      console.log('Biển số trong DB:', cleanRegistered);
+
+      // Bước C: So khớp (Dùng includes để tăng độ chính xác nếu OCR đọc thừa 1-2 ký tự đầu/đuôi)
+      if (!cleanDetected.includes(cleanRegistered) && !cleanRegistered.includes(cleanDetected)) {
+        throw new BadRequestException(
+          `Biển số không khớp! Hệ thống lọc được: ${cleanDetected}, Đăng ký: ${booking.vehicle.plate_number}`,
+        );
+      }
+    } else if (!detectedPlate) {
+      throw new BadRequestException('Vui lòng cung cấp ảnh biển số xe để đối chiếu');
+    }
 
     //check-in
     if (
