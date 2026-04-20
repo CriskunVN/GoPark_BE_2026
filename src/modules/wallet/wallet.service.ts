@@ -156,10 +156,9 @@ export class WalletService {
         status: BookingStatus.CONFIRMED,
       });
 
-      await queryRunner.manager.update(ParkingSlot,booking?.slot.id,{
-        status : SlotStatus.OCCUPIED
-      })
-
+      await queryRunner.manager.update(ParkingSlot, booking?.slot.id, {
+        status: SlotStatus.OCCUPIED,
+      });
 
       // 2. Trong try block của processPayment:
       const invoiceData = {
@@ -172,14 +171,14 @@ export class WalletService {
 
       // Tìm xem đã có invoice nào cho booking này chưa
       const existingInvoice = await queryRunner.manager.findOne(Invoice, {
-        where: { booking: { id: numericBookingId } }
+        where: { booking: { id: numericBookingId } },
       });
 
       if (existingInvoice) {
         // Nếu có rồi (do tạo lúc nhấn thanh toán) thì chỉ cập nhật status
         await queryRunner.manager.update(Invoice, existingInvoice.id, {
           status: InvoiceStatus.PAID,
-          total: amount
+          total: amount,
         });
       } else {
         // Nếu chưa có thì mới tạo mới
@@ -292,7 +291,7 @@ export class WalletService {
       });
       await queryRunner.commitTransaction();
       return savedTx;
-    } catch (error:any) {
+    } catch (error: any) {
       await queryRunner.rollbackTransaction();
       await this.activityService.logActivity({
         type: ActivityType.WALLET_DEPOSIT,
@@ -372,7 +371,7 @@ export class WalletService {
       await queryRunner.commitTransaction();
 
       return savedTx;
-    } catch (error:any) {
+    } catch (error: any) {
       await queryRunner.rollbackTransaction();
       await this.activityService.logActivity({
         type: ActivityType.WALLET_WITHDRAW,
@@ -463,14 +462,19 @@ export class WalletService {
     });
   }
 
-  async approveWithdrawRequest(transactionId: string): Promise<WalletTransaction> {
+  async approveWithdrawRequest(
+    transactionId: string,
+  ): Promise<WalletTransaction> {
     const transaction = await this.transactionRepository.findOne({
       where: { id: transactionId },
       relations: ['wallet'],
     });
 
     if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch!');
-    if (transaction.type !== TransactionType.WITHDRAW || transaction.status !== TransactionStatus.PENDING) {
+    if (
+      transaction.type !== TransactionType.WITHDRAW ||
+      transaction.status !== TransactionStatus.PENDING
+    ) {
       throw new BadRequestException('Giao dịch không hợp lệ để duyệt!');
     }
 
@@ -488,7 +492,9 @@ export class WalletService {
     return transaction;
   }
 
-  async rejectWithdrawRequest(transactionId: string): Promise<WalletTransaction> {
+  async rejectWithdrawRequest(
+    transactionId: string,
+  ): Promise<WalletTransaction> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -499,8 +505,12 @@ export class WalletService {
         relations: ['wallet'],
       });
 
-      if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch!');
-      if (transaction.type !== TransactionType.WITHDRAW || transaction.status !== TransactionStatus.PENDING) {
+      if (!transaction)
+        throw new NotFoundException('Không tìm thấy giao dịch!');
+      if (
+        transaction.type !== TransactionType.WITHDRAW ||
+        transaction.status !== TransactionStatus.PENDING
+      ) {
         throw new BadRequestException('Giao dịch không hợp lệ để từ chối!');
       }
 

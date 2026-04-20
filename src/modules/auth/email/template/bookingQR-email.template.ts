@@ -1,16 +1,16 @@
 export const getBookingQREmailTemplate = (
-    userName: string,
-    qrImageUrl: string,  
-    parkingLot: string,
-    startTime: string,
-    endTime: string,
-    code: string,
-    floor_number: number,
-    floor_zone: string,
-    logoUrl?: string
-) : string => {
-    const brandName = 'GoPark';
-    return `
+  userName: string,
+  qrImageUrl: string,
+  parkingLot: string,
+  startTime: string,
+  endTime: string,
+  code: string,
+  floor_number: number,
+  floor_zone: string,
+  logoUrl?: string,
+): string => {
+  const brandName = 'GoPark';
+  return `
     <!doctype html>
     <html lang="vi">
     <head>
@@ -26,9 +26,10 @@ export const getBookingQREmailTemplate = (
               <!-- Header / Logo -->
               <tr>
                 <td style="background-color: #c8e6c9; padding: 30px; text-align: center;">
-                  ${logoUrl 
-                    ? `<img src="${logoUrl}" height="50" alt="${brandName}" style="display: block; margin: 0 auto; border: 0;">` 
-                    : `<h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 1.5px;">${brandName}</h1>`
+                  ${
+                    logoUrl
+                      ? `<img src="${logoUrl}" height="50" alt="${brandName}" style="display: block; margin: 0 auto; border: 0;">`
+                      : `<h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 1.5px;">${brandName}</h1>`
                   }
                 </td>
               </tr>

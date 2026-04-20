@@ -32,7 +32,9 @@ export class Payment {
   @OneToMany('Transaction', (transaction: Transaction) => transaction.payment)
   transactions: Transaction[];
 
-  @ManyToOne('Invoice', (invoice: Invoice) => invoice.payment, { nullable: true })
+  @ManyToOne('Invoice', (invoice: Invoice) => invoice.payment, {
+    nullable: true,
+  })
   @JoinColumn({ name: 'invoice_id' })
   invoice: Invoice;
 }

@@ -19,7 +19,7 @@ import { Review } from './entities/review.entity';
       UserRole,
       RolePermission,
       Profile,
-      Review
+      Review,
     ]),
   ],
   controllers: [UsersController],

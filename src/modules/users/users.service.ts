@@ -283,16 +283,23 @@ export class UsersService {
       ?.trim()
       .replace(/^['"]|['"]$/g, '');
     const bucket =
-      this.configService.get<string>('SUPABASE_BUCKET')?.trim() || 'IMG_GOPARK2026';
+      this.configService.get<string>('SUPABASE_BUCKET')?.trim() ||
+      'IMG_GOPARK2026';
     const avatarFolder =
-      this.configService.get<string>('SUPABASE_AVATAR_FOLDER')?.trim() || 'avatars';
+      this.configService.get<string>('SUPABASE_AVATAR_FOLDER')?.trim() ||
+      'avatars';
 
-    if (!supabaseUrl || !serviceRoleKey) throw new InternalServerErrorException('Thiếu cấu hình SUPABASE');
+    if (!supabaseUrl || !serviceRoleKey)
+      throw new InternalServerErrorException('Thiếu cấu hình SUPABASE');
 
-    const extension = (file.originalname?.split('.').pop() || 'jpg').toLowerCase();
+    const extension = (
+      file.originalname?.split('.').pop() || 'jpg'
+    ).toLowerCase();
     const safeExt = extension.replace(/[^a-z0-9]/g, '') || 'jpg';
     const filePath = `${avatarFolder}/${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
-    const candidateBuckets = Array.from(new Set([bucket, 'img_GoPark2026', 'IMG_GOPARK2026'].filter(Boolean)));
+    const candidateBuckets = Array.from(
+      new Set([bucket, 'img_GoPark2026', 'IMG_GOPARK2026'].filter(Boolean)),
+    );
     let usedBucket: string | null = null;
 
     for (const candidateBucket of candidateBuckets) {
@@ -335,8 +342,12 @@ export class UsersService {
           const signedPath = signData?.signedURL || signData?.signedUrl;
           if (signedPath) {
             // FIX: prepend /storage/v1 since Supabase signedURL returns a path without it
-            const fixPath = signedPath.startsWith('/storage/v1') ? signedPath : `/storage/v1${signedPath.startsWith('/') ? '' : '/'}${signedPath}`;
-            resolvedImageUrl = signedPath.startsWith('http') ? signedPath : `${supabaseUrl}${fixPath}`;
+            const fixPath = signedPath.startsWith('/storage/v1')
+              ? signedPath
+              : `/storage/v1${signedPath.startsWith('/') ? '' : '/'}${signedPath}`;
+            resolvedImageUrl = signedPath.startsWith('http')
+              ? signedPath
+              : `${supabaseUrl}${fixPath}`;
           }
         }
       } catch (e) {}

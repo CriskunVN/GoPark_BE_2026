@@ -68,6 +68,6 @@ export class User extends BaseEntity {
   )
   notifications: NotificationRecipient[];
 
-  @OneToMany('Review',(review : Review) => review.user)
-  review : Review[]
+  @OneToMany('Review', (review: Review) => review.user)
+  review: Review[];
 }

@@ -22,7 +22,7 @@ export class PaymentController {
     private readonly vnpayService: VnpayService,
     private readonly walletService: WalletService,
     private readonly paymentService: PaymentService,
-  ) { }
+  ) {}
 
   @Post('pricing-rule')
   async createPricingRule(@Body() dto: CreatePricingRuleDto) {
@@ -69,7 +69,9 @@ export class PaymentController {
 
     // Xoá khoảng trắng để VNPAY không báo lỗi định dạng
     // Phân loại: PayBooking cho thanh toán giữ chỗ, NapTien cho nạp ví
-    const orderInfo = body.bookingId ? `PayBooking_${userId}_${body.bookingId}` : `NapTien_${userId}`;
+    const orderInfo = body.bookingId
+      ? `PayBooking_${userId}_${body.bookingId}`
+      : `NapTien_${userId}`;
 
     const url = this.vnpayService.createPaymentUrl(
       body.amount,
@@ -77,7 +79,7 @@ export class PaymentController {
       orderInfo,
       userId,
     );
-    console.log(url)
+    console.log(url);
     return { success: true, url };
   }
 
@@ -102,7 +104,11 @@ export class PaymentController {
             if (matched) {
               const userId = matched[1];
               const bookingId = parseInt(matched[2]);
-              await this.paymentService.handleBookingVnpayPayment(bookingId, amount, refId);
+              await this.paymentService.handleBookingVnpayPayment(
+                bookingId,
+                amount,
+                refId,
+              );
               return { RspCode: '00', Message: 'Confirm Success' };
             }
           }
