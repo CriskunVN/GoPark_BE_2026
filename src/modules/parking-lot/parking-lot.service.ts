@@ -86,7 +86,9 @@ export class ParkingLotService {
     let gallery: string[] | undefined = undefined;
 
     if (files && files.length > 0) {
-      const uploadPromises = files.map((file) => this.supabaseService.uploadFile(file, 'parkinglot'));
+      const uploadPromises = files.map((file) =>
+        this.supabaseService.uploadFile(file, 'parkinglot'),
+      );
       const uploadedUrls = await Promise.all(uploadPromises);
       thumbnail = uploadedUrls[0];
       if (uploadedUrls.length > 1) {
@@ -144,19 +146,23 @@ export class ParkingLotService {
     });
 
     if (!parkingLot) {
-      throw new NotFoundException('Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập');
+      throw new NotFoundException(
+        'Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập',
+      );
     }
 
     if (updateDto.name) {
       parkingLot.name = updateDto.name;
     }
-    
+
     if (updateDto.description !== undefined) {
       parkingLot.description = updateDto.description;
     }
 
     if (files && files.length > 0) {
-      const uploadPromises = files.map((file) => this.supabaseService.uploadFile(file, 'parkinglot'));
+      const uploadPromises = files.map((file) =>
+        this.supabaseService.uploadFile(file, 'parkinglot'),
+      );
       const uploadedUrls = await Promise.all(uploadPromises);
 
       const currentImage = parkingLot.image || {};

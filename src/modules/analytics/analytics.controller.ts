@@ -6,7 +6,9 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('owner/:ownerId/dashboard-summary')
-  async getOwnerDashboardSummary(@Param('ownerId', ParseUUIDPipe) ownerId: string) {
+  async getOwnerDashboardSummary(
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
+  ) {
     return this.analyticsService.getDashboardSummary(ownerId);
   }
 }

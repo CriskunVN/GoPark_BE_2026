@@ -4,7 +4,11 @@ import { Repository } from 'typeorm';
 
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLot } from '../parking-lot/entities/parking-lot.entity';
-import { InvoiceStatus, BookingStatus, SlotStatus } from 'src/common/enums/status.enum';
+import {
+  InvoiceStatus,
+  BookingStatus,
+  SlotStatus,
+} from 'src/common/enums/status.enum';
 
 @Injectable()
 export class AnalyticsService {
@@ -16,19 +20,14 @@ export class AnalyticsService {
   ) {}
 
   async getDashboardSummary(ownerId: string) {
-    const [
-      overview,
-      revenueChart,
-      parkingOccupancy,
-      recentActivities,
-      alerts,
-    ] = await Promise.all([
-      this.getOverviewMetrics(ownerId),
-      this.getRevenueChart14Days(ownerId),
-      this.getParkingOccupancy(ownerId),
-      this.getRecentActivities(ownerId),
-      this.getAlerts(ownerId),
-    ]);
+    const [overview, revenueChart, parkingOccupancy, recentActivities, alerts] =
+      await Promise.all([
+        this.getOverviewMetrics(ownerId),
+        this.getRevenueChart14Days(ownerId),
+        this.getParkingOccupancy(ownerId),
+        this.getRecentActivities(ownerId),
+        this.getAlerts(ownerId),
+      ]);
 
     return {
       overview,
@@ -87,10 +86,11 @@ export class AnalyticsService {
 
     const todayRevenue = parseFloat(todayData?.total || '0');
     const yesterdayRevenue = parseFloat(yesterdayData?.total || '0');
-    
+
     let revenueGrowth = 0;
     if (yesterdayRevenue > 0) {
-      revenueGrowth = ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100;
+      revenueGrowth =
+        ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100;
     } else if (todayRevenue > 0) {
       revenueGrowth = 100;
     }
@@ -127,7 +127,8 @@ export class AnalyticsService {
 
     let bookingsGrowth = 0;
     if (yesterdayBookings > 0) {
-      bookingsGrowth = ((todayBookings - yesterdayBookings) / yesterdayBookings) * 100;
+      bookingsGrowth =
+        ((todayBookings - yesterdayBookings) / yesterdayBookings) * 100;
     } else if (todayBookings > 0) {
       bookingsGrowth = 100;
     }
@@ -137,14 +138,15 @@ export class AnalyticsService {
       .createQueryBuilder('l')
       .where('l.user_id = :ownerId', { ownerId })
       .getMany();
-    
+
     let totalCapacity = 0;
     let totalOccupied = 0;
     for (const lot of lots) {
-      totalCapacity += (lot.total_slots || 0);
-      totalOccupied += ((lot.total_slots || 0) - (lot.available_slots || 0));
+      totalCapacity += lot.total_slots || 0;
+      totalOccupied += (lot.total_slots || 0) - (lot.available_slots || 0);
     }
-    const averageOccupancy = totalCapacity > 0 ? (totalOccupied / totalCapacity) * 100 : 0;
+    const averageOccupancy =
+      totalCapacity > 0 ? (totalOccupied / totalCapacity) * 100 : 0;
     const occupancyGrowth = 0; // Tạm thời để 0 hoặc bỏ qua
 
     // 6. Số khách hàng mới (số user có lịch sử tạo booking đầu tiên vào hôm nay)
@@ -156,8 +158,9 @@ export class AnalyticsService {
       .leftJoin('f.parkingLot', 'l')
       .leftJoin('l.owner', 'owner')
       .where('owner.id = :ownerId', { ownerId })
-      .andWhere(qb => {
-        const subQuery = qb.subQuery()
+      .andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
           .select('b2.user_id')
           .from(Booking, 'b2')
           .groupBy('b2.user_id')
@@ -181,14 +184,14 @@ export class AnalyticsService {
       averageOccupancy: Math.round(averageOccupancy),
       occupancyGrowth,
       newCustomers,
-      customersGrowth
+      customersGrowth,
     };
   }
 
   private async getRevenueChart14Days(ownerId: string) {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
-    
+
     const startDay = new Date();
     startDay.setDate(today.getDate() - 13);
     startDay.setHours(0, 0, 0, 0);
@@ -219,12 +222,14 @@ export class AnalyticsService {
       const d = new Date(startDay);
       d.setDate(startDay.getDate() + i);
       const dateStr = d.toISOString().split('T')[0];
-      
-      const found = rawData.find(r => {
+
+      const found = rawData.find((r) => {
         const rawDate = new Date(r.date);
         // Chỉnh Date timezone issue by comparing YYYY-MM-DD
-        return rawDate.toISOString().split('T')[0] === dateStr 
-            || new Date(r.date).toLocaleDateString('en-CA') === dateStr; 
+        return (
+          rawDate.toISOString().split('T')[0] === dateStr ||
+          new Date(r.date).toLocaleDateString('en-CA') === dateStr
+        );
       });
 
       chart.push({
@@ -242,14 +247,14 @@ export class AnalyticsService {
       .where('l.user_id = :ownerId', { ownerId })
       .getMany();
 
-    return lots.map(lot => {
+    return lots.map((lot) => {
       const capacity = lot.total_slots || 0;
       const available = lot.available_slots || 0;
       return {
         lotId: lot.id,
         name: lot.name,
         capacity,
-        occupied: capacity - available
+        occupied: capacity - available,
       };
     });
   }
@@ -268,12 +273,12 @@ export class AnalyticsService {
       .take(10)
       .getMany();
 
-    return recent.map(r => ({
+    return recent.map((r) => ({
       id: r.id,
       vehicle: r.vehicle?.plate_number || 'N/A',
       status: r.status,
       time: r.start_time,
-      lotName: r.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'N/A'
+      lotName: r.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'N/A',
     }));
   }
 
@@ -293,7 +298,7 @@ export class AnalyticsService {
       .andWhere('b.end_time < :now', { now })
       .getMany();
 
-    return overstays.map(b => {
+    return overstays.map((b) => {
       const msOver = now.getTime() - new Date(b.end_time).getTime();
       const hoursOver = Math.floor(msOver / (1000 * 60 * 60));
       return {
@@ -302,7 +307,7 @@ export class AnalyticsService {
         issue: 'OVERSTAY',
         lotName: b.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'N/A',
         overstayHours: hoursOver,
-        message: `Có 1 xe tại ${b.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'bãi'} đã đỗ quá giờ ${hoursOver} tiếng. Vui lòng kiểm tra.`
+        message: `Có 1 xe tại ${b.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'bãi'} đã đỗ quá giờ ${hoursOver} tiếng. Vui lòng kiểm tra.`,
       };
     });
   }

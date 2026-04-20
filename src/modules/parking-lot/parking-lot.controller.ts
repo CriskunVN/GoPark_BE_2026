@@ -21,7 +21,11 @@ import {
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AnyFilesInterceptor, FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import {
+  AnyFilesInterceptor,
+  FileInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
 import { WalkInDto } from './dto/walk-in.dto';
 import { CreateFloorDto } from './dto/create-floor.dto';
@@ -103,18 +107,20 @@ export class ParkingLotController {
     return this.parkingLotService.getSlotAvailability(slotId, dto.date);
   }
 
-
-
   //bãi đỗ gần nhất
   @Get('nearby/:lotid')
   async gethaversineParkingLot(
-  @Param('lotid') lotid :number, 
-  @Query('lat') lat: any, 
-  @Query('lng') lng: any){
-    
+    @Param('lotid') lotid: number,
+    @Query('lat') lat: any,
+    @Query('lng') lng: any,
+  ) {
     const latitude = parseFloat(lat) || 0;
     const longitude = parseFloat(lng) || 0;
-    return this.parkingLotService.haversineParkingLot(lotid,latitude,longitude)
+    return this.parkingLotService.haversineParkingLot(
+      lotid,
+      latitude,
+      longitude,
+    );
   }
 
   // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
@@ -143,7 +149,12 @@ export class ParkingLotController {
     @UploadedFiles() files?: Array<Express.Multer.File>,
   ) {
     const ownerId = req.user['userId'];
-    return this.parkingLotService.updateParkingLot(parkingLotId, updateParkingLotDto, ownerId, files);
+    return this.parkingLotService.updateParkingLot(
+      parkingLotId,
+      updateParkingLotDto,
+      ownerId,
+      files,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -316,7 +327,7 @@ export class ParkingLotController {
 
   //lấy comment
   @Get('comment/:lotid')
-  async getComment(@Param('lotid') lotid : number){
-    return await this.parkingLotService.getCommentUser(lotid)
+  async getComment(@Param('lotid') lotid: number) {
+    return await this.parkingLotService.getCommentUser(lotid);
   }
 }

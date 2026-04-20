@@ -31,9 +31,9 @@ export class Booking {
   end_time: Date;
 
   @Column({
-    type:'enum',
-    enum:BookingStatus,
-    default:BookingStatus.PENDING,
+    type: 'enum',
+    enum: BookingStatus,
+    default: BookingStatus.PENDING,
   })
   status: BookingStatus;
 

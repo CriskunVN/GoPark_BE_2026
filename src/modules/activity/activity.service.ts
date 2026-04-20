@@ -43,7 +43,7 @@ export class ActivityService {
 
       await this.activityRepository.save(activity);
     } catch (error) {
-      this.logger.error('Không thể lưu activity', error as any);
+      this.logger.error('Không thể lưu activity', error);
     }
   }
 
