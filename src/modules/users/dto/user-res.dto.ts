@@ -20,6 +20,8 @@ export class BookingResDto {
   qrCode?: any; // Hoặc định nghĩa rõ DTO của QR Code
   vehicle?: any;
   created_at: Date;
+  start_time:Date;
+  end_time:Date;;
 }
 
 export class UserResDto {
@@ -69,6 +71,8 @@ export class UserResDto {
             qrCode: b.qrCode, // Đảm bảo relation qrCode đã được load ở findOne
             vehicle: b.vehicle,
             created_at: b.created_at,
+            start_time:b.start_time,
+            end_time:b.end_time,
           }))
         : [],
     };

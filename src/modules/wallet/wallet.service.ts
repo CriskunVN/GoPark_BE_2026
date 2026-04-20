@@ -175,10 +175,10 @@ export class WalletService {
       });
 
       if (existingInvoice) {
-        // Nếu có rồi (do tạo lúc nhấn thanh toán) thì chỉ cập nhật status
+        // Nếu là gia hạn: Cộng dồn tiền vào hóa đơn cũ hoặc tạo hóa đơn phụ
         await queryRunner.manager.update(Invoice, existingInvoice.id, {
           status: InvoiceStatus.PAID,
-          total: amount,
+          total: Number(existingInvoice.total) + amount
         });
       } else {
         // Nếu chưa có thì mới tạo mới

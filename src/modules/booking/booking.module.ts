@@ -12,6 +12,7 @@ import { AuthModule } from '../auth/auth.module';
 import { Gate } from '../parking-lot/entities/gate.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { ActivityModule } from '../activity/activity.module';
+import { ParkingModule } from '../parking-lot/parking-lot.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ActivityModule } from '../activity/activity.module';
     AuthModule,
     ActivityModule,
     forwardRef(() => WalletModule),
+      forwardRef(() => ParkingModule),
   ],
   controllers: [BookingController],
   providers: [BookingService],
