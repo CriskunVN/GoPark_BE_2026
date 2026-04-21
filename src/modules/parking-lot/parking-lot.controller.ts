@@ -173,8 +173,11 @@ export class ParkingLotController {
 
   @Post('ocr')
   @UseInterceptors(FileInterceptor('image'))
-  async extractLicensePlate(@UploadedFile() file: Express.Multer.File) {
-    return await this.parkingLotService.extractLicensePlate(file);
+  async extractLicensePlate(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('language') language?: string,
+  ) {
+    return await this.parkingLotService.extractLicensePlate(file, language);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -11,6 +11,9 @@ export class UserProfileResDto {
 export class VehicleResDto {
   id: number;
   plate_number: string;
+  owner_name?: string;
+  brand?: string;
+  type?: string;
   image: string;
 }
 
@@ -59,6 +62,9 @@ export class UserResDto {
         ? user.vehicles.map((v) => ({
             id: v.id,
             plate_number: v.plate_number,
+            owner_name: v.owner_name,
+            brand: v.brand,
+            type: v.type,
             image: v.image,
           }))
         : [],
