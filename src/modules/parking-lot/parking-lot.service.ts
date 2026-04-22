@@ -475,7 +475,10 @@ export class ParkingLotService {
   }
 
   // ─── Extract License Plate (OCR) ───────────────────────────────────────────
-  async extractLicensePlate(file: Express.Multer.File): Promise<string> {
+  async extractLicensePlate(
+    file: Express.Multer.File,
+    language?: string,
+  ): Promise<string> {
     if (!file) {
       throw new BadRequestException('Image file is required');
     }
@@ -483,26 +486,45 @@ export class ParkingLotService {
     try {
       const apiKey = String(process.env.OCR_API_KEY || 'K88596879988957');
       const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      const normalizedLanguage =
+        typeof language === 'string' && ['eng', 'vie'].includes(language.toLowerCase())
+          ? language.toLowerCase()
+          : 'eng';
 
-      const formData = new FormData();
-      formData.append('base64Image', base64Image);
-      formData.append('apikey', apiKey);
-      formData.append('language', 'eng');
-      formData.append('OCREngine', '2');
+      const parseWithLanguage = async (lang: 'eng' | 'vie') => {
+        const formData = new FormData();
+        formData.append('base64Image', base64Image);
+        formData.append('apikey', apiKey);
+        formData.append('language', lang);
+        formData.append('OCREngine', '2');
 
-      const response = await fetch('https://api.ocr.space/parse/image', {
-        method: 'POST',
-        body: formData as unknown as BodyInit,
-      });
+        const response = await fetch('https://api.ocr.space/parse/image', {
+          method: 'POST',
+          body: formData as unknown as BodyInit,
+        });
 
-      const result = (await response.json()) as OcrSpaceResponse;
+        return (await response.json()) as OcrSpaceResponse;
+      };
+
+      let result = await parseWithLanguage(normalizedLanguage as 'eng' | 'vie');
+      if (
+        result.IsErroredOnProcessing &&
+        normalizedLanguage === 'vie' &&
+        String(result.ErrorMessage?.[0] || '').includes("parameter 'language' is invalid")
+      ) {
+        result = await parseWithLanguage('eng');
+      }
 
       if (result.IsErroredOnProcessing) {
         throw new BadRequestException(result.ErrorMessage?.[0] || 'OCR Error');
       }
 
-      const parsedText = String(result.ParsedResults?.[0]?.ParsedText || '');
-      return parsedText.trim().replace(/\r?\n|\r/g, ' ');
+      const parsedText = (result.ParsedResults || [])
+        .map((item) => String(item?.ParsedText || '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+      return parsedText;
     } catch (error: unknown) {
       console.error('OCR Error:', error);
       throw new InternalServerErrorException('Failed to extract license plate');

@@ -339,17 +339,12 @@ export class WalletService {
         );
       }
 
-      // 2. Trừ tiền đóng băng (chờ admin duyệt)
-      const balanceAfter = balanceBefore - amount;
-      wallet.balance = balanceAfter;
-      await queryRunner.manager.save(wallet);
-
-      // 3. Ghi nhận giao dịch rút tiền (PENDING - Chờ xử lý)
+      // 2. Ghi nhận giao dịch rút tiền ở trạng thái chờ (không trừ tiền ngay)
       const transaction = queryRunner.manager.create(WalletTransaction, {
         wallet_id: wallet.id,
         amount: -amount,
         balance_before: balanceBefore,
-        balance_after: balanceAfter,
+        balance_after: balanceBefore,
         type: TransactionType.WITHDRAW,
         status: TransactionStatus.PENDING, // Chờ Admin kiểm tra và chuyển khoản
         ref_type: 'BANK_TRANSFER',
@@ -443,10 +438,16 @@ export class WalletService {
    */
   async getTransactions(userId: string): Promise<WalletTransaction[]> {
     const wallet = await this.getWalletByUserId(userId);
-    return this.transactionRepository.find({
-      where: { wallet_id: wallet.id },
-      order: { created_at: 'DESC' },
-    });
+    return this.transactionRepository
+      .createQueryBuilder('tx')
+      .where('tx.wallet_id = :walletId', { walletId: wallet.id })
+      // Theo logic: chưa duyệt thì chưa trừ tiền và KHÔNG hiển thị vào lịch sử giao dịch chung. 
+      .andWhere('(tx.type != :withdrawType OR tx.status = :successStatus)', {
+        withdrawType: TransactionType.WITHDRAW,
+        successStatus: TransactionStatus.SUCCESS,
+      })
+      .orderBy('tx.created_at', 'DESC')
+      .getMany();
   }
 
   // ============== ADMIN: YÊU CẦU RÚT TIỀN ==============
@@ -465,31 +466,66 @@ export class WalletService {
   async approveWithdrawRequest(
     transactionId: string,
   ): Promise<WalletTransaction> {
-    const transaction = await this.transactionRepository.findOne({
-      where: { id: transactionId },
-      relations: ['wallet'],
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch!');
-    if (
-      transaction.type !== TransactionType.WITHDRAW ||
-      transaction.status !== TransactionStatus.PENDING
-    ) {
-      throw new BadRequestException('Giao dịch không hợp lệ để duyệt!');
+    try {
+      const transaction = await queryRunner.manager.findOne(WalletTransaction, {
+        where: { id: transactionId },
+        relations: ['wallet'],
+      });
+
+      if (!transaction)
+        throw new NotFoundException('Không tìm thấy giao dịch!');
+      if (
+        transaction.type !== TransactionType.WITHDRAW ||
+        transaction.status !== TransactionStatus.PENDING
+      ) {
+        throw new BadRequestException('Giao dịch không hợp lệ để duyệt!');
+      }
+
+      const wallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.id = :walletId', { walletId: transaction.wallet_id })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!wallet) throw new NotFoundException('Không tìm thấy ví trích xuất!');
+
+      const amountToDeduct = Math.abs(Number(transaction.amount));
+      const currentBalance = Number(wallet.balance);
+
+      if (currentBalance < amountToDeduct) {
+        throw new BadRequestException(
+          'Số dư hiện tại không đủ để xác nhận lệnh rút tiền này',
+        );
+      }
+
+      wallet.balance = currentBalance - amountToDeduct;
+      await queryRunner.manager.save(wallet);
+
+      transaction.status = TransactionStatus.SUCCESS;
+      transaction.balance_before = currentBalance;
+      transaction.balance_after = wallet.balance;
+      await queryRunner.manager.save(transaction);
+
+      await this.activityService.logActivity({
+        type: ActivityType.WALLET_WITHDRAW,
+        content: `Yêu cầu rút tiền ${amountToDeduct}đ đã được xác nhận (Thành công)` ,
+        status: ActivityStatus.SUCCESS,
+        userId: wallet.user_id,
+        meta: { transactionId },
+      });
+
+      await queryRunner.commitTransaction();
+      return transaction;
+    } catch (error: any) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    transaction.status = TransactionStatus.SUCCESS;
-    await this.transactionRepository.save(transaction);
-
-    await this.activityService.logActivity({
-      type: ActivityType.WALLET_WITHDRAW,
-      content: `Yêu cầu rút tiền ${Math.abs(transaction.amount)}đ đã được xác nhận (Thành công)`,
-      status: ActivityStatus.SUCCESS,
-      userId: transaction.wallet?.user_id,
-      meta: { transactionId },
-    });
-
-    return transaction;
   }
 
   async rejectWithdrawRequest(
@@ -525,19 +561,30 @@ export class WalletService {
 
       const amountToRefund = Math.abs(Number(transaction.amount));
 
-      // Hoàn lại tiền ảo đã trừ lúc yêu cầu
-      wallet.balance = Number(wallet.balance) + amountToRefund;
-      await queryRunner.manager.save(wallet);
+      // Tương thích ngược: chỉ hoàn tiền nếu giao dịch cũ đã từng trừ tiền ngay khi tạo lệnh.
+      const wasDeductedOnCreate =
+        Number(transaction.balance_after) < Number(transaction.balance_before);
+
+      if (wasDeductedOnCreate) {
+        wallet.balance = Number(wallet.balance) + amountToRefund;
+        await queryRunner.manager.save(wallet);
+      }
 
       // Cập nhật trạng thái
       transaction.status = TransactionStatus.FAILED;
+      if (!wasDeductedOnCreate) {
+        transaction.balance_before = Number(wallet.balance);
+        transaction.balance_after = Number(wallet.balance);
+      }
       await queryRunner.manager.save(transaction);
 
       // Thêm 1 Transaction Hoàn lại do huỷ rút tiền để rõ ràng lịch sử (tuỳ chọn, nhưng cập nhật FAILED và refund là đủ)
 
       await this.activityService.logActivity({
         type: ActivityType.WALLET_WITHDRAW,
-        content: `Yêu cầu rút tiền ${amountToRefund}đ đã bị từ chối, đã hoàn lại tiền vào ví`,
+        content: wasDeductedOnCreate
+          ? `Yêu cầu rút tiền ${amountToRefund}đ đã bị từ chối, đã hoàn lại tiền vào ví`
+          : `Yêu cầu rút tiền ${amountToRefund}đ đã bị từ chối, ví không bị trừ tiền`,
         status: ActivityStatus.ERROR,
         userId: wallet.user_id,
         meta: { transactionId },
@@ -559,5 +606,41 @@ export class WalletService {
     });
     if (!tx) throw new NotFoundException('Không tìm thấy giao dịch!');
     return tx;
+  }
+
+  async complainWithdrawRequest(
+    transactionId: string,
+    userId: string,
+    message?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const tx = await this.transactionRepository.findOne({
+      where: { id: transactionId },
+      relations: ['wallet'],
+    });
+
+    if (!tx) throw new NotFoundException('Không tìm thấy giao dịch!');
+    if (tx.type !== TransactionType.WITHDRAW) {
+      throw new BadRequestException('Chỉ hỗ trợ khiếu nại cho lệnh rút tiền');
+    }
+    if (tx.wallet?.user_id !== userId) {
+      throw new BadRequestException('Bạn không có quyền khiếu nại giao dịch này');
+    }
+
+    await this.activityService.logActivity({
+      type: ActivityType.WALLET_WITHDRAW,
+      content: `Người dùng khiếu nại lệnh rút tiền ${Math.abs(Number(tx.amount))}đ - mã ${transactionId}`,
+      status: ActivityStatus.INFO,
+      userId,
+      meta: {
+        transactionId,
+        withdrawStatus: tx.status,
+        complaintMessage: message || 'Người dùng yêu cầu admin kiểm tra lệnh rút tiền quá hạn xử lý',
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Đã gửi khiếu nại đến admin thành công',
+    };
   }
 }
