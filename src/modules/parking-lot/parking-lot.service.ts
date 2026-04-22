@@ -180,6 +180,68 @@ export class ParkingLotService {
     return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
   }
 
+  // ─── Delete a specific image from parking lot ──────────────────────────────
+  async deleteParkingLotImage(
+    parkingLotId: number,
+    ownerId: string,
+    imageUrl: string,
+  ) {
+    const parkingLot = await this.parkingLotRepository.findOne({
+      where: { id: parkingLotId, owner: { id: ownerId } },
+      relations: ['owner'],
+    });
+
+    if (!parkingLot) {
+      throw new NotFoundException(
+        'Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập',
+      );
+    }
+
+    if (!parkingLot.image) {
+      throw new BadRequestException('Bãi đỗ xe không có hình ảnh nào');
+    }
+
+    const { thumbnail, gallery = [] } = parkingLot.image;
+    let isModified = false;
+    let newThumbnail = thumbnail;
+
+    // Check if the image to delete is in the gallery
+    const galleryIndex = gallery.indexOf(imageUrl);
+    if (galleryIndex !== -1) {
+      gallery.splice(galleryIndex, 1);
+      isModified = true;
+    }
+
+    // Check if the image to delete is the thumbnail
+    if (thumbnail === imageUrl) {
+      // Promote the first gallery image to thumbnail if available
+      if (gallery.length > 0) {
+        newThumbnail = gallery.shift();
+      } else {
+        newThumbnail = undefined;
+      }
+      isModified = true;
+    }
+
+    if (!isModified) {
+      throw new BadRequestException('Không tìm thấy hình ảnh trong bãi đỗ xe này');
+    }
+
+    // Delete physically from Supabase
+    await this.supabaseService.deleteFilesByUrls([imageUrl]);
+
+    // Update entity
+    parkingLot.image = {
+      ...parkingLot.image,
+      thumbnail: newThumbnail,
+      gallery,
+    };
+
+    const updatedParkingLot = await this.parkingLotRepository.save(parkingLot);
+    return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
+  }
+
+
   // ─── Get users of a parking lot (with optional search) ───────────────────
   async getUsersByParkingLot(
     parkingLotId: number,

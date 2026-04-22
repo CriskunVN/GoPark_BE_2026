@@ -12,6 +12,7 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  Delete,
 } from '@nestjs/common';
 import { ParkingLotService } from './parking-lot.service';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -36,6 +37,7 @@ import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
 import { GetSlotAvailabilityDto } from './dto/get-slot-availability.dto';
 import { ManualBookingDto } from './dto/manual-booking.dto';
 import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
+import { DeleteParkingLotImageDto } from './dto/delete-parking-lot-image.dto';
 
 // chia vung ra roi thay nghe
 
@@ -154,6 +156,22 @@ export class ParkingLotController {
       updateParkingLotDto,
       ownerId,
       files,
+    );
+  }
+
+  // ─── Route: delete a specific parking lot image (chỉ dành cho owner) ──────
+  @Delete(':parkingLotId/images')
+  @UseGuards(JwtAuthGuard)
+  async deleteParkingLotImage(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: DeleteParkingLotImageDto,
+    @Req() req: any,
+  ) {
+    const ownerId = req.user['userId'];
+    return this.parkingLotService.deleteParkingLotImage(
+      parkingLotId,
+      ownerId,
+      dto.imageUrl,
     );
   }
 
