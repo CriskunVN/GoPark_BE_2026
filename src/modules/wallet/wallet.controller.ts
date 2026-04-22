@@ -86,4 +86,18 @@ export class WalletController {
   async getTransactionDetails(@Req() req: any) {
     return await this.walletService.getTransactionById(req.params.id);
   }
+
+  @Post('withdraw-requests/:id/complaint')
+  async complainWithdrawRequest(
+    @Req() req: any,
+    @Body() body: { userId?: string; message?: string },
+  ) {
+    const userId =
+      body.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
+    return await this.walletService.complainWithdrawRequest(
+      req.params.id,
+      userId,
+      body.message,
+    );
+  }
 }
