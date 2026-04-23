@@ -2,6 +2,7 @@ export enum UserRoleEnum {
   USER = 'USER',
   OWNER = 'OWNER',
   ADMIN = 'ADMIN',
+  STAFF = 'STAFF',
 }
 
 export enum TargetRole {
