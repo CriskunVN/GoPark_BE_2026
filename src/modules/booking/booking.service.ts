@@ -2,7 +2,8 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  forwardRef, Inject
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import dayjs from 'dayjs';
@@ -30,7 +31,8 @@ import { DataSource } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { Invoice } from '../payment/entities/invoice.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
-
+import { UsersService } from '../users/users.service';
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class BookingService {
@@ -49,10 +51,11 @@ export class BookingService {
 
     private readonly emailService: EmailService,
     private readonly activityService: ActivityService,
+    private readonly usersService: UsersService,
 
     private dataSource: DataSource,
 
-    @Inject(forwardRef(() => WalletService)) 
+    @Inject(forwardRef(() => WalletService))
     private walletService: WalletService,
   ) {}
 
@@ -71,15 +74,21 @@ export class BookingService {
         .execute();
 
       //2. kiểm tra xe có đang bận ở vị trí khác không
-        const startTime = new Date(bookingdto.start_time);
-        const endTime = new Date(bookingdto.end_time);
-        
-        const conflictingVehicle = await this.bookingRepository
+      const startTime = new Date(bookingdto.start_time);
+      const endTime = new Date(bookingdto.end_time);
+
+      const conflictingVehicle = await this.bookingRepository
         .createQueryBuilder('booking')
-        .where('booking.vehicle = :vehicleId', { vehicleId: bookingdto.vehicle_id })
+        .where('booking.vehicle = :vehicleId', {
+          vehicleId: bookingdto.vehicle_id,
+        })
         // Chỉ check các booking "sống": Đã thanh toán, đang đỗ, hoặc đang chờ thanh toán
         .andWhere('booking.status IN (:...statuses)', {
-          statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ONGOING],
+          statuses: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.ONGOING,
+          ],
         })
         // Công thức overlap: (Start1 < End2) AND (End1 > Start2)
         .andWhere('booking.start_time < :endTime', { endTime })
@@ -88,11 +97,9 @@ export class BookingService {
 
       if (conflictingVehicle) {
         throw new BadRequestException(
-        `Xe này đã có lịch đặt chỗ trong khoảng thời gian từ ${dayjs(conflictingVehicle.start_time).format('HH:mm')} đến ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`
+          `Xe này đã có lịch đặt chỗ trong khoảng thời gian từ ${dayjs(conflictingVehicle.start_time).format('HH:mm')} đến ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`,
         );
       }
-      
-
 
       const slot = await this.parkingSlotRepository.findOne({
         where: { id: bookingdto.slot_id },
@@ -154,18 +161,13 @@ export class BookingService {
         await this.qrcodeRepository.save(qrCode);
       }
 
-      // Activity log - Bỏ qua await để trả kết quả về FE nhanh hơn
-      this.activityService
-        .logActivity({
-          type: ActivityType.BOOKING_NEW,
-          content: `Người dùng ${bookingdto.user_id} đã đặt chỗ thành công`,
-          status: ActivityStatus.SUCCESS,
-          userId: bookingdto.user_id,
-          meta: {
-            slotId: bookingdto.slot_id,
-          },
-        })
-        .catch((e) => console.error('Log activity error:', e));
+      // Activity log cho việc tạo mới booking
+      this.activityService.templateforBookingActivity(
+        savedBooking.id,
+        bookingdto.user_id,
+        ActivityType.BOOKING_NEW,
+        ActivityStatus.SUCCESS,
+      );
 
       return {
         ...savedBooking,
@@ -179,32 +181,38 @@ export class BookingService {
   }
 
   // =================  BOOKING (GIA HẠN) =================
-  async extendBooking(id: number, extendDto: { new_end_time: string, isPreview?: boolean }, currentUserId?: string) {
+  async extendBooking(
+    id: number,
+    extendDto: { new_end_time: string; isPreview?: boolean },
+    currentUserId?: string,
+  ) {
     return await this.dataSource.transaction(async (manager) => {
       // 1. Lấy thông tin booking và các quan hệ
       const booking = await manager.findOne(Booking, {
         where: { id },
         relations: [
-          'slot', 
-          'user', 
+          'slot',
+          'user',
           'slot.parkingZone',
           'slot.parkingZone.parkingFloor',
           'slot.parkingZone.parkingFloor.parkingLot',
-          'slot.parkingZone.parkingFloor.parkingLot.owner'
+          'slot.parkingZone.parkingFloor.parkingLot.owner',
         ],
       });
 
       if (!booking) throw new NotFoundException('Không tìm thấy đơn đặt chỗ');
-      
+
       // SECURITY CHECK: Chỉ chủ nhân đơn hàng mới được gia hạn
       if (currentUserId && booking.user.id !== currentUserId) {
-        throw new BadRequestException('Bạn không có quyền gia hạn đơn hàng này');
+        throw new BadRequestException(
+          'Bạn không có quyền gia hạn đơn hàng này',
+        );
       }
 
       // 2. Lấy đơn giá thực tế theo Zone (Khu vực) từ Database
       const pricing = await manager.findOne(PricingRule, {
         where: { parkingZone: { id: booking.slot.parkingZone.id } },
-        order: { id: 'DESC' } 
+        order: { id: 'DESC' },
       });
 
       const pricePerHour = pricing?.price_per_hour || 0;
@@ -219,55 +227,76 @@ export class BookingService {
       }
 
       // 3. Kiểm tra xung đột Slot
-      const conflict = await manager.createQueryBuilder(Booking, 'b')
+      const conflict = await manager
+        .createQueryBuilder(Booking, 'b')
         .where('b.slot_id = :slotId', { slotId: booking.slot.id })
         .andWhere('b.id != :id', { id })
-        .andWhere('b.status IN (:...st)', { st: [BookingStatus.CONFIRMED, BookingStatus.ONGOING] })
-        .andWhere('b.start_time < :newEndTime', { newEndTime: newEndTime.toISOString() })
-        .andWhere('b.end_time > :oldEndTime', { oldEndTime: oldEndTime.toISOString() })
+        .andWhere('b.status IN (:...st)', {
+          st: [BookingStatus.CONFIRMED, BookingStatus.ONGOING],
+        })
+        .andWhere('b.start_time < :newEndTime', {
+          newEndTime: newEndTime.toISOString(),
+        })
+        .andWhere('b.end_time > :oldEndTime', {
+          oldEndTime: oldEndTime.toISOString(),
+        })
         .getOne();
 
-      if (conflict) throw new BadRequestException('Vị trí này đã có người đặt trước trong khung giờ bạn muốn gia hạn!');
+      if (conflict)
+        throw new BadRequestException(
+          'Vị trí này đã có người đặt trước trong khung giờ bạn muốn gia hạn!',
+        );
 
       // 4. ÁP DỤNG CÔNG THỨC ĐỒNG NHẤT VỚI FRONTEND
       const totalMinutesExtend = newEndTime.diff(oldEndTime, 'minute');
-      
+
       // Tính số ngày và số phút lẻ
       const days = Math.floor(totalMinutesExtend / 1440);
       const remainingMinutes = totalMinutesExtend % 1440;
-      
+
       // Công thức: (Ngày * Giá ngày) + (Phút lẻ * Giá giờ/60)
       const pricePerMin = pricePerHour / 60;
-      const extraAmount = Math.round((days * priceDay) + (remainingMinutes * pricePerMin));
+      const extraAmount = Math.round(
+        days * priceDay + remainingMinutes * pricePerMin,
+      );
 
       // Trả về Preview cho Dũng hiển thị trên UI
       if (extendDto.isPreview) {
-        return { 
-          data: { 
+        return {
+          data: {
             extraAmount: extraAmount > 0 ? extraAmount : 0,
             pricePerHour,
             priceDay,
             zoneName,
             totalMinutesExtend,
             days,
-            remainingMinutes
-          } 
+            remainingMinutes,
+          },
         };
       }
 
       // 5. Thanh toán thực tế
       if (extraAmount > 0) {
         // SỬA LỖI: Chuyển tiền từ Khách sang Chủ (không dùng withdraw)
-        const ownerId = booking.slot.parkingZone.parkingFloor.parkingLot.owner?.id;
-        if (!ownerId) throw new BadRequestException('Không tìm thấy thông tin chủ bãi để thanh toán');
-        
-        await this.walletService.processPayment(booking.user.id, ownerId, extraAmount, id.toString());
+        const ownerId =
+          booking.slot.parkingZone.parkingFloor.parkingLot.owner?.id;
+        if (!ownerId)
+          throw new BadRequestException(
+            'Không tìm thấy thông tin chủ bãi để thanh toán',
+          );
+
+        await this.walletService.processPayment(
+          booking.user.id,
+          ownerId,
+          extraAmount,
+          id.toString(),
+        );
 
         // Tạo hóa đơn gia hạn
         const invoiceData: any = {
-          booking: booking, 
+          booking: booking,
           total: extraAmount,
-          tax:0,
+          tax: 0,
           description: `Gia hạn thêm ${days > 0 ? days + ' ngày ' : ''}${remainingMinutes} phút tại ${zoneName}`,
           status: 'PAID',
         };
@@ -280,9 +309,17 @@ export class BookingService {
       booking.end_time = newEndTime.toDate();
       const updatedBooking = await manager.save(booking);
 
+      // Activity log cho việc tạo mới booking
+      this.activityService.templateforBookingActivity(
+        updatedBooking.id,
+        updatedBooking.user.id,
+        ActivityType.BOOKING_EXTENDED,
+        ActivityStatus.SUCCESS,
+      );
+
       return {
-        message: "Gia hạn thành công",
-        data: updatedBooking
+        message: 'Gia hạn thành công',
+        data: updatedBooking,
       };
     });
   }
@@ -290,7 +327,9 @@ export class BookingService {
   // ================= scanQR =================
   async scanQRCode(content: string, gateId: number, detectedPlate?: string) {
     // 1. Kiểm tra cổng
-    const gate = await this.checkLogRepository.manager.findOne(Gate, { where: { id: gateId } });
+    const gate = await this.checkLogRepository.manager.findOne(Gate, {
+      where: { id: gateId },
+    });
     if (!gate) throw new NotFoundException('Cổng không tồn tại');
 
     // 2. Kiểm tra mã QR
@@ -299,7 +338,8 @@ export class BookingService {
       relations: ['booking', 'booking.slot', 'booking.vehicle'],
     });
 
-    if (!qrCode) throw new NotFoundException('Mã QR không hợp lệ hoặc đã sử dụng');
+    if (!qrCode)
+      throw new NotFoundException('Mã QR không hợp lệ hoặc đã sử dụng');
 
     const booking = qrCode.booking;
 
@@ -307,7 +347,9 @@ export class BookingService {
     if (detectedPlate && booking.vehicle) {
       // Bước A: Chuẩn hóa chuỗi thô từ OCR (Viết hoa, xóa dấu cách, gạch ngang, dấu chấm)
       const rawOcr = detectedPlate.toUpperCase().replace(/[\s.-]/g, '');
-      const cleanRegistered = booking.vehicle.plate_number.toUpperCase().replace(/[\s.-]/g, '');
+      const cleanRegistered = booking.vehicle.plate_number
+        .toUpperCase()
+        .replace(/[\s.-]/g, '');
 
       // Bước B: Dùng Regex để tìm cụm ký tự có định dạng biển số VN
       // Định dạng: 2 số đầu - 1 chữ cái + 1 số/chữ - Dãy 4 hoặc 5 số cuối
@@ -321,13 +363,18 @@ export class BookingService {
       console.log('Biển số trong DB:', cleanRegistered);
 
       // Bước C: So khớp (Dùng includes để tăng độ chính xác nếu OCR đọc thừa 1-2 ký tự đầu/đuôi)
-      if (!cleanDetected.includes(cleanRegistered) && !cleanRegistered.includes(cleanDetected)) {
+      if (
+        !cleanDetected.includes(cleanRegistered) &&
+        !cleanRegistered.includes(cleanDetected)
+      ) {
         throw new BadRequestException(
           `Biển số không khớp! Hệ thống lọc được: ${cleanDetected}, Đăng ký: ${booking.vehicle.plate_number}`,
         );
       }
     } else if (!detectedPlate) {
-      throw new BadRequestException('Vui lòng cung cấp ảnh biển số xe để đối chiếu');
+      throw new BadRequestException(
+        'Vui lòng cung cấp ảnh biển số xe để đối chiếu',
+      );
     }
 
     //check-in

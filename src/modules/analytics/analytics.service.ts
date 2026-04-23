@@ -311,4 +311,7 @@ export class AnalyticsService {
       };
     });
   }
+
+  // ============= Admin Analytics Stats =============
+  async getAnalyticsStats() {}
 }

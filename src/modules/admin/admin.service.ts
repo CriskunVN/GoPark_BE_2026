@@ -522,4 +522,9 @@ export class AdminService {
       },
     };
   }
+
+  // ========== Get transaction stats (transaction stats) ================
+  async getTransactionStats() {
+    // Tổng giao dịch trong tháng
+  }
 }
