@@ -1,4 +1,4 @@
-﻿import {
+import {
   Controller,
   Get,
   Post,
@@ -16,9 +16,13 @@
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResDto } from './dto/user-res.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRoleEnum } from '../../common/enums/role.enum';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Controller('users')
@@ -81,6 +85,17 @@ export class UsersController {
     return UserResDto.fromEntity(user);
   }
   // --------------------------------
+
+  // --- OWNER: Tạo tài khoản nhân viên (STAFF) ---
+  // Yêu cầu đăng nhập + có role OWNER, tái sử dụng UsersService.create() với role STAFF
+  @Post('staff')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  async createStaff(@Body() dto: CreateStaffDto): Promise<UserResDto> {
+    const user = await this.usersService.createStaff(dto);
+    return UserResDto.fromEntity(user);
+  }
+  // ------------------------------------------------
 
   @Get(':id')
   async findOne(@Param('id') id: string): Promise<UserResDto> {

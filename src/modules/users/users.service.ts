@@ -1,11 +1,13 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/create-user.dto';
+import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -54,8 +56,16 @@ export class UsersService {
       });
       await this.profileRepository.save(profile);
     }
-    // Gán vai trò "USER" mặc định cho người dùng mới tạo, nếu role này chưa tồn tại trong database thì sẽ được tạo mới
-    const targetRoleName = 'USER';
+    // Gán vai trò mặc định là "USER", nhưng cho phép override nếu role hợp lệ (VD: STAFF do owner tạo)
+    const allowedRoles: string[] = [
+      UserRoleEnum.USER,
+      UserRoleEnum.OWNER,
+      UserRoleEnum.STAFF,
+    ];
+    const targetRoleName =
+      roleName && allowedRoles.includes(roleName)
+        ? roleName
+        : UserRoleEnum.USER;
     const role = await this.roleRepository.findOne({
       where: { name: targetRoleName },
     });
@@ -460,6 +470,27 @@ export class UsersService {
           },
         },
       },
+    });
+  }
+
+  // =========== Owner tạo tài khoản nhân viên (STAFF) ================
+  // Tái sử dụng create(), set status ACTIVE ngay (không cần email verify)
+  async createStaff(dto: CreateStaffDto) {
+    const existingUser = await this.findByEmail(dto.email);
+    if (existingUser) {
+      throw new BadRequestException('Email này đã được sử dụng');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    return this.create({
+      email: dto.email,
+      password: hashedPassword,
+      fullName: dto.fullName,
+      phoneNumber: dto.phoneNumber,
+      role: UserRoleEnum.STAFF,
+      status: 'ACTIVE', // owner đã xác nhận nhân viên trực tiếp → không cần email verify
+      verifyToken: null,
     });
   }
 }
