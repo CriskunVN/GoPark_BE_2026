@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   InternalServerErrorException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, Not, EntityManager, ILike } from 'typeorm';
@@ -19,6 +20,7 @@ import {
   ParkingLotStatus,
   SlotStatus,
 } from 'src/common/enums/status.enum';
+import { UserRoleEnum } from 'src/common/enums/role.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
@@ -78,6 +80,22 @@ export class ParkingLotService {
     private readonly supabaseService: SupabaseService,
   ) {}
 
+  private async validateLotAccess(parkingLotId: number, user: any) {
+    const userId = user.userId || user.sub;
+    const parkingLot = await this.parkingLotRepository.findOne({
+      where: { id: parkingLotId },
+      relations: ['owner'],
+    });
+
+    if (!parkingLot) {
+      throw new NotFoundException('Không tìm thấy bãi đỗ xe');
+    }
+
+    if (parkingLot.owner?.id !== userId) {
+      throw new ForbiddenException('Bạn không có quyền quản lý bãi đỗ xe này');
+    }
+  }
+
   async createParkingLot(
     createParkingLotDto: CreateParkingLotReqDto,
     files?: Array<Express.Multer.File>,
@@ -136,27 +154,23 @@ export class ParkingLotService {
   // ─── Update parking lot ────────────────────────────────────────────────────
   async updateParkingLot(
     parkingLotId: number,
-    updateDto: UpdateParkingLotReqDto,
-    ownerId: string,
+    updateParkingLotDto: UpdateParkingLotReqDto,
+    user: any,
     files?: Array<Express.Multer.File>,
   ) {
+    await this.validateLotAccess(parkingLotId, user);
+    
     const parkingLot = await this.parkingLotRepository.findOne({
-      where: { id: parkingLotId, owner: { id: ownerId } },
+      where: { id: parkingLotId },
       relations: ['owner'],
     });
 
-    if (!parkingLot) {
-      throw new NotFoundException(
-        'Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập',
-      );
+    if (updateParkingLotDto.name) {
+      parkingLot.name = updateParkingLotDto.name;
     }
 
-    if (updateDto.name) {
-      parkingLot.name = updateDto.name;
-    }
-
-    if (updateDto.description !== undefined) {
-      parkingLot.description = updateDto.description;
+    if (updateParkingLotDto.description !== undefined) {
+      parkingLot.description = updateParkingLotDto.description;
     }
 
     if (files && files.length > 0) {
@@ -183,19 +197,14 @@ export class ParkingLotService {
   // ─── Delete a specific image from parking lot ──────────────────────────────
   async deleteParkingLotImage(
     parkingLotId: number,
-    ownerId: string,
+    user: any,
     imageUrl: string,
   ) {
+    await this.validateLotAccess(parkingLotId, user);
     const parkingLot = await this.parkingLotRepository.findOne({
-      where: { id: parkingLotId, owner: { id: ownerId } },
+      where: { id: parkingLotId },
       relations: ['owner'],
     });
-
-    if (!parkingLot) {
-      throw new NotFoundException(
-        'Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập',
-      );
-    }
 
     if (!parkingLot.image) {
       throw new BadRequestException('Bãi đỗ xe không có hình ảnh nào');
@@ -245,8 +254,10 @@ export class ParkingLotService {
   // ─── Get users of a parking lot (with optional search) ───────────────────
   async getUsersByParkingLot(
     parkingLotId: number,
+    user: any,
     search?: string,
   ): Promise<ParkingLotUserResDto[]> {
+    await this.validateLotAccess(parkingLotId, user);
     const parkingLot = await this.parkingLotRepository.findOne({
       where: { id: parkingLotId },
     });
@@ -532,7 +543,8 @@ export class ParkingLotService {
   }
 
   // ─── Guest Check-in (Walk-in) ──────────────────────────────────────────────
-  async handleWalkIn(parkingLotId: number, dto: WalkInDto) {
+  async handleWalkIn(parkingLotId: number, dto: WalkInDto, user: any) {
+    await this.validateLotAccess(parkingLotId, user);
     const parkingLot = await this.parkingLotRepository.findOne({
       where: { id: parkingLotId },
     });
@@ -638,19 +650,15 @@ export class ParkingLotService {
   async handleManualBooking(
     parkingLotId: number,
     dto: ManualBookingDto,
-    ownerId: string,
+    user: any,
   ) {
+    await this.validateLotAccess(parkingLotId, user);
     // 1. Xác minh bãi tồn tại và thuộc owner
     const parkingLot = await this.parkingLotRepository.findOne({
-      where: { id: parkingLotId, owner: { id: ownerId } },
+      where: { id: parkingLotId },
       relations: ['owner'],
     });
-    if (!parkingLot) {
-      throw new NotFoundException(
-        'Không tìm thấy bãi đỗ xe hoặc bạn không có quyền truy cập',
-      );
-    }
-
+    
     // 2. Xác minh slot thuộc bãi này và load thông tin zone + pricing
     const slot = await this.parkingSlotRepository.findOne({
       where: { id: dto.slotId },
@@ -796,11 +804,8 @@ export class ParkingLotService {
   }
 
   //Get bãi đỗ
-  async getMapForBooking(lotid: number, userId: string) {
-    console.log('Getting map for booking - ParkingLotService', {
-      lotid,
-      userId,
-    });
+  async getMapForBooking(lotid: number, user: any) {
+    await this.validateLotAccess(lotid, user);
     //lấy thông tin bãi đỗ cùng với các tầng, zone, slot để hiển thị trên map khi booking
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotid },
@@ -828,7 +833,7 @@ export class ParkingLotService {
 
     //lấy danh sách xe của người dùng
     const vehicleUser = await this.vehicleRepository.find({
-      where: { user: { id: userId } },
+      where: { user: { id: user.userId || user.sub } },
       relations: ['user'],
     });
 
@@ -872,13 +877,14 @@ export class ParkingLotService {
    * (Dành cho chức năng đặt chỗ rạp chiếu phim - Cinema Style)
    */
   async getAvailableMapByTime(
-    lotid: number,
-    userId: string,
+    parkingLotId: number,
+    user: any,
     startTime: string,
     endTime: string,
   ) {
+    await this.validateLotAccess(parkingLotId, user);
     // 1. Lấy sơ đồ gốc và xe của user (tận dụng logic getMapForBooking)
-    const lotData: any = await this.getMapForBooking(lotid, userId);
+    const lotData: any = await this.getMapForBooking(parkingLotId, user);
 
     // 2. Tìm tất cả các booking trùng lặp thời gian trong bãi này
     // Điều kiện overlap: (b.start_time < requested_end) AND (b.end_time > requested_start)
@@ -887,7 +893,7 @@ export class ParkingLotService {
       .leftJoinAndSelect('b.slot', 'slot')
       .innerJoin('slot.parkingZone', 'zone')
       .innerJoin('zone.parkingFloor', 'floor')
-      .where('floor.parkingLot = :lotId', { lotId: lotid })
+      .where('floor.parkingLot = :lotId', { lotId: parkingLotId })
       .andWhere('b.status NOT IN (:...excludeStatuses)', {
         excludeStatuses: ['completed', 'cancelled', 'COMPLETED', 'CANCELLED'],
       })
@@ -1744,5 +1750,44 @@ export class ParkingLotService {
       });
     });
     return map;
+  }
+
+  /**
+   * Kiểm tra quyền truy cập của User (Owner/Staff) vào bãi xe
+   */
+  async validateLotAccess(lotId: number, user: any) {
+    const roles = user.roles || [];
+    const email = user.email || '';
+
+    // 1. Nếu là OWNER: Kiểm tra quyền sở hữu bãi xe
+    if (roles.includes(UserRoleEnum.OWNER)) {
+      const lot = await this.parkingLotRepository.findOne({
+        where: { id: lotId, owner: { id: user.userId || user.sub } },
+      });
+      if (!lot) {
+        throw new ForbiddenException('Bạn không sở hữu bãi đỗ xe này');
+      }
+      return true;
+    }
+
+    // 2. Nếu là STAFF: Kiểm tra gán bãi qua Email Convention
+    if (roles.includes(UserRoleEnum.STAFF)) {
+      const emailParts = email.split('.');
+      if (
+        emailParts.length < 3 ||
+        emailParts[0] !== 'staff' ||
+        parseInt(emailParts[1]) !== lotId
+      ) {
+        throw new ForbiddenException(
+          'Bạn không được phân công quản lý bãi đỗ xe này',
+        );
+      }
+      return true;
+    }
+
+    // 3. Admin hoặc các quyền khác
+    if (roles.includes(UserRoleEnum.ADMIN)) return true;
+
+    throw new ForbiddenException('Bạn không có quyền thực hiện thao tác này');
   }
 }

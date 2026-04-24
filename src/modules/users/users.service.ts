@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -11,7 +12,7 @@ import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository, Like } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
@@ -474,17 +475,29 @@ export class UsersService {
   }
 
   // =========== Owner tạo tài khoản nhân viên (STAFF) ================
-  // Tái sử dụng create(), set status ACTIVE ngay (không cần email verify)
+  // Sử dụng Email Convention: staff.[parkingLotId].[unique_name]@gopark.com
   async createStaff(dto: CreateStaffDto) {
-    const existingUser = await this.findByEmail(dto.email);
+    // Trích xuất phần tên từ email cũ hoặc dùng trực tiếp fullName không dấu
+    const emailPrefix = dto.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const formattedEmail = `staff.${dto.parkingLotId}.${emailPrefix}@gopark.com`;
+
+    const existingUser = await this.findByEmail(formattedEmail);
     if (existingUser) {
-      throw new BadRequestException('Email này đã được sử dụng');
+      throw new BadRequestException(
+        `Nhân viên với định danh '${emailPrefix}' đã tồn tại trong bãi này`,
+      );
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+    console.log('--- CREATE STAFF DEBUG ---');
+    console.log('Original Email:', dto.email);
+    console.log('ParkingLotId:', dto.parkingLotId);
+    console.log('Formatted Email:', formattedEmail);
+    console.log('--------------------------');
+
     return this.create({
-      email: dto.email,
+      email: formattedEmail,
       password: hashedPassword,
       fullName: dto.fullName,
       phoneNumber: dto.phoneNumber,
@@ -492,5 +505,57 @@ export class UsersService {
       status: 'ACTIVE', // owner đã xác nhận nhân viên trực tiếp → không cần email verify
       verifyToken: null,
     });
+  }
+
+  // Lấy danh sách nhân viên theo bãi đỗ xe
+  async findStaffByParkingLot(parkingLotId: number) {
+    return this.usersRepository.find({
+      where: {
+        email: Like(`staff.${parkingLotId}.%`),
+      },
+      relations: ['profile', 'userRoles', 'userRoles.role'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // Xóa nhân viên (kiểm tra quyền sở hữu của Owner)
+  async removeStaff(staffId: string, ownerId: string) {
+    const staff = await this.usersRepository.findOne({
+      where: { id: staffId },
+      relations: ['userRoles', 'userRoles.role'],
+    });
+
+    if (!staff) throw new NotFoundException('Không tìm thấy nhân viên');
+
+    // Kiểm tra role STAFF
+    const isStaff = staff.userRoles.some(
+      (ur) => ur.role.name === UserRoleEnum.STAFF,
+    );
+    if (!isStaff) throw new BadRequestException('Đây không phải tài khoản nhân viên');
+
+    // Trích xuất lotId từ email: staff.10.name@gopark.com
+    const emailParts = staff.email.split('.');
+    if (emailParts.length < 3 || emailParts[0] !== 'staff') {
+      throw new BadRequestException('Định dạng email nhân viên không hợp lệ');
+    }
+
+    const lotId = parseInt(emailParts[1]);
+
+    // Kiểm tra quyền sở hữu bãi xe của Owner
+    const owner = await this.usersRepository.findOne({
+      where: { id: ownerId },
+      relations: ['ownedParkingLots'],
+    });
+
+    if (!owner) throw new UnauthorizedException('Không tìm thấy tài khoản Owner');
+
+    const isOwnerOfLot = owner.ownedParkingLots?.some((lot) => lot.id === lotId);
+    if (!isOwnerOfLot) {
+      throw new BadRequestException(
+        'Bạn không có quyền xóa nhân viên của bãi xe này',
+      );
+    }
+
+    return this.usersRepository.remove(staff);
   }
 }

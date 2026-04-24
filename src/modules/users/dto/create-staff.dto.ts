@@ -18,6 +18,9 @@ export class CreateStaffDto {
   @IsNotEmpty({ message: 'Họ tên không được để trống' })
   fullName: string;
 
+  @IsNotEmpty({ message: 'ID bãi đỗ xe không được để trống' })
+  parkingLotId: number;
+
   @IsOptional()
   phoneNumber?: string;
 }
