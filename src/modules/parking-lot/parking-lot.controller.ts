@@ -22,6 +22,9 @@ import {
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRoleEnum } from '../../common/enums/role.enum';
 import {
   AnyFilesInterceptor,
   FileInterceptor,
@@ -69,32 +72,41 @@ export class ParkingLotController {
   // ─── Route: users of a specific parking lot ─────────────────────────────────
 
   @Get(':parkingLotId/users')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   async getUsersByParkingLot(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Req() req: any,
     @Query('search') search?: string,
   ): Promise<ParkingLotUserResDto[]> {
-    return this.parkingLotService.getUsersByParkingLot(parkingLotId, search);
+    return this.parkingLotService.getUsersByParkingLot(
+      parkingLotId,
+      req.user,
+      search,
+    );
   }
   // get bãi đỗ
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   @Get('map/:lotid')
   async getMapBooing(@Param('lotid') lotid: number, @Req() req: any) {
-    const userId = req.user['userId'];
-    return this.parkingLotService.getMapForBooking(lotid, userId);
+    const user = req.user;
+    return this.parkingLotService.getMapForBooking(lotid, user);
   }
 
   // Lấy bản đồ bãi đỗ với trạng thái slot theo khung giờ (Cinema Style)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   @Get(':parkingLotId/available-map')
   async getAvailableMap(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Query() dto: CheckAvailableSlotsDto,
     @Req() req: any,
   ) {
-    const userId = req.user['userId'];
+    const user = req.user;
     return this.parkingLotService.getAvailableMapByTime(
       parkingLotId,
-      userId,
+      user,
       dto.start_time,
       dto.end_time,
     );
@@ -198,28 +210,34 @@ export class ParkingLotController {
     return await this.parkingLotService.extractLicensePlate(file, language);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   @Post(':parkingLotId/walk-in')
   async handleWalkIn(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Body() dto: WalkInDto,
+    @Req() req: any,
   ) {
-    return await this.parkingLotService.handleWalkIn(parkingLotId, dto);
+    return await this.parkingLotService.handleWalkIn(
+      parkingLotId,
+      dto,
+      req.user,
+    );
   }
 
   // ─── Route: Manual Booking (Owner đặt chỗ thủ công) ─────────────────────────
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   @Post(':parkingLotId/manual-booking')
   async handleManualBooking(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Body() dto: ManualBookingDto,
     @Req() req: any,
   ) {
-    const ownerId = req.user['userId'];
     return await this.parkingLotService.handleManualBooking(
       parkingLotId,
       dto,
-      ownerId,
+      req.user,
     );
   }
 

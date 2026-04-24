@@ -12,6 +12,7 @@ import {
   UploadedFile,
   UseInterceptors,
   BadRequestException,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UsersService } from './users.service';
@@ -94,6 +95,25 @@ export class UsersController {
   async createStaff(@Body() dto: CreateStaffDto): Promise<UserResDto> {
     const user = await this.usersService.createStaff(dto);
     return UserResDto.fromEntity(user);
+  }
+
+  @Get('staff/lot/:parkingLotId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  async getStaffByLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+  ): Promise<UserResDto[]> {
+    const users = await this.usersService.findStaffByParkingLot(parkingLotId);
+    return UserResDto.fromEntities(users);
+  }
+
+  @Delete('staff/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @HttpCode(204)
+  async removeStaff(@Param('id') id: string, @Req() req: any) {
+    const ownerId = req.user['userId'];
+    return this.usersService.removeStaff(id, ownerId);
   }
   // ------------------------------------------------
 

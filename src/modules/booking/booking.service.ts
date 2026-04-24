@@ -4,6 +4,8 @@ import {
   NotFoundException,
   forwardRef,
   Inject,
+  UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import dayjs from 'dayjs';
@@ -24,6 +26,8 @@ import {
   InvoiceStatus,
   SlotStatus,
 } from 'src/common/enums/status.enum';
+import { UserRoleEnum } from 'src/common/enums/role.enum';
+import { ParkingLotService } from '../parking-lot/parking-lot.service';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityType } from 'src/common/enums/type.enum';
 import { Gate } from '../parking-lot/entities/gate.entity';
@@ -57,6 +61,9 @@ export class BookingService {
 
     @Inject(forwardRef(() => WalletService))
     private walletService: WalletService,
+
+    @Inject(forwardRef(() => ParkingLotService))
+    private readonly parkingLotService: ParkingLotService,
   ) {}
 
   // ================= CREATE BOOKING =================
@@ -325,12 +332,21 @@ export class BookingService {
   }
 
   // ================= scanQR =================
-  async scanQRCode(content: string, gateId: number, detectedPlate?: string) {
+  async scanQRCode(
+    content: string,
+    gateId: number,
+    detectedPlate: string,
+    user: any,
+  ) {
     // 1. Kiểm tra cổng
     const gate = await this.checkLogRepository.manager.findOne(Gate, {
       where: { id: gateId },
+      relations: ['parkingLot'],
     });
     if (!gate) throw new NotFoundException('Cổng không tồn tại');
+
+    // SECURITY CHECK: Kiểm tra quyền truy cập bãi xe của người quét
+    await this.parkingLotService.validateLotAccess(gate.parkingLot.id, user);
 
     // 2. Kiểm tra mã QR
     const qrCode = await this.qrcodeRepository.findOne({
@@ -491,10 +507,12 @@ export class BookingService {
 
   async getBookingByParkingLot(
     lotId: number,
+    user: any,
     search?: string,
     startDate?: string,
     endDate?: string,
   ) {
+    await this.parkingLotService.validateLotAccess(lotId, user);
     const query = this.bookingRepository
       .createQueryBuilder('booking')
       .leftJoinAndSelect('booking.user', 'user')
