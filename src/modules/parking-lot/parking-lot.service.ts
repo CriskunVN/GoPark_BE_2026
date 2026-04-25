@@ -112,7 +112,7 @@ export class ParkingLotService {
         0,
       description: createParkingLotDto.description,
       image: { thumbnail, gallery },
-      status: ParkingLotStatus.INACTIVE,
+      status: ParkingLotStatus.PENDING,
       owner: { id: createParkingLotDto.ownerId } as User,
     });
 
@@ -377,7 +377,7 @@ export class ParkingLotService {
       address: dto.address,
       lat: Number(dto.lat),
       lng: Number(dto.lng),
-      status: 'PENDING',
+      status: ParkingLotStatus.PENDING,
       owner: user,
     });
     // 4. Dựa trên thông tin về số lượng chỗ đậu xe trên mỗi tầng (được cung cấp trong dto.floorSlots), tạo các bản ghi tương ứng trong bảng ParkingSlot và liên kết chúng với bãi đậu xe mới tạo.

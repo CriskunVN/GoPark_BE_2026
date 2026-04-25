@@ -49,6 +49,6 @@ export class CreateParkingLotReqDto {
   images?: any;
 
   @IsUUID()
-  @IsNotEmpty()
+  @IsOptional()
   ownerId: string;
 }

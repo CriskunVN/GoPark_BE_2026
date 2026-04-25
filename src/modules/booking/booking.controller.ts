@@ -11,6 +11,7 @@ import {
   UploadedFile,
   UseInterceptors,
   ParseIntPipe,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { Booking } from './entities/booking.entity';
@@ -45,7 +46,7 @@ export class BookingController {
   // ================= OWNER ANALYTICS =================
   @Get('owner-analytics/:ownerId/metrics')
   getOwnerMetrics(
-    @Param('ownerId') ownerId: string,
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
     @Query('lotId') lotId?: number,
   ) {
     return this.bookingService.getOwnerMetrics(
@@ -56,7 +57,7 @@ export class BookingController {
 
   @Get('owner-analytics/:ownerId/revenue-by-month')
   getRevenueByMonth(
-    @Param('ownerId') ownerId: string,
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
     @Query('year') year?: number,
     @Query('lotId') lotId?: number,
   ) {

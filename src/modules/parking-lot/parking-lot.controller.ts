@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -64,14 +65,14 @@ export class ParkingLotController {
 
   @Get('owner/:ownerId')
   async getParkingLotsByOwner(
-    @Param('ownerId') ownerId: string,
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
   ): Promise<OwnerParkingLotResDto[]> {
     return this.parkingLotService.getParkingLotsByOwner(ownerId);
   }
 
   @Get('owner/:ownerId/totals')
   async getTotalsByOwner(
-    @Param('ownerId') ownerId: string,
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
   ): Promise<OwnerParkingLotTotalsResDto> {
     return this.parkingLotService.getTotalsByOwner(ownerId);
   }
@@ -169,11 +170,10 @@ export class ParkingLotController {
     @Req() req: any,
     @UploadedFiles() files?: Array<Express.Multer.File>,
   ) {
-    const ownerId = req.user['userId'];
     return this.parkingLotService.updateParkingLot(
       parkingLotId,
       updateParkingLotDto,
-      ownerId,
+      req.user,
       files,
     );
   }
@@ -186,10 +186,9 @@ export class ParkingLotController {
     @Body() dto: DeleteParkingLotImageDto,
     @Req() req: any,
   ) {
-    const ownerId = req.user['userId'];
     return this.parkingLotService.deleteParkingLotImage(
       parkingLotId,
-      ownerId,
+      req.user,
       dto.imageUrl,
     );
   }
