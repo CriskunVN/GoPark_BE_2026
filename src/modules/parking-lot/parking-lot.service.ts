@@ -161,13 +161,19 @@ export class ParkingLotService {
       const uploadedUrls = await Promise.all(uploadPromises);
 
       const currentImage = parkingLot.image || {};
-      const newThumbnail = uploadedUrls[0];
-      const newGallery = uploadedUrls.slice(1);
+      const currentGallery = Array.isArray(currentImage.gallery)
+        ? currentImage.gallery
+        : [];
+
+      const newThumbnail = currentImage.thumbnail || uploadedUrls[0];
+      const newGallery = currentImage.thumbnail
+        ? [...currentGallery, ...uploadedUrls]
+        : [...uploadedUrls.slice(1), ...currentGallery];
 
       parkingLot.image = {
         ...currentImage,
         thumbnail: newThumbnail,
-        gallery: newGallery.length > 0 ? newGallery : currentImage.gallery,
+        gallery: newGallery,
       };
     }
 
@@ -307,7 +313,13 @@ export class ParkingLotService {
   async getAllParkingLots() {
     return await this.parkingLotRepository.find({
       where: { status: ParkingLotStatus.ACTIVE },
-      relations: ['parkingFloor', 'parkingFloor.parkingZones'],
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.slot',
+      ],
     });
   }
 
@@ -825,6 +837,36 @@ export class ParkingLotService {
     return {
       ...lot,
       userVehicles: vehicleUser,
+      pricingRules: flatpricingRules,
+    };
+  }
+
+  async getPublicParkingLotDetail(lotid: number) {
+    const lot = await this.parkingLotRepository.findOne({
+      where: { id: lotid, status: ParkingLotStatus.ACTIVE },
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.pricingRule',
+      ],
+    });
+
+    if (!lot) throw new NotFoundException('Not found Parking Lot');
+
+    const flatpricingRules = lot.parkingFloor.flatMap((floor) =>
+      floor.parkingZones.flatMap((zone) =>
+        zone.pricingRule.map((rule) => ({
+          ...rule,
+          zone_name: zone.zone_name,
+          floor_name: floor.floor_name,
+        })),
+      ),
+    );
+
+    return {
+      ...lot,
       pricingRules: flatpricingRules,
     };
   }
@@ -1715,7 +1757,7 @@ export class ParkingLotService {
   async validateLotAccess(lotId: number, user: any): Promise<ParkingLot> {
     const roles = user.roles || [];
     const email = user.email || '';
-    const userId = user.userId || user.sub;
+    const userId = String(user.userId || user.sub || user.id || '');
 
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotId },
@@ -1726,9 +1768,16 @@ export class ParkingLotService {
       throw new NotFoundException('Không tìm thấy bãi đỗ xe');
     }
 
+    // Nếu đúng chủ bãi thì cho phép ngay cả khi token thiếu roles do dữ liệu đăng nhập không đồng nhất.
+    const lotOwnerId = String(lot.owner?.id || '');
+    const lotOwnerEmail = lot.owner?.email || '';
+    if (lotOwnerId && (lotOwnerId === userId || lotOwnerEmail === email)) {
+      return lot;
+    }
+
     // 1. Nếu là OWNER: Kiểm tra quyền sở hữu bãi xe
     if (roles.includes(UserRoleEnum.OWNER)) {
-      if (lot.owner?.id !== userId) {
+      if (lotOwnerId !== userId && lotOwnerEmail !== email) {
         throw new ForbiddenException('Bạn không sở hữu bãi đỗ xe này');
       }
       return lot;
