@@ -53,6 +53,13 @@ export class ParkingLotController {
     return this.parkingLotService.getAllParkingLots();
   }
 
+  @Get('public/:lotid')
+  async getPublicParkingLotDetail(
+    @Param('lotid', ParseIntPipe) lotid: number,
+  ) {
+    return this.parkingLotService.getPublicParkingLotDetail(lotid);
+  }
+
   // ─── Routes: owner (đặt TRƯỚC :parkingLotId để tránh route collision) ──────
 
   @Get('owner/:ownerId')
