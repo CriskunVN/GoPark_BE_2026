@@ -314,6 +314,8 @@ export class ParkingLotService {
     return await this.parkingLotRepository.find({
       where: { status: ParkingLotStatus.ACTIVE },
       relations: [
+        'owner',
+        'owner.profile',
         'parkingFloor',
         'parkingFloor.parkingZones',
         'parkingFloor.parkingZones.slot',
