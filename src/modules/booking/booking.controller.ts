@@ -43,6 +43,13 @@ export class BookingController {
     return this.bookingService.getBookingByUser(userid);
   }
 
+  @Get('active/slot/:slotId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  async getActiveBookingBySlot(@Param('slotId', ParseIntPipe) slotId: number) {
+    return this.bookingService.getActiveBookingBySlot(slotId);
+  }
+
   // ================= OWNER ANALYTICS =================
   @Get('owner-analytics/:ownerId/metrics')
   getOwnerMetrics(
