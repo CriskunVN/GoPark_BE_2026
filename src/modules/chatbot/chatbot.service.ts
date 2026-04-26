@@ -1,4 +1,3 @@
-
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
@@ -22,9 +21,21 @@ Ví dụ ngắn:
 @Injectable()
 export class ChatbotService {
   private readonly logger = new Logger(ChatbotService.name);
-  private gorqapi: string; // Groq / fallback
-  private geminiKey: string; // Gemini primary
+  private gorqapi: string;
+  private geminiKey: string;
   private sessions: Map<string, any[]> = new Map();
+
+  // ─── Status cache (10 phút) ───────────────────────────────────────────────
+  private statusCache: {
+    result: {
+      groq: { ok: boolean; info?: string };
+      gemini: { ok: boolean | null; info?: string };
+    };
+    expiresAt: number;
+  } | null = null;
+
+  private readonly CACHE_TTL_MS = 10 * 60 * 1000; // 10 phút
+  // ─────────────────────────────────────────────────────────────────────────
 
   constructor() {
     this.gorqapi = process.env.GORQ_API_KEY || '';
@@ -55,7 +66,6 @@ export class ChatbotService {
     });
 
     const groq = new Groq({ apiKey: this.gorqapi });
-
     const fullMessages = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages];
 
     const chatCompletion = await groq.chat.completions.create({
@@ -82,7 +92,6 @@ export class ChatbotService {
 
     try {
       for await (const chunk of this.streamChat(messages)) {
-        // Send as SSE data payload
         const payload = `data: ${JSON.stringify({ text: chunk })}\n\n`;
         res.write(payload);
       }
@@ -97,7 +106,6 @@ export class ChatbotService {
   }
 
   async complete(messages: any[]): Promise<string> {
-    // Try Gemini first (if key present). If it fails, fall back to Groq streaming.
     if (this.geminiKey) {
       try {
         const geminiResponse = await this.generateWithGemini(messages);
@@ -107,7 +115,6 @@ export class ChatbotService {
       }
     }
 
-    // Fallback to Groq streaming
     let result = '';
     for await (const chunk of this.streamChat(messages)) {
       result += chunk;
@@ -115,21 +122,30 @@ export class ChatbotService {
     return result;
   }
 
-  /**
-   * Lightweight health check for Groq (llama) and Gemini mini.
-   * Returns structured status for each model.
-   */
-  async checkModels(): Promise<{ groq: { ok: boolean; info?: string }; gemini: { ok: boolean | null; info?: string } }> {
-    const groqStatus = { ok: false, info: '' };
-    const geminiStatus = { ok: null as boolean | null, info: '' };
+  async checkModels(): Promise<{
+    groq: { ok: boolean; info?: string };
+    gemini: { ok: boolean | null; info?: string };
+  }> {
+    const now = Date.now();
+
+    // Trả cache nếu còn hạn
+    if (this.statusCache && now < this.statusCache.expiresAt) {
+      this.logger.debug('checkModels: returning cached result');
+      return this.statusCache.result;
+    }
+
+    const groqStatus: { ok: boolean; info: string } = { ok: false, info: '' };
+    const geminiStatus: { ok: boolean | null; info: string } = { ok: null, info: '' };
 
     // Check Groq
     try {
       const { Groq } = await import('groq-sdk');
       const groq = new Groq({ apiKey: this.gorqapi });
-      // minimal probe: ask for a short completion
       const probe = await groq.chat.completions.create({
-        messages: [{ role: 'system', content: 'Health check' }, { role: 'user', content: 'Ping' }],
+        messages: [
+          { role: 'system', content: 'Health check' },
+          { role: 'user', content: 'Ping' },
+        ],
         model: 'llama-3.3-70b-versatile',
         temperature: 0,
         max_completion_tokens: 1,
@@ -140,12 +156,11 @@ export class ChatbotService {
       groqStatus.ok = true;
       groqStatus.info = text ? 'responded' : 'no-text';
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
       groqStatus.ok = false;
-      groqStatus.info = msg;
+      groqStatus.info = e instanceof Error ? e.message : String(e);
     }
 
-    // Check Gemini (gemini-3.3-mini) only if key present
+    // Check Gemini
     if (!this.geminiKey) {
       geminiStatus.ok = null;
       geminiStatus.info = 'GEMINI_API_KEY not set';
@@ -154,22 +169,28 @@ export class ChatbotService {
         const mod = await import('@google/generative-ai');
         const GoogleGenAI = (mod as any).GoogleGenAI || (mod as any).default || mod;
         const ai = new GoogleGenAI({ apiKey: this.geminiKey });
-        const response = await ai.models.generateContent({ model: 'gemini-3.3-mini', contents: 'Ping' });
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.3-mini',
+          contents: 'Ping',
+        });
         const text = response?.text ?? response?.output?.[0]?.content ?? '';
         geminiStatus.ok = Boolean(text);
         geminiStatus.info = text ? 'responded' : 'no-text';
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
         geminiStatus.ok = false;
-        geminiStatus.info = msg;
+        geminiStatus.info = e instanceof Error ? e.message : String(e);
       }
     }
 
-    return { groq: groqStatus, gemini: geminiStatus };
+    const result = { groq: groqStatus, gemini: geminiStatus };
+
+    // Lưu cache 10 phút
+    this.statusCache = { result, expiresAt: now + this.CACHE_TTL_MS };
+
+    return result;
   }
 
   private async generateWithGemini(messages: any[]): Promise<string> {
-    // Convert messages array into a single prompt string, preserving roles
     const fullMessages = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages];
     const prompt = fullMessages
       .map((m) => (m.role ? `${m.role}: ${m.content}` : String(m.content)))
@@ -183,15 +204,17 @@ export class ChatbotService {
       const response = await ai.models.generateContent({
         model: 'gemini-3.3-mini',
         contents: prompt,
-      }).catch((e: any) => {
-        throw e;
       });
 
-      // Response shape may vary; try common fields
       const text = response?.text ?? response?.output?.[0]?.content ?? '';
       return String(text || '');
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err));
+      const errMsg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err !== null
+            ? JSON.stringify(err)
+            : String(err);
       this.logger.debug(`Gemini client not available or failed: ${errMsg}`);
       throw err;
     }

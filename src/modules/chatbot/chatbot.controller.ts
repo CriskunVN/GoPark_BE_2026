@@ -1,13 +1,21 @@
-import { Body, Controller, Get, Post, BadRequestException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  BadRequestException,
+  UseGuards,
+} from '@nestjs/common';
 import { ChatbotService } from './chatbot.service';
+import { AuthGuard } from './guards/auth.guard';
 
 @Controller('chatbot')
 export class ChatbotController {
   constructor(private readonly chatbotService: ChatbotService) {}
 
   @Get('status')
+  @UseGuards(AuthGuard) // chỉ user đã đăng nhập mới gọi được
   async status() {
-    // returns status for Groq (llama) and Gemini-mini (if configured)
     const result = await this.chatbotService.checkModels();
     return { status: 'ok', running: true, models: result };
   }
