@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import dayjs from 'dayjs';
-import { Between, Repository } from 'typeorm';
+import { Between, In, Repository } from 'typeorm';
 
 import { Booking } from './entities/booking.entity';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
@@ -501,6 +501,34 @@ export class BookingService {
         id: 'DESC',
       },
     });
+  }
+
+  // ================= GET ACTIVE BOOKING BY SLOT =================
+  async getActiveBookingBySlot(slotId: number) {
+    const booking = await this.bookingRepository.findOne({
+      where: {
+        slot: { id: slotId },
+        status: In([BookingStatus.CONFIRMED, BookingStatus.ONGOING]),
+      },
+      relations: [
+        "user",
+        "user.profile",
+        "vehicle",
+        "slot",
+        "slot.parkingZone",
+        "slot.parkingZone.parkingFloor",
+        "invoice",
+      ],
+      order: { created_at: "DESC" },
+    });
+
+    if (!booking) {
+      throw new NotFoundException(
+        "Không tìm thấy đơn đặt chỗ hoạt động tại vị trí này",
+      );
+    }
+
+    return booking;
   }
 
   // ================= BOOKING BY PARKING LOT =================

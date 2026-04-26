@@ -894,7 +894,7 @@ export class ParkingLotService {
       .innerJoin('zone.parkingFloor', 'floor')
       .where('floor.parkingLot = :lotId', { lotId: parkingLotId })
       .andWhere('b.status NOT IN (:...excludeStatuses)', {
-        excludeStatuses: ['completed', 'cancelled', 'COMPLETED', 'CANCELLED'],
+        excludeStatuses: [BookingStatus.COMPLETED, BookingStatus.CANCELLED],
       })
       .andWhere('b.start_time < :endTime', { endTime: new Date(endTime) })
       .andWhere('b.end_time > :startTime', { startTime: new Date(startTime) })
@@ -962,8 +962,7 @@ export class ParkingLotService {
       .where('b.slot_id = :slotId', { slotId }) // Dùng slot_id là tên cột trong DB
       .andWhere('b.status NOT IN (:...excludeStatuses)', {
         excludeStatuses: [
-          'CANCELLED',
-          'cancelled',
+          BookingStatus.CANCELLED,
           BookingStatus.COMPLETED, // Thường owner chỉ quan tâm các lịch sắp tới hoặc đang diễn ra
         ],
       })
