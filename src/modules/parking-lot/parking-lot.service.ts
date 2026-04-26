@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Not, EntityManager, ILike } from 'typeorm';
+import { Repository, DataSource, Not, EntityManager, ILike, Between, In } from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -39,7 +39,9 @@ import { Review } from '../users/entities/review.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
 import { ManualBookingDto } from './dto/manual-booking.dto';
 import { SupabaseService } from '../../common/supabase/supabase.service';
+import { EmailService } from '../auth/email/email.service';
 import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -51,6 +53,7 @@ export interface OcrSpaceResponse {
 
 @Injectable()
 export class ParkingLotService {
+  private sentReminderIds = new Set<string>()
   constructor(
     @InjectRepository(ParkingLot)
     private parkingLotRepository: Repository<ParkingLot>,
@@ -77,8 +80,10 @@ export class ParkingLotService {
 
     private usersService: UsersService,
     private dataSource: DataSource,
+    private mailService: EmailService,
     private readonly supabaseService: SupabaseService,
-  ) {}
+    
+  ) { }
 
 
 
@@ -841,15 +846,16 @@ export class ParkingLotService {
     };
   }
 
-  async getPublicParkingLotDetail(lotid: number) {
+  async getPublicParkingLotDetail(lotid: number,userId:string) {
     const lot = await this.parkingLotRepository.findOne({
-      where: { id: lotid, status: ParkingLotStatus.ACTIVE },
+      where: { id: lotid }, // Bỏ status ACTIVE để sơ đồ hiển thị ngay cả khi đang PENDING
       relations: [
         'owner',
         'owner.profile',
         'parkingFloor',
         'parkingFloor.parkingZones',
         'parkingFloor.parkingZones.pricingRule',
+        'parkingFloor.parkingZones.slot'
       ],
     });
 
@@ -865,8 +871,18 @@ export class ParkingLotService {
       ),
     );
 
+    let userVehicles: Vehicle[] = [];
+    if (userId) {
+      // Giả sử bạn đã inject VehicleRepository vào service này
+      userVehicles = await this.vehicleRepository.find({
+        where: { user: { id: userId } },
+        relations: ['user']
+      });
+    }
+
     return {
       ...lot,
+      userVehicles,
       pricingRules: flatpricingRules,
     };
   }
@@ -1245,8 +1261,8 @@ export class ParkingLotService {
     if (availableSlots.length < toDisable) {
       throw new BadRequestException(
         `Không thể giảm xuống ${targetCount} slot: ` +
-          `có ${currentActiveCount - availableSlots.length} slot đang OCCUPIED/RESERVED, ` +
-          `chỉ có thể vô hiệu hoá tối đa ${currentActiveCount - (currentActiveCount - availableSlots.length)} slot.`,
+        `có ${currentActiveCount - availableSlots.length} slot đang OCCUPIED/RESERVED, ` +
+        `chỉ có thể vô hiệu hoá tối đa ${currentActiveCount - (currentActiveCount - availableSlots.length)} slot.`,
       );
     }
 
@@ -1445,7 +1461,7 @@ export class ParkingLotService {
         'pl.id AS id',
         'pl.name AS name',
         'pl.address AS address',
-        'pl.image AS image',
+        'pl.image AS image'
       ])
       // parking-lot.service.ts
       .addSelect('ROUND(COALESCE(AVG(r.rating), 0), 1)', 'avgRating')
@@ -1461,6 +1477,7 @@ export class ParkingLotService {
         lng: Number(lng),
         lat: Number(lat),
         parkingLotId,
+        status: 'ACTIVE'
       })
       .where('pl.id != :parkingLotId AND pl.status = :status', {
         parkingLotId,
@@ -1749,6 +1766,69 @@ export class ParkingLotService {
       });
     });
     return map;
+  }
+
+  // =========== Tự động gửi thông báo nhắc nhở trước 10p khi hết hạn ============
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleBookingExpirationReminders() {
+    const now = new Date();
+    const reminderTimeStart = new Date(now.getTime() + 9 * 60000);
+    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000); 
+
+    const bookings = await this.bookingRepository.find({
+      where: {
+        status: In([BookingStatus.CONFIRMED, BookingStatus.ONGOING]),
+        end_time: Between(reminderTimeStart, reminderTimeEnd),
+      },
+      relations: [
+        'user',
+        'user.profile',
+        'slot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'slot.parkingZone.parkingFloor.parkingLot',
+        'vehicle'
+      ]
+    });
+
+    for (const booking of bookings) {
+      const bId = (booking as any).id;
+
+      // KIỂM TRA: Nếu đã gửi rồi thì bỏ qua
+      if (this.sentReminderIds.has(bId)) {
+        continue;
+      }
+
+      try {
+        const userEmail = booking.user.email;
+        const userName = booking.user.profile?.name || 'Khách hàng';
+        const plateNumber = booking.vehicle?.plate_number || 'không rõ biển số';
+        const lotName = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'Bãi đỗ xe';
+        
+        const endTimeStr = new Date(booking.end_time).toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        // GỌI HÀM RIÊNG TỪ EMAIL SERVICE
+        await this.mailService.sendExpirationReminderEmail(
+          userEmail,
+          userName,
+          {
+            lotName,
+            plateNumber,
+            endTimeStr
+          }
+        );
+
+        // Đánh dấu đã gửi thành công
+        this.sentReminderIds.add(bId);
+        console.log(`[Success] Đã gửi mail nhắc nhở cho ${userEmail}`);
+        
+      } catch (error) {
+        console.error(`[Reminder] Lỗi khi gửi mail cho đơn ${bId}:`, error);
+      }
+    }
   }
 
   /**

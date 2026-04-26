@@ -10,6 +10,7 @@ import {
   getResetPasswordEmailTextTemplate,
 } from './template/resetPassword-email.template';
 import { getBookingQREmailTemplate } from './template/bookingQR-email.template';
+import { expirationReminderTemplate } from './template/expiration-reminder.template';
 import * as QRCode from 'qrcode';
 
 @Injectable()
@@ -104,5 +105,32 @@ export class EmailService {
 
     // Ở frontend gửi qua, nếu thích bảo mật bạn có thể dùng API đệm, nhưng mã QR định danh thường có thể truyền trực tiếp
     await this.sendEmail(to, '[GoPark] Vé QR của bạn', html);
+  }
+
+  //sendExpirationReminderEmail
+  async sendExpirationReminderEmail(
+    to: string, 
+    userName: string, 
+    reminderData: {
+      lotName: string,
+      plateNumber: string,
+      endTimeStr: string
+    }
+  ) {
+    const html = expirationReminderTemplate({
+      userName,
+      lotName: reminderData.lotName,
+      plateNumber: reminderData.plateNumber,
+      endTimeStr: reminderData.endTimeStr,
+    });
+
+    const text = `Chào ${userName}, lượt đỗ xe ${reminderData.plateNumber} tại ${reminderData.lotName} sẽ hết hạn vào lúc ${reminderData.endTimeStr}.`;
+
+    await this.sendEmail(
+      to, 
+      `[GoPark] Nhắc nhở: Sắp hết hạn đỗ xe - ${reminderData.plateNumber}`, 
+      html, 
+      text
+    );
   }
 }

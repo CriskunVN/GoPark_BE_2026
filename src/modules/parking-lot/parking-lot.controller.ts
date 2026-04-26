@@ -54,11 +54,14 @@ export class ParkingLotController {
     return this.parkingLotService.getAllParkingLots();
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('public/:lotid')
   async getPublicParkingLotDetail(
     @Param('lotid', ParseIntPipe) lotid: number,
+    @Req() req: any
   ) {
-    return this.parkingLotService.getPublicParkingLotDetail(lotid);
+    const userId = req.user?.userId;
+    return this.parkingLotService.getPublicParkingLotDetail(lotid,userId);
   }
 
   // ─── Routes: owner (đặt TRƯỚC :parkingLotId để tránh route collision) ──────
@@ -375,4 +378,5 @@ export class ParkingLotController {
   async getComment(@Param('lotid') lotid: number) {
     return await this.parkingLotService.getCommentUser(lotid);
   }
+
 }

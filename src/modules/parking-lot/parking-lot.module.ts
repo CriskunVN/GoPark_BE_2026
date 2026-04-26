@@ -13,6 +13,7 @@ import { UsersModule } from '../users/users.module';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { Gate } from './entities/gate.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PricingRule } from '../payment/entities/pricingrule.entity';
     ]),
     RequestModule,
     UsersModule,
+    AuthModule,
   ],
   controllers: [ParkingLotController],
   providers: [ParkingLotService],
