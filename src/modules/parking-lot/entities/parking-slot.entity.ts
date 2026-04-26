@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { ParkingZone } from './parking-zone.entity';
 import { SlotStatus } from 'src/common/enums/status.enum';
+import { Booking } from 'src/modules/booking/entities/booking.entity';
 
 @Entity('parking_slots')
 export class ParkingSlot {
@@ -30,4 +31,5 @@ export class ParkingSlot {
   })
   @JoinColumn({ name: 'parking_zone_id' })
   parkingZone: ParkingZone;
+
 }
