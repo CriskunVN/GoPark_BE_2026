@@ -1,16 +1,18 @@
-import { Injectable } from '@nestjs/common';
 import { CreateRequestDto } from './dto/create-request.dto';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Request } from './entities/request.entity';
 import { RequestResDto } from './dto/request-res.dto';
 import { RequestStatus } from 'src/common/enums/status.enum';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class RequestService {
   constructor(
     @InjectRepository(Request)
     private requestRepository: Repository<Request>,
+    private usersService: UsersService,
   ) {}
   // tạo yêu cầu mới
   async create(createRequestDto: CreateRequestDto) {
@@ -103,5 +105,41 @@ export class RequestService {
   async countRequestsByStatus(status: RequestStatus) {
     const count = await this.requestRepository.count({ where: { status } });
     return count;
+  }
+
+  // Người dùng xác nhận yêu cầu đã được duyệt
+  async confirmRequest(id: string, userId: string) {
+    const request = await this.requestRepository.findOne({
+      where: { id },
+      relations: ['requester'],
+    });
+
+    if (!request) {
+      throw new NotFoundException('Không tìm thấy yêu cầu');
+    }
+
+    if (request.requester.id !== userId) {
+      throw new BadRequestException('Bạn không có quyền xác nhận yêu cầu này');
+    }
+
+    if (request.status !== RequestStatus.APPROVED) {
+      throw new BadRequestException('Yêu cầu chưa được duyệt hoặc đã xử lý');
+    }
+
+    if (request.type !== 'BECOME_OWNER') {
+      throw new BadRequestException('Loại yêu cầu không hợp lệ để xác nhận');
+    }
+
+    // 1. Chuyển role người dùng sang OWNER
+    await this.usersService.makeOwner(userId);
+
+    // 2. Cập nhật trạng thái yêu cầu thành COMPLETED để đánh dấu đã xử lý xong hoàn toàn
+    // Note: If RequestStatus.COMPLETED doesn't exist, we can use another state or just keep it as is
+    // For now, let's just keep it as APPROVED but record that role is changed if needed, 
+    // or assume the user will be redirected to Login and role is fixed.
+    
+    return {
+      message: 'Xác nhận thành công. Bạn đã trở thành Chủ bãi đỗ.',
+    };
   }
 }

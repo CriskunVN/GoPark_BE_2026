@@ -1,23 +1,19 @@
 export class ResNotificationDto {
   id: string;
-  userId: string;
   title: string;
-  message: string;
+  content: string;
   type: string;
   isRead: boolean;
   createdAt: Date;
-  updatedAt: Date;
 
-  static mapFromEntity(entity: any): ResNotificationDto {
+  static mapFromEntity(notification: any, recipient: any): ResNotificationDto {
     const dto = new ResNotificationDto();
-    dto.id = entity.id;
-    dto.userId = entity.userId;
-    dto.title = entity.title;
-    dto.message = entity.message;
-    dto.type = entity.type;
-    dto.isRead = entity.isRead;
-    dto.createdAt = entity.createdAt;
-    dto.updatedAt = entity.updatedAt;
+    dto.id = notification.id;
+    dto.title = notification.title;
+    dto.content = notification.content;
+    dto.type = notification.type;
+    dto.isRead = recipient.is_read;
+    dto.createdAt = recipient.createdAt || notification.createdAt;
     return dto;
   }
 }

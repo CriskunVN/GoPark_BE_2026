@@ -8,6 +8,7 @@ import { Request } from '../request/entities/request.entity';
 import { ParkingModule } from '../parking-lot/parking-lot.module';
 import { BookingModule } from '../booking/booking.module';
 import { ActivityModule } from '../activity/activity.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ActivityModule } from '../activity/activity.module';
     ParkingModule,
     BookingModule,
     ActivityModule,
+    NotificationModule,
     TypeOrmModule.forFeature([Request]),
   ],
   controllers: [AdminController],

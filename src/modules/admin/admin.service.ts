@@ -14,8 +14,10 @@ import { RequestType, Request } from '../request/entities/request.entity';
 import { ParkingLotService } from '../parking-lot/parking-lot.service';
 import { BookingService } from '../booking/booking.service';
 import { ActivityService } from '../activity/activity.service';
-import { UserRoleEnum } from 'src/common/enums/role.enum';
+import { TargetRole, UserRoleEnum } from 'src/common/enums/role.enum';
 import { User } from '../users/entities/user.entity';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from 'src/common/enums/type.enum';
 
 @Injectable()
 export class AdminService {
@@ -25,6 +27,7 @@ export class AdminService {
     private readonly parkingLotService: ParkingLotService,
     private readonly bookingService: BookingService,
     private readonly activityService: ActivityService,
+    private readonly notificationService: NotificationService,
     @InjectRepository(Request) private requestRepository: Repository<Request>,
   ) {}
 
@@ -153,6 +156,31 @@ export class AdminService {
         },
       ],
     });
+
+    // Gửi thông báo cho User
+    let notificationTitle = 'Yêu cầu đã được phê duyệt';
+    let notificationContent = 'Yêu cầu của bạn đã được quản trị viên chấp nhận.';
+
+    if (request.type === RequestType.BECOME_OWNER) {
+      notificationTitle = 'Chúc mừng! Bạn đã trở thành Chủ bãi đỗ';
+      notificationContent = 'Yêu cầu trở thành chủ bãi đỗ đã được duyệt thành công. Hãy đăng nhập với tài khoản và mật khẩu của tài khoản user này để hoàn thành.';
+    } else if (request.type === RequestType.NEW_PARKING_LOT) {
+      notificationTitle = 'Bãi đỗ xe đã được xác thực';
+      notificationContent = `Bãi đỗ xe "${request.payload.parkingLotName}" của bạn đã được phê duyệt và đưa vào hoạt động.`;
+    }
+
+    // Gửi thông báo cho User (Không await để tránh treo UI nếu hàng đợi chậm)
+    this.notificationService.sendNotificationToUsers(
+      {
+        title: notificationTitle,
+        content: notificationContent,
+        type: NotificationType.SYSTEM,
+        target_role: TargetRole.NULL,
+      },
+      [request.requester.id],
+    ).catch(err => {
+      console.error('[AdminService] Lỗi khi gửi thông báo phê duyệt:', err);
+    });
   }
 
   // ================== Admin từ chối yêu cầu ==================
@@ -181,6 +209,20 @@ export class AdminService {
         },
       ],
     });
+
+    // Gửi thông báo từ chối
+    // Gửi thông báo từ chối (Không await)
+    this.notificationService.sendNotificationToUsers(
+      {
+        title: 'Yêu cầu bị từ chối',
+        content: `Yêu cầu của bạn đã bị từ chối. Lý do: ${reason || 'Liên hệ admin để biết thêm chi tiết.'}`,
+        type: NotificationType.ALERT,
+        target_role: TargetRole.NULL,
+      },
+      [request.requester.id],
+    ).catch(err => {
+      console.error('[AdminService] Lỗi khi gửi thông báo từ chối:', err);
+    });
   }
 
   // =========== admin xử lý chấp nhận yêu cầu tạo mới bãi đỗ xe =================
@@ -206,8 +248,8 @@ export class AdminService {
 
     await this.requestRepository.manager.transaction(
       async (transactionalEntityManager) => {
-        // Cập nhật role của user thành OWNER
-        await this.userService.makeOwner(requesterId);
+        // KHÔNG cập nhật role ở đây nữa. Role sẽ được cập nhật khi User bấm "Xác nhận" ở phía FE.
+        // await this.userService.makeOwner(requesterId);
 
         // TODO: Gửi email thông báo
         // await this.emailService.sendApprovalEmail(request.requester.email);

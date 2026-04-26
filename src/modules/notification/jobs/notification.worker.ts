@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { Notification } from '../entities/notification.entity';
 import { NotificationRecipient } from '../entities/notification_recipient.entity';
 import { User } from '../../users/entities/user.entity';
+import { NotificationGateway } from '../notification.gateway';
 import type { Job } from 'bull';
 
 @Processor('notifications')
@@ -26,6 +27,8 @@ export class NotificationWorker {
 
     @InjectRepository(User)
     private userRepository: Repository<User>,
+
+    private notificationGateway: NotificationGateway,
   ) {}
 
   @Process()
@@ -118,6 +121,18 @@ export class NotificationWorker {
       await this.notificationRecipientRepository.save(recipients);
       createdCount += recipients.length;
 
+      // Gửi realtime thông báo cho từng user
+      batch.forEach(userId => {
+        this.notificationGateway.sendNotificationToUser(userId, {
+          id: notification.id,
+          title: notification.title,
+          content: notification.content,
+          type: notification.type,
+          createdAt: new Date().toISOString(),
+          isRead: false
+        });
+      });
+
       // Report progress
       await job.progress((createdCount / validUserIds.length) * 100);
     }
@@ -181,6 +196,18 @@ export class NotificationWorker {
       await this.notificationRecipientRepository.save(recipients);
       createdCount += recipients.length;
 
+      // Gửi realtime thông báo
+      batch.forEach(user => {
+        this.notificationGateway.sendNotificationToUser(user.id, {
+          id: notification.id,
+          title: notification.title,
+          content: notification.content,
+          type: notification.type,
+          createdAt: new Date().toISOString(),
+          isRead: false
+        });
+      });
+
       await job.progress((createdCount / users.length) * 100);
     }
 
@@ -240,6 +267,18 @@ export class NotificationWorker {
 
       await this.notificationRecipientRepository.save(recipients);
       createdCount += recipients.length;
+
+      // Gửi realtime thông báo
+      users.forEach(user => {
+        this.notificationGateway.sendNotificationToUser(user.id, {
+          id: notification.id,
+          title: notification.title,
+          content: notification.content,
+          type: notification.type,
+          createdAt: new Date().toISOString(),
+          isRead: false
+        });
+      });
 
       await job.progress((createdCount / totalUsers) * 100);
     }
