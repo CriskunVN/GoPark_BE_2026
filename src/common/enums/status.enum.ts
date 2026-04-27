@@ -23,6 +23,7 @@ export enum ParkingLotStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
   MAINTENANCE = 'MAINTENANCE',
+   PENDING = 'PENDING',
 }
 
 export enum RequestStatus {

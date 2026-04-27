@@ -6,6 +6,7 @@ export enum NotificationType {
 }
 
 export enum ActivityType {
+    BOOKING_EXTENDED = 'BOOKING_EXTENDED', 
   BOOKING_CANCELED = 'BOOKING_CANCELED',
   BOOKING_NEW = 'BOOKING_NEW',
   PAYMENT_SUCCESS = 'PAYMENT_SUCCESS',
