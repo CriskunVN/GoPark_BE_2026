@@ -37,10 +37,27 @@ export class BookingController {
     return this.bookingService.getAllBooking();
   }
 
+
   @Get('user/:id')
   findByUser(@Param('id') userid: string) {
-    console.log('User ID:', userid);
+    //console.log('User ID:', userid);
     return this.bookingService.getBookingByUser(userid);
+  }
+
+  
+  @UseGuards(JwtAuthGuard)
+  @Get('active-by-vehicle/:vehicleId')
+  async getActiveBooking(
+    @Param('vehicleId') vehicleId: number, 
+    @Req() req: any
+  ) {
+    // Property name from JwtStrategy is userId
+    const userId = req.user.userId; 
+    
+    //console.log(">>> [BE] Đã nhận diện User ID:", userId); 
+    //console.log("Vehicle ID:", vehicleId);
+    
+    return this.bookingService.getLatestActiveBooking(Number(vehicleId), userId);
   }
 
   @Get('active/slot/:slotId')
