@@ -19,9 +19,17 @@ export enum ChatbotIntent {
 }
 
 // ─── Intents nào cần fetch DB data trước khi gọi AI ──────────────────────
+// ✅ FIND_NEARBY và FIND_BEST KHÔNG yêu cầu đăng nhập
+// Chúng sẽ fetch tất cả bãi đỗ công khai, không cần userId
 export const DATA_REQUIRED_INTENTS = new Set<ChatbotIntent>([
-  ChatbotIntent.FIND_NEARBY,
-  ChatbotIntent.FIND_BEST,
+  ChatbotIntent.CHECK_BOOKING,   // ← Cần userId
+  ChatbotIntent.CANCEL_BOOKING,  // ← Cần userId
+  ChatbotIntent.CHECK_INVOICE,   // ← Cần userId
+  ChatbotIntent.CHECK_WALLET,    // ← Cần userId
+]);
+
+// ─── Intents yêu cầu đăng nhập (cần userId) ──────────────────────────────
+export const LOGIN_REQUIRED_INTENTS = new Set<ChatbotIntent>([
   ChatbotIntent.CHECK_BOOKING,
   ChatbotIntent.CANCEL_BOOKING,
   ChatbotIntent.CHECK_INVOICE,
@@ -119,6 +127,11 @@ export function requiresData(intent: ChatbotIntent): boolean {
   return DATA_REQUIRED_INTENTS.has(intent);
 }
 
+// ─── Helper: intent này có cần đăng nhập không? ───────────────────────────
+export function requiresLogin(intent: ChatbotIntent): boolean {
+  return LOGIN_REQUIRED_INTENTS.has(intent);
+}
+
 // ─── Extract tên bãi từ câu đặt ──────────────────────────────────────────
 export function extractParkingName(message: string): string | null {
   const patterns = [
@@ -134,36 +147,42 @@ export function extractParkingName(message: string): string | null {
 
 // ─── Intent → DB table/action mapping ────────────────────────────────────
 export const INTENT_DB_CONFIG: Partial<
-  Record<ChatbotIntent, { table: string; orderBy?: string; limit: number }>
+  Record<ChatbotIntent, { table: string; orderBy?: string; limit: number; requiresUserId?: boolean }>
 > = {
   [ChatbotIntent.FIND_NEARBY]: {
     table: 'parking_lots',
     orderBy: 'created_at',
-    limit: 3,
+    limit: 5,
+    requiresUserId: false, // ✅ Không cần userId, tìm tất cả bãi công khai
   },
   [ChatbotIntent.FIND_BEST]: {
     table: 'parking_lots',
     orderBy: 'rating',
-    limit: 3,
+    limit: 5,
+    requiresUserId: false, // ✅ Không cần userId, tìm bãi có rating cao
   },
   [ChatbotIntent.CHECK_BOOKING]: {
     table: 'bookings',
     orderBy: 'created_at',
     limit: 3,
+    requiresUserId: true, // ❌ Cần userId
   },
   [ChatbotIntent.CANCEL_BOOKING]: {
     table: 'bookings',
     orderBy: 'created_at',
     limit: 3,
+    requiresUserId: true, // ❌ Cần userId
   },
   [ChatbotIntent.CHECK_INVOICE]: {
     table: 'invoices',
     orderBy: 'created_at',
     limit: 3,
+    requiresUserId: true, // ❌ Cần userId
   },
   [ChatbotIntent.CHECK_WALLET]: {
     table: 'wallets',
     orderBy: 'updated_at',
     limit: 1,
+    requiresUserId: true, // ❌ Cần userId
   },
 };
