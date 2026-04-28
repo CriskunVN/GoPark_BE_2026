@@ -64,7 +64,7 @@ export class BookingService {
 
     @Inject(forwardRef(() => ParkingLotService))
     private readonly parkingLotService: ParkingLotService,
-  ) {}
+  ) { }
 
   // ================= CREATE BOOKING =================
   async createBooking(bookingdto: CreateBookingDto) {
@@ -218,9 +218,11 @@ export class BookingService {
 
       // 2. Lấy đơn giá thực tế theo Zone (Khu vực) từ Database
       const pricing = await manager.findOne(PricingRule, {
-        where: { parkingZone: { id: booking.slot.parkingZone.id } },
+        where: { parkingZone: { id: Number(booking.slot.parkingZone.id) } },
         order: { id: 'DESC' },
       });
+      console.log("DEBUG: Tìm giá cho Zone ID =", booking.slot.parkingZone.id);
+      console.log("DEBUG: Kết quả Pricing =", pricing);
 
       const pricePerHour = pricing?.price_per_hour || 0;
       const priceDay = pricing?.price_per_day || 0;
@@ -530,6 +532,33 @@ export class BookingService {
 
     return booking;
   }
+
+
+  // danh sách các xe đặt(Ve-QR)
+  async getLatestActiveBooking(vehicleId: number, userId: string) {
+    const data = await this.bookingRepository.findOne({
+      where: [
+        {
+          vehicle: { id: vehicleId },
+          user: { id: userId },
+        }
+      ],
+      relations: [
+        'slot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'qrCode',
+      ],
+      // Quan trọng: Sắp xếp theo ID hoặc thời gian tạo giảm dần để lấy cái mới nhất
+      order: {
+        created_at: 'DESC'
+      }
+    });
+    console.log(">>> [BE] Kết quả tìm kiếm:", data);
+    return data;
+  }
+
+
 
   // ================= BOOKING BY PARKING LOT =================
 
