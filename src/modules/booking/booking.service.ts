@@ -13,6 +13,7 @@ import { Between, In, Repository } from 'typeorm';
 
 import { Booking } from './entities/booking.entity';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
+import { ParkingLot } from '../parking-lot/entities/parking-lot.entity';
 import { QRCode } from './entities/qr-code.entity';
 import { CheckLog } from './entities/check-log.entity';
 
@@ -822,8 +823,9 @@ export class BookingService {
         start: firstDayOfThisMonth,
         end: firstDayOfNextMonth,
       })
-      .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
-      .select('SUM(i.total)', 'total')
+      // Tạm thời bỏ qua status PAID để hiển thị dữ liệu nếu DB chưa có payment thực tế
+      // .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+      .select('SUM(COALESCE(i.total, 0))', 'total')
       .getRawOne();
 
     // Last month revenue
@@ -841,8 +843,11 @@ export class BookingService {
         start: firstDayOfLastMonth,
         end: firstDayOfThisMonth,
       })
-      .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
-      .select('SUM(i.total)', 'total')
+      // Thống kê doanh thu dự kiến từ các đơn hợp lệ
+      .andWhere('b.status IN (:...statuses)', { 
+        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      })
+      .select('SUM(COALESCE(i.total, 0))', 'total')
       .getRawOne();
 
     const monthlyRevenue = parseFloat(thisMonthData?.total || '0') || 0;
@@ -872,11 +877,34 @@ export class BookingService {
       })
       .getCount();
 
+    // Occupancy Rate calculation
+    const lotsQuery = this.bookingRepository.manager
+      .createQueryBuilder(ParkingLot, 'l')
+      .innerJoin('l.owner', 'owner')
+      .leftJoin('l.parkingFloor', 'f')
+      .leftJoin('f.parkingZones', 'z')
+      .leftJoin('z.slot', 's')
+      .where('owner.id = :ownerId', { ownerId });
+
+    if (lotId) {
+      lotsQuery.andWhere('l.id = :lotId', { lotId });
+    }
+
+    const slotsData = await lotsQuery
+      .select('COUNT(s.id)', 'total')
+      .addSelect('SUM(CASE WHEN s.status = \'OCCUPIED\' THEN 1 ELSE 0 END)', 'occupied')
+      .getRawOne();
+
+    const totalSlots = parseInt(slotsData.total, 10) || 0;
+    const occupiedSlots = parseInt(slotsData.occupied, 10) || 0;
+    const occupancyRate = totalSlots > 0 ? (occupiedSlots / totalSlots) * 100 : 0;
+
     return {
       monthlyRevenue,
       lastMonthRevenue,
       growthPercent: parseFloat(growthPercent.toFixed(2)),
       totalBookings,
+      occupancyRate: parseFloat(occupancyRate.toFixed(1)),
     };
   }
 
@@ -892,9 +920,13 @@ export class BookingService {
       .where('owner.id = :ownerId', { ownerId })
       .andWhere(lotId ? 'l.id = :lotId' : '1=1', { lotId })
       .andWhere('EXTRACT(YEAR FROM b.start_time) = :year', { year })
-      .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+      // Tạm thời bỏ qua status PAID để thấy dữ liệu dự kiến
+      // .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+      .andWhere('b.status IN (:...statuses)', { 
+        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      })
       .select('EXTRACT(MONTH FROM b.start_time)', 'month')
-      .addSelect('SUM(i.total)', 'revenue')
+      .addSelect('SUM(COALESCE(i.total, 0))', 'revenue')
       .addSelect('COUNT(b.id)', 'bookingcount')
       .groupBy('EXTRACT(MONTH FROM b.start_time)')
       .getRawMany();
@@ -915,6 +947,181 @@ export class BookingService {
     });
 
     return monthlyStats;
+  }
+
+  async getPaymentMethodStats(
+    ownerId: string, 
+    lotId?: number,
+    startDate?: string,
+    endDate?: string,
+  ) {
+    try {
+      // Nếu không có ngày, mặc định lấy tháng hiện tại
+      let start = startDate ? new Date(startDate) : dayjs().startOf('month').toDate();
+      let end = endDate ? new Date(endDate) : dayjs().endOf('month').toDate();
+
+      const query = this.bookingRepository
+        .createQueryBuilder('b')
+        .innerJoin('b.invoice', 'i')
+        .leftJoin('i.payment', 'p') // Dùng leftJoin để không bỏ sót các hóa đơn chưa có bản ghi payment (như thanh toán Ví)
+        .innerJoin('b.slot', 's')
+        .innerJoin('s.parkingZone', 'z')
+        .innerJoin('z.parkingFloor', 'f')
+        .innerJoin('f.parkingLot', 'l')
+        .innerJoin('l.owner', 'owner')
+        .where('owner.id = :ownerId', { ownerId })
+        .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
+        .andWhere('i.createdAt BETWEEN :start AND :end', { start, end });
+
+      if (lotId) {
+        query.andWhere('l.id = :lotId', { lotId });
+      }
+
+      const rawData = await query
+        .select('COALESCE(p.method, \'WALLET\')', 'method') // Mặc định là WALLET nếu không có bản ghi payment
+        .addSelect('COUNT(DISTINCT i.id)', 'count')
+        .addSelect('SUM(i.total)', 'total')
+        .groupBy('COALESCE(p.method, \'WALLET\')')
+        .getRawMany();
+
+      return rawData.map((row) => ({
+        name: row.method,
+        value: parseFloat(row.total) || 0,
+        count: parseInt(row.count, 10) || 0,
+      }));
+    } catch (error) {
+      console.error('Error fetching payment method stats:', error.message);
+      return [];
+    }
+  }
+
+  async getHourlyTraffic(ownerId: string, lotId?: number, dateStr?: string) {
+    const queryDate = dateStr ? new Date(dateStr) : new Date();
+    const startOfDay = dayjs(queryDate).startOf('day').toDate();
+    const endOfDay = dayjs(queryDate).endOf('day').toDate();
+    
+    const query = this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoin('b.invoice', 'i')
+      .innerJoin('b.slot', 's')
+      .innerJoin('s.parkingZone', 'z')
+      .innerJoin('z.parkingFloor', 'f')
+      .innerJoin('f.parkingLot', 'l')
+      .innerJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere('b.start_time >= :start AND b.start_time <= :end', { 
+        start: startOfDay, 
+        end: endOfDay 
+      })
+      // Thống kê cả những đơn đang hoạt động
+      .andWhere('b.status IN (:...statuses)', { 
+        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      });
+
+    if (lotId) {
+      query.andWhere('l.id = :lotId', { lotId });
+    }
+
+    const rawData = await query
+      .select('EXTRACT(HOUR FROM b.start_time)', 'hour')
+      .addSelect('COUNT(b.id)', 'count')
+      .groupBy('EXTRACT(HOUR FROM b.start_time)')
+      .getRawMany();
+
+    const hourlyStats = Array.from({ length: 24 }, (_, i) => ({
+      time: `${String(i).padStart(2, '0')}:00`,
+      vehicles: 0,
+    }));
+
+    rawData.forEach((row) => {
+      const hour = Math.floor(parseFloat(row.hour));
+      if (hour >= 0 && hour < 24) {
+        hourlyStats[hour].vehicles = parseInt(row.count, 10) || 0;
+      }
+    });
+
+    return hourlyStats;
+  }
+
+  async getTopParkingLots(ownerId: string) {
+    const rawData = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoin('b.invoice', 'i')
+      .innerJoin('b.slot', 's')
+      .innerJoin('s.parkingZone', 'z')
+      .innerJoin('z.parkingFloor', 'f')
+      .innerJoin('f.parkingLot', 'l')
+      .innerJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      // Thống kê top bãi xe dựa trên tất cả đơn đặt
+      .andWhere('b.status IN (:...statuses)', { 
+        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      })
+      .select('l.id', 'lotId')
+      .addSelect('l.name', 'name')
+      .addSelect('SUM(COALESCE(i.total, 0))', 'revenue')
+      .addSelect('COUNT(DISTINCT b.id)', 'bookings')
+      // Thêm subquery để tính tỉ lệ lấp đầy thực tế cho từng bãi
+      .addSelect(
+        `(SELECT (COUNT(s2.id) FILTER (WHERE s2.status = 'OCCUPIED'))::float / NULLIF(COUNT(s2.id), 0) * 100 
+          FROM parking_slots s2 
+          JOIN parking_zones z2 ON z2.id = s2.parking_zone_id 
+          JOIN parking_floors f2 ON f2.id = z2.parking_floor_id 
+          WHERE f2.parking_lot_id = l.id)`, 
+        'occupancy_rate'
+      )
+      .groupBy('l.id')
+      .addGroupBy('l.name')
+      .orderBy('SUM(COALESCE(i.total, 0))', 'DESC')
+      .limit(5)
+      .getRawMany();
+
+    return rawData.map((row) => ({
+      id: row.lotId,
+      name: row.name,
+      totalRevenue: parseFloat(row.revenue) || 0,
+      bookings: parseInt(row.bookings, 10) || 0,
+      occupancyRate: parseFloat(row.occupancy_rate) || 0,
+    }));
+  }
+
+  async getRecentTransactions(ownerId: string, lotId?: number, limit = 5) {
+    const query = this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoinAndSelect('b.user', 'u')
+      .leftJoinAndSelect('u.profile', 'p')
+      .leftJoinAndSelect('b.invoice', 'i')
+      .leftJoinAndSelect('i.payment', 'pay') // Join payment to get method
+      .leftJoinAndSelect('b.slot', 's')
+      .leftJoin('s.parkingZone', 'z')
+      .leftJoin('z.parkingFloor', 'f')
+      .leftJoin('f.parkingLot', 'l')
+      .leftJoin('l.owner', 'owner')
+      .where('owner.id = :ownerId', { ownerId })
+      .andWhere('i.status = :status', { status: InvoiceStatus.PAID });
+
+    if (lotId) {
+      query.andWhere('l.id = :lotId', { lotId });
+    }
+
+    query.orderBy('i.createdAt', 'DESC').limit(limit);
+
+    const bookings = await query.getMany();
+
+    return bookings.map((b) => {
+      const mainInvoice = b.invoice?.[0];
+      const mainPayment = mainInvoice?.payment?.[0];
+
+      return {
+        id: b.id,
+        customerName: b.user?.profile?.name || b.user?.email || 'Guest',
+        amount: mainInvoice?.total || 0,
+        date: mainInvoice?.createdAt || b.start_time,
+        status: mainInvoice?.status,
+        method: mainPayment?.method || 'WALLET', // Return the actual method
+        slotCode: b.slot?.code,
+      };
+    });
   }
 
   // =========== Đếm sô lượng booking của 1 user ================
