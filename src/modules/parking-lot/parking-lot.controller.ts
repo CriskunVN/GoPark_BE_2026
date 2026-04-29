@@ -66,6 +66,25 @@ export class ParkingLotController {
 
   // ─── Routes: owner (đặt TRƯỚC :parkingLotId để tránh route collision) ──────
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner/me/lots')
+  async getMyParkingLots(
+    @Req() req: any,
+  ): Promise<OwnerParkingLotResDto[]> {
+    const ownerId = req.user.userId;
+    return this.parkingLotService.getParkingLotsByOwner(ownerId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner/me/totals')
+  async getMyTotals(
+    @Req() req: any,
+  ): Promise<OwnerParkingLotTotalsResDto> {
+    const ownerId = req.user.userId;
+    return this.parkingLotService.getTotalsByOwner(ownerId);
+  }
   @Get('owner/:ownerId')
   async getParkingLotsByOwner(
     @Param('ownerId', ParseUUIDPipe) ownerId: string,

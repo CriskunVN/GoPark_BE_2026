@@ -37,10 +37,27 @@ export class BookingController {
     return this.bookingService.getAllBooking();
   }
 
+
   @Get('user/:id')
   findByUser(@Param('id') userid: string) {
-    console.log('User ID:', userid);
+    //console.log('User ID:', userid);
     return this.bookingService.getBookingByUser(userid);
+  }
+
+  
+  @UseGuards(JwtAuthGuard)
+  @Get('active-by-vehicle/:vehicleId')
+  async getActiveBooking(
+    @Param('vehicleId') vehicleId: number, 
+    @Req() req: any
+  ) {
+    // Property name from JwtStrategy is userId
+    const userId = req.user.userId; 
+    
+    //console.log(">>> [BE] Đã nhận diện User ID:", userId); 
+    //console.log("Vehicle ID:", vehicleId);
+    
+    return this.bookingService.getLatestActiveBooking(Number(vehicleId), userId);
   }
 
   @Get('active/slot/:slotId')
@@ -51,28 +68,94 @@ export class BookingController {
   }
 
   // ================= OWNER ANALYTICS =================
-  @Get('owner-analytics/:ownerId/metrics')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner-analytics/me/metrics')
   getOwnerMetrics(
-    @Param('ownerId', ParseUUIDPipe) ownerId: string,
+    @Req() req: any,
     @Query('lotId') lotId?: number,
   ) {
+    const ownerId = req.user.userId;
     return this.bookingService.getOwnerMetrics(
       ownerId,
       lotId ? Number(lotId) : undefined,
     );
   }
 
-  @Get('owner-analytics/:ownerId/revenue-by-month')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner-analytics/me/revenue-by-month')
   getRevenueByMonth(
-    @Param('ownerId', ParseUUIDPipe) ownerId: string,
+    @Req() req: any,
     @Query('year') year?: number,
     @Query('lotId') lotId?: number,
   ) {
+    const ownerId = req.user.userId;
     const queryYear = year ? Number(year) : new Date().getFullYear();
     return this.bookingService.getRevenueByMonth(
       ownerId,
       queryYear,
       lotId ? Number(lotId) : undefined,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner-analytics/me/payment-methods')
+  getPaymentMethodStats(
+    @Req() req: any,
+    @Query('lotId') lotId?: number,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const ownerId = req.user.userId;
+    return this.bookingService.getPaymentMethodStats(
+      ownerId,
+      lotId ? Number(lotId) : undefined,
+      startDate,
+      endDate,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner-analytics/me/hourly-traffic')
+  getHourlyTraffic(
+    @Req() req: any,
+    @Query('lotId') lotId?: number,
+    @Query('date') date?: string,
+  ) {
+    const ownerId = req.user.userId;
+    return this.bookingService.getHourlyTraffic(
+      ownerId,
+      lotId ? Number(lotId) : undefined,
+      date,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner-analytics/me/top-parking-lots')
+  getTopParkingLots(
+    @Req() req: any,
+  ) {
+    const ownerId = req.user.userId;
+    return this.bookingService.getTopParkingLots(ownerId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner-analytics/me/recent-transactions')
+  getRecentTransactions(
+    @Req() req: any,
+    @Query('lotId') lotId?: number,
+    @Query('limit') limit?: number,
+  ) {
+    const ownerId = req.user.userId;
+    return this.bookingService.getRecentTransactions(
+      ownerId,
+      lotId ? Number(lotId) : undefined,
+      limit ? Number(limit) : 5,
     );
   }
 

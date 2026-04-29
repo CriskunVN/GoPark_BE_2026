@@ -69,4 +69,6 @@ export class VehiclesService {
     const vehicle = await this.findOne(id, userId);
     return this.vehicleRepository.remove(vehicle);
   }
+
+  
 }

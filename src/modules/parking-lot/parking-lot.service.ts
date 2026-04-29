@@ -1787,7 +1787,37 @@ export class ParkingLotService {
         'slot.parkingZone.parkingFloor',
         'slot.parkingZone.parkingFloor.parkingLot',
         'vehicle'
-      ]
+      ],
+      select: {
+        id: true,
+        end_time: true,
+        status: true,
+        user: {
+          id: true,
+          email: true,
+          profile: {
+            id: true,
+            name: true,
+          }
+        },
+        slot: {
+          id: true,
+          parkingZone: {
+            id: true,
+            parkingFloor: {
+              id: true,
+              parkingLot: {
+                id: true,
+                name: true,
+              }
+            }
+          }
+        },
+        vehicle: {
+          id: true,
+          plate_number: true,
+        }
+      }
     });
 
     for (const booking of bookings) {
