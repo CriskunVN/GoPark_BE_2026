@@ -21,6 +21,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { BullModule } from '@nestjs/bull';
 import { SupabaseModule } from './common/supabase/supabase.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ReviewsModule } from './modules/reviews/reviews.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     SupabaseModule,
     ChatModule,
     ScheduleModule.forRoot(),
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
