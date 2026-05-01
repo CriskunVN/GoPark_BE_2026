@@ -42,6 +42,8 @@ import { SupabaseService } from '../../common/supabase/supabase.service';
 import { EmailService } from '../auth/email/email.service';
 import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import * as vision from '@google-cloud/vision';
+import { Gate } from './entities/gate.entity';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -76,13 +78,16 @@ export class ParkingLotService {
     @InjectRepository(PricingRule)
     private pricingRuleRepository: Repository<PricingRule>,
 
+    @InjectRepository(Gate)
+    private gateRepository: Repository<Gate>,
+
     private requestService: RequestService,
 
     private usersService: UsersService,
     private dataSource: DataSource,
     private mailService: EmailService,
     private readonly supabaseService: SupabaseService,
-    
+
   ) { }
 
 
@@ -528,6 +533,78 @@ export class ParkingLotService {
     }
   }
 
+  async extractLicensePlateFromBuffer(
+    buffer: Buffer,
+    mimetype: string,
+    language?: string,
+  ): Promise<string> {
+    try {
+      const apiKey = String(process.env.OCR_API_KEY || 'K88596879988957');
+      const base64Image = `data:${mimetype};base64,${buffer.toString('base64')}`;
+      const normalizedLanguage =
+        typeof language === 'string' && ['eng', 'vie'].includes(language.toLowerCase())
+          ? language.toLowerCase()
+          : 'eng';
+
+      const parseWithLanguage = async (lang: 'eng' | 'vie') => {
+        const formData = new FormData();
+        formData.append('base64Image', base64Image);
+        formData.append('apikey', apiKey);
+        formData.append('language', lang);
+        formData.append('OCREngine', '2');
+
+        const response = await fetch('https://api.ocr.space/parse/image', {
+          method: 'POST',
+          body: formData as unknown as BodyInit,
+        });
+
+        return (await response.json()) as OcrSpaceResponse;
+      };
+
+      let result = await parseWithLanguage(normalizedLanguage as 'eng' | 'vie');
+      if (result.IsErroredOnProcessing) {
+        result = await parseWithLanguage('eng');
+      }
+
+      const parsedText = (result.ParsedResults || [])
+        .map((item) => String(item?.ParsedText || '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+      return parsedText.replace(/[^A-Z0-9]/g, '');
+    } catch (error: unknown) {
+      console.error('OCR Error:', error);
+      return '';
+    }
+  }
+
+  // ─── Extract License Plate (OCR - GOOGLE VISION) ───────────────────────────
+  async extractLicensePlateGoogleVision(
+    file: Express.Multer.File,
+  ): Promise<string> {
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    try {
+      const client = new vision.ImageAnnotatorClient();
+      const [result] = await client.textDetection(file.buffer);
+      const fullText = result.fullTextAnnotation?.text || '';
+
+      if (!fullText) return '';
+
+      const plateRegex = /([0-9]{2}[A-Z]{1,2}[-.\s]?[0-9]{3,5}(?:[-.\s]?[0-9]{2})?)/g;
+      const matches = fullText.toUpperCase().match(plateRegex);
+
+      if (!matches || matches.length === 0) return '';
+
+      return matches[0].replace(/[^A-Z0-9]/g, '');
+    } catch (error: unknown) {
+      console.error('Google Vision OCR Error:', error);
+      throw new InternalServerErrorException('Failed to extract license plate via Google Vision');
+    }
+  }
+
   // ─── Guest Check-in (Walk-in) ──────────────────────────────────────────────
   async handleWalkIn(parkingLotId: number, dto: WalkInDto, user: any) {
     const parkingLot = await this.validateLotAccess(parkingLotId, user);
@@ -632,7 +709,7 @@ export class ParkingLotService {
     user: any,
   ) {
     const parkingLot = await this.validateLotAccess(parkingLotId, user);
-    
+
     // 2. Xác minh slot thuộc bãi này và load thông tin zone + pricing
     const slot = await this.parkingSlotRepository.findOne({
       where: { id: dto.slotId },
@@ -846,7 +923,7 @@ export class ParkingLotService {
     };
   }
 
-  async getPublicParkingLotDetail(lotid: number,userId:string) {
+  async getPublicParkingLotDetail(lotid: number, userId: string) {
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotid }, // Bỏ status ACTIVE để sơ đồ hiển thị ngay cả khi đang PENDING
       relations: [
@@ -1772,7 +1849,7 @@ export class ParkingLotService {
   async handleBookingExpirationReminders() {
     const now = new Date();
     const reminderTimeStart = new Date(now.getTime() + 9 * 60000);
-    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000); 
+    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000);
 
     const bookings = await this.bookingRepository.find({
       where: {
@@ -1833,7 +1910,7 @@ export class ParkingLotService {
         const userName = booking.user.profile?.name || 'Khách hàng';
         const plateNumber = booking.vehicle?.plate_number || 'không rõ biển số';
         const lotName = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'Bãi đỗ xe';
-        
+
         const endTimeStr = new Date(booking.end_time).toLocaleTimeString('vi-VN', {
           hour: '2-digit',
           minute: '2-digit'
@@ -1853,7 +1930,7 @@ export class ParkingLotService {
         // Đánh dấu đã gửi thành công
         this.sentReminderIds.add(bId);
         console.log(`[Success] Đã gửi mail nhắc nhở cho ${userEmail}`);
-        
+
       } catch (error) {
         console.error(`[Reminder] Lỗi khi gửi mail cho đơn ${bId}:`, error);
       }
@@ -1912,4 +1989,26 @@ export class ParkingLotService {
 
     throw new ForbiddenException('Bạn không có quyền thực hiện thao tác này');
   }
+
+  //gate check-in check-out
+  async getGatesByParkingLot(parkingLotId: number) {
+    const gates = await this.gateRepository.find({
+      where: {
+        parkingLot: { id: parkingLotId },
+      },
+      relations: ['checkLogs'],
+      order: { name: 'ASC' },
+    });
+
+    return gates.map((gate) => ({
+      id: gate.id,
+      name: gate.name,
+      desc: gate.description || '',
+      status: gate.status,
+      type: gate.type,
+      count: gate.checkLogs?.length || 0,
+    }));
+  }
+  
+
 }

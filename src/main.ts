@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
 import { ValidationPipe } from '@nestjs/common';
 import { TransformInterceptor } from './utils/tranform.interceptor';
 import { HttpExceptionFilter } from './utils/http-exception.filter';
@@ -7,8 +9,11 @@ import morgan from 'morgan';
 import { json, urlencoded } from 'express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.setGlobalPrefix('api/v1');
+  app.useStaticAssets(join(__dirname, '..', 'public'), {
+    prefix: '/public',
+  });
   app.enableCors(); // Enable CORS for all origins (development purposes)
 
   // Increase payload limit to 50MB for Base64 image uploads
