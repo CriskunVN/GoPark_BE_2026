@@ -28,18 +28,14 @@ export class ChatbotController {
   // ─── Chat thường (không bắt buộc đăng nhập) ──────────────────────────────
   // Nếu đã đăng nhập → có userId → có thể query DB
   // Nếu chưa đăng nhập → vẫn dùng được AI cho câu hỏi thường
-  @Post('chat')
-  @UseGuards(OptionalAuthGuard)
-  async chat(
-    @Body() body: { messages: { role: string; content: string }[] },
-    @Req() req: Request,
-  ) {
-    const messages = this.parseMessages(body);
-    const userId = (req as any).user?.sub ?? (req as any).user?.id ?? undefined;
-
-    const text = await this.chatbotService.complete(messages, userId);
-    return { message: text, data: { text } };
-  }
+ @Post('chat')
+@UseGuards(OptionalAuthGuard)
+async chat(@Body() body: any, @Req() req: Request) {
+  const messages = this.parseMessages(body);
+  const userId = (req as any).user?.sub ?? (req as any).user?.id;
+  const result = await this.chatbotService.processMessage(messages, userId);
+  return result; // { text, action, data }
+}
 
   // ─── SSE stream endpoint ──────────────────────────────────────────────────
   @Post('stream')

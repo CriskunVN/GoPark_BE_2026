@@ -1,8 +1,10 @@
 ﻿import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { UpdateBalanceDto, PaymentDto } from './dto/wallet.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('wallets')
+@UseGuards(JwtAuthGuard)
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
 

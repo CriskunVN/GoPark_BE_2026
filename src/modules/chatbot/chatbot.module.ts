@@ -5,6 +5,7 @@ import { ChatbotService } from './chatbot.service';
 import { ChatbotController } from './chatbot.controller';
 import { AuthGuard } from './guards/auth.guard';
 import { OptionalAuthGuard } from './guards/optional-auth.guard';
+import { ChatbotStateService } from './chatbot-state.service';
 
 @Module({
   imports: [
@@ -19,14 +20,20 @@ import { OptionalAuthGuard } from './guards/optional-auth.guard';
         return {
           secret,
           signOptions: {
-            expiresIn: configService.get<string>('JWT_ACCESS_EXPIRATION_TIME') || '15m',
+            expiresIn:
+              configService.get<string>('JWT_ACCESS_EXPIRATION_TIME') || '15m',
           },
         } as any;
       },
       inject: [ConfigService],
     }),
   ],
-  providers: [ChatbotService, AuthGuard, OptionalAuthGuard],
+  providers: [
+    ChatbotService,
+    AuthGuard,
+    OptionalAuthGuard,
+    ChatbotStateService,
+  ],
   controllers: [ChatbotController],
   exports: [ChatbotService],
 })

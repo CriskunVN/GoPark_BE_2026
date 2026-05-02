@@ -137,6 +137,9 @@ export class AdminService {
       case RequestType.PAYMENT:
         // await this.handleApprovePayment(request, adminId);
         break;
+      case RequestType.BOOKING_ISSUE:
+        // Legacy type - no specific action needed
+        break;
       default:
         throw new BadRequestException('Loại request không hợp lệ');
     }
