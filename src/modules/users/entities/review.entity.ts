@@ -44,4 +44,13 @@ export class Review {
   })
   @JoinColumn({ name: 'booking_id' })
   booking: Booking;
+
+  @Column({ type: 'text', array: true, nullable: true })
+  images: string[];
+
+  @Column({ type: 'text', nullable: true })
+  owner_reply: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  owner_reply_at: Date;
 }
