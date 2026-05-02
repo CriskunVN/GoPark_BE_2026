@@ -26,6 +26,9 @@ export class Gate {
   @Column({ default: 'ACTIVE' })
   status: string;
 
+  @Column({ type: 'text', nullable: true })
+  description: string;
+
   // Liên kết với bãi đỗ xe (ParkingLot)
   @ManyToOne('ParkingLot', 'gates', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'parking_lot_id' })

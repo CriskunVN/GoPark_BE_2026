@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PricingRule } from './entities/pricingrule.entity';
@@ -19,6 +23,10 @@ import { Booking } from '../booking/entities/booking.entity';
 import { DataSource } from 'typeorm';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 import { WalletService } from '../wallet/wallet.service';
+import { Wallet } from '../wallet/entities/wallet.entity';
+import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
+import { TransactionType } from '../wallet/enums/transaction-type.enum';
+import { TransactionStatus as WalletTransactionStatus } from '../wallet/enums/transaction-status.enum';
 
 @Injectable()
 export class PaymentService {
@@ -41,7 +49,7 @@ export class PaymentService {
   async handleBookingVnpayPayment(
     bookingId: number,
     amount: number,
-    transactionRef: string,
+    vnpayData: any, // Nhận object chứa đầy đủ dữ liệu từ VNPay
   ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -51,7 +59,14 @@ export class PaymentService {
       // 1. Lấy thông tin booking
       const booking = await queryRunner.manager.findOne(Booking, {
         where: { id: bookingId },
-        relations: ['slot'],
+        relations: [
+          'slot',
+          'user',
+          'slot.parkingZone',
+          'slot.parkingZone.parkingFloor',
+          'slot.parkingZone.parkingFloor.parkingLot',
+          'slot.parkingZone.parkingFloor.parkingLot.owner',
+        ],
       });
 
       if (!booking) throw new NotFoundException('Booking not found');
@@ -81,17 +96,63 @@ export class PaymentService {
 
       // 4. LƯU TRANSACTION (Liên kết với Payment vừa tạo)
       const transaction = queryRunner.manager.create(Transaction, {
-        gateway_txn_id: transactionRef,
+        gateway_txn_id: vnpayData.vnp_TxnRef,
+        vnpay_transaction_no: vnpayData.vnp_TransactionNo,
         amount,
+        bank_code: vnpayData.vnp_BankCode,
+        card_type: vnpayData.vnp_CardType,
+        order_info: vnpayData.vnp_OrderInfo,
+        response_code: vnpayData.vnp_ResponseCode,
+        pay_date: vnpayData.vnp_PayDate,
+        metadata: vnpayData,
         payment: savedPayment,
         status: TransactionStatus.SUCCESS,
+        booking: booking,
+        user: booking.user,
       });
       await queryRunner.manager.save(transaction);
+
+      // 6. LOGIC CỘNG TIỀN CHO CHỦ BÃI (OWNER)
+      const ownerId =
+        booking.slot?.parkingZone?.parkingFloor?.parkingLot?.owner?.id;
+
+      if (ownerId) {
+        // Tìm ví của Chủ bãi và khóa để cập nhật
+        const ownerWallet = await queryRunner.manager
+          .createQueryBuilder(Wallet, 'wallet')
+          .where('wallet.user_id = :userId::uuid', { userId: ownerId })
+          .setLock('pessimistic_write')
+          .getOne();
+
+        if (!ownerWallet) {
+          console.error(`[VNPAY] Không tìm thấy ví cho Owner ${ownerId}`);
+          // Tùy bạn có muốn throw lỗi ở đây không, 
+          // thường là nên throw để đảm bảo tiền phải vào ví thì mới confirm booking
+        } else {
+          const balanceBefore = Number(ownerWallet.balance);
+          ownerWallet.balance = balanceBefore + amount;
+          await queryRunner.manager.save(ownerWallet);
+
+          // Ghi lại lịch sử vào bảng wallet_transactions (Để bạn của bạn thấy)
+          const walletTx = queryRunner.manager.create(WalletTransaction, {
+            wallet_id: ownerWallet.id,
+            amount: amount,
+            balance_before: balanceBefore,
+            balance_after: ownerWallet.balance,
+            type: TransactionType.EARN_PARKING_FEE,
+            status: WalletTransactionStatus.SUCCESS,
+            ref_type: 'BOOKING',
+            ref_id: bookingId.toString(),
+          });
+          await queryRunner.manager.save(walletTx);
+        }
+      }
 
       // 5. Cập nhật trạng thái Booking và Slot
       await queryRunner.manager.update(Booking, bookingId, {
         status: BookingStatus.CONFIRMED,
       });
+
 
       if (booking?.slot) {
         await queryRunner.manager.update(ParkingSlot, booking.slot.id, {

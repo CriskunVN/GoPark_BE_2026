@@ -10,6 +10,7 @@ import { BaseEntity } from 'src/common/entity/base.entity';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
 import { NotificationRecipient } from 'src/modules/notification/entities/notification_recipient.entity';
 import { Review } from './review.entity';
+import { Transaction } from 'src/modules/payment/entities/transaction.entity';
 
 @Entity('users')
 export class User extends BaseEntity {
@@ -70,4 +71,7 @@ export class User extends BaseEntity {
 
   @OneToMany('Review', (review: Review) => review.user)
   review: Review[];
+
+  @OneToMany('Transaction', (transaction: Transaction) => transaction.user)
+  transactions: Transaction[];
 }

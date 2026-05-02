@@ -340,6 +340,7 @@ export class BookingService {
     gateId: number,
     detectedPlate: string,
     user: any,
+    imageUrl?: string,
   ) {
     // 1. Kiểm tra cổng
     const gate = await this.checkLogRepository.manager.findOne(Gate, {
@@ -362,30 +363,35 @@ export class BookingService {
 
     const booking = qrCode.booking;
 
-    // 3. SO KHỚP BIỂN SỐ XE (ĐÃ TỐI ƯU)
+    // 3. SO KHỚP BIỂN SỐ XE (SỬ DỤNG LEVENSHTEIN DISTANCE)
     if (detectedPlate && booking.vehicle) {
-      // Bước A: Chuẩn hóa chuỗi thô từ OCR (Viết hoa, xóa dấu cách, gạch ngang, dấu chấm)
-      const rawOcr = detectedPlate.toUpperCase().replace(/[\s.-]/g, '');
-      const cleanRegistered = booking.vehicle.plate_number
-        .toUpperCase()
-        .replace(/[\s.-]/g, '');
+      const cleanDetected = detectedPlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const cleanRegistered = booking.vehicle.plate_number.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-      // Bước B: Dùng Regex để tìm cụm ký tự có định dạng biển số VN
-      // Định dạng: 2 số đầu - 1 chữ cái + 1 số/chữ - Dãy 4 hoặc 5 số cuối
-      const plateRegex = /[0-9]{2}[A-Z][0-9A-Z][0-9]{4,5}/;
-      const match = rawOcr.match(plateRegex);
+      console.log('So khớp:', cleanDetected, 'vs', cleanRegistered);
 
-      // Nếu tìm thấy cụm khớp định dạng thì lấy cụm đó, không thì dùng chuỗi gốc để so sánh tiếp
-      const cleanDetected = match ? match[0] : rawOcr;
+      // Thuật toán Levenshtein Distance để tính độ lệch chuỗi
+      const getLevenshteinDistance = (a: string, b: string) => {
+        const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+        for (let j = 1; j <= b.length; j++) matrix[0][j] = j;
 
-      console.log('Biển số lọc được:', cleanDetected);
-      console.log('Biển số trong DB:', cleanRegistered);
+        for (let i = 1; i <= a.length; i++) {
+          for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(
+              matrix[i - 1][j] + 1,      // xóa
+              matrix[i][j - 1] + 1,      // thêm
+              matrix[i - 1][j - 1] + cost // thay thế
+            );
+          }
+        }
+        return matrix[a.length][b.length];
+      };
 
-      // Bước C: So khớp (Dùng includes để tăng độ chính xác nếu OCR đọc thừa 1-2 ký tự đầu/đuôi)
-      if (
-        !cleanDetected.includes(cleanRegistered) &&
-        !cleanRegistered.includes(cleanDetected)
-      ) {
+      const distance = getLevenshteinDistance(cleanDetected, cleanRegistered);
+      const isMatch = distance <= 2 || cleanDetected.includes(cleanRegistered) || cleanRegistered.includes(cleanDetected);
+
+      if (!isMatch) {
         throw new BadRequestException(
           `Biển số không khớp! Hệ thống lọc được: ${cleanDetected}, Đăng ký: ${booking.vehicle.plate_number}`,
         );
@@ -416,6 +422,7 @@ export class BookingService {
         gate: { id: gateId } as any, // Sử dụng quan hệ gate với ID truyền vào từ mobile/camera
         check_status: 'in',
         time: new Date(),
+        image_url: imageUrl,
       });
 
       await this.checkLogRepository.save(newLog);
@@ -450,6 +457,7 @@ export class BookingService {
         gate: { id: gateId } as any, // Lưu vết lại xe ra ở cổng nào
         check_status: 'out',
         time: new Date(),
+        image_url: imageUrl,
       });
 
       await this.checkLogRepository.save(newLog);
@@ -520,6 +528,7 @@ export class BookingService {
         "slot",
         "slot.parkingZone",
         "slot.parkingZone.parkingFloor",
+        "slot.parkingZone.parkingFloor.parkingLot",
         "invoice",
       ],
       order: { created_at: "DESC" },
@@ -548,6 +557,7 @@ export class BookingService {
         'slot',
         'slot.parkingZone',
         'slot.parkingZone.parkingFloor',
+        'slot.parkingZone.parkingFloor.parkingLot',
         'qrCode',
       ],
       // Quan trọng: Sắp xếp theo ID hoặc thời gian tạo giảm dần để lấy cái mới nhất
@@ -990,7 +1000,11 @@ export class BookingService {
         count: parseInt(row.count, 10) || 0,
       }));
     } catch (error) {
-      console.error('Error fetching payment method stats:', error.message);
+      if (error instanceof Error) {
+        console.error('Error fetching payment method stats:', error.message);
+      } else {
+        console.error('An unexpected error occurred:', error);
+      }
       return [];
     }
   }
@@ -1228,5 +1242,56 @@ export class BookingService {
         },
       ]),
     );
+  }
+
+  //lịch sử check-in check-out
+  async getLiveHistory(
+    parkingLotId: number,
+    page = 1,
+    limit = 10,
+    range: '24H' | '7D' | 'MONTH' | 'CUSTOM' = '24H',
+    plateNumber?: string,
+    startDate?: string,
+    endDate?: string,
+  ) {
+    const query = this.checkLogRepository.createQueryBuilder('log')
+      .leftJoinAndSelect('log.booking', 'booking')
+      .leftJoinAndSelect('log.gate', 'gate')
+      .leftJoinAndSelect('booking.vehicle', 'vehicle')
+      .where('gate.parking_lot_id = :parkingLotId', { parkingLotId });
+
+    // Handle Time Range
+    let start: Date | null = null;
+    let end: Date = new Date();
+
+    if (range === '24H') {
+      start = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    } else if (range === '7D') {
+      start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    } else if (range === 'MONTH') {
+      start = new Date();
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+    } else if (range === 'CUSTOM' && startDate) {
+      start = new Date(startDate);
+      if (endDate) end = new Date(endDate);
+    }
+
+    if (start) {
+      query.andWhere('log.time BETWEEN :start AND :end', { start, end });
+    }
+
+    // Handle Plate Number
+    if (plateNumber) {
+      query.andWhere('vehicle.plate_number ILIKE :plate', { plate: `%${plateNumber}%` });
+    }
+
+    const [data, count] = await query
+      .orderBy('log.time', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { data, count };
   }
 }

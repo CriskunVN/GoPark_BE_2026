@@ -12,7 +12,12 @@ import {
   UseInterceptors,
   ParseIntPipe,
   ParseUUIDPipe,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
+import sharp from 'sharp';
 import { BookingService } from './booking.service';
 import { Booking } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create.dto';
@@ -23,14 +28,13 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRoleEnum } from '../../common/enums/role.enum';
-import { Req, UseGuards } from '@nestjs/common';
 
 @Controller('booking')
 export class BookingController {
   constructor(
     private readonly bookingService: BookingService,
     private readonly parkingLotService: ParkingLotService,
-  ) {}
+  ) { }
   //Booking
   @Get()
   find() {
@@ -44,19 +48,19 @@ export class BookingController {
     return this.bookingService.getBookingByUser(userid);
   }
 
-  
+
   @UseGuards(JwtAuthGuard)
   @Get('active-by-vehicle/:vehicleId')
   async getActiveBooking(
-    @Param('vehicleId') vehicleId: number, 
+    @Param('vehicleId') vehicleId: number,
     @Req() req: any
   ) {
     // Property name from JwtStrategy is userId
-    const userId = req.user.userId; 
-    
+    const userId = req.user.userId;
+
     //console.log(">>> [BE] Đã nhận diện User ID:", userId); 
     //console.log("Vehicle ID:", vehicleId);
-    
+
     return this.bookingService.getLatestActiveBooking(Number(vehicleId), userId);
   }
 
@@ -192,15 +196,35 @@ export class BookingController {
     @UploadedFile() file: Express.Multer.File,
     @Req() req: any,
   ) {
-    // 1. Gọi hàm OCR của bạn Dũng để lấy text từ ảnh (Gửi ảnh sang bên thứ 3)
-    const plateText = await this.parkingLotService.extractLicensePlate(file);
+    // 1. Lưu ảnh gốc (RGB) làm bằng chứng Dashboard
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'snapshots');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
 
-    // 2. Truyền plateText vào logic so khớp và check-in
+    const fileName = `${Date.now()}_original.jpg`;
+    const filePath = path.join(uploadDir, fileName);
+    fs.writeFileSync(filePath, file.buffer);
+    const imageUrl = `/public/uploads/snapshots/${fileName}`;
+
+    // 2. Xử lý nhị phân hóa (Binarization) chỉ để đọc OCR
+    // Chuyển về grayscale và tăng độ tương phản (threshold) để OCR dễ đọc hơn
+    const binaryBuffer = await sharp(file.buffer)
+      .grayscale()
+      .linear(1.5, -0.2) // Tăng độ tương phản
+      .threshold(128)    // Nhị phân hóa
+      .toBuffer();
+
+    // 3. Gọi hàm OCR với ảnh đã được nhị phân hóa
+    const plateText = await this.parkingLotService.extractLicensePlateFromBuffer(binaryBuffer, file.mimetype);
+
+    // 4. Truyền plateText và imageUrl (ảnh gốc) vào logic check-in
     return await this.bookingService.scanQRCode(
       data.content,
       Number(data.gateId),
       plateText,
       req.user,
+      imageUrl,
     );
   }
 
@@ -228,5 +252,28 @@ export class BookingController {
   @Post(':id/send-qr-email')
   async sendQREmail(@Param('id') id: number) {
     return this.bookingService.sendEmail(id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  @Get('live-history/:lotId')
+  async getLiveHistory(
+    @Param('lotId', ParseIntPipe) lotId: number,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('range') range?: '24H' | '7D' | 'MONTH' | 'CUSTOM',
+    @Query('plateNumber') plateNumber?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.bookingService.getLiveHistory(
+      lotId,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 10,
+      range || '24H',
+      plateNumber,
+      startDate,
+      endDate,
+    );
   }
 }

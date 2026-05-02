@@ -29,4 +29,7 @@ export class CheckLog {
   })
   @JoinColumn({ name: 'booking_id' })
   booking: Booking;
+
+  @Column({ type: 'text', nullable: true })
+  image_url: string;
 }
