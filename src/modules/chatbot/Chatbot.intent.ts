@@ -183,13 +183,13 @@ const INTENT_KEYWORDS: Record<ChatbotIntent, string[]> = {
 
 // ─── Thứ tự ưu tiên khi classify (DATA intents check trước) ──────────────
 const PRIORITY_ORDER: ChatbotIntent[] = [
+   ChatbotIntent.BOOK_PARKING,
   ChatbotIntent.CANCEL_BOOKING,
   ChatbotIntent.CHECK_BOOKING,
   ChatbotIntent.CHECK_INVOICE,
-  ChatbotIntent.CHECK_WALLET,
-  ChatbotIntent.FIND_NEARBY,
+  ChatbotIntent.CHECK_WALLET, 
   ChatbotIntent.FIND_BEST,
-  ChatbotIntent.BOOK_PARKING,
+  ChatbotIntent.FIND_NEARBY,
   ChatbotIntent.PAYMENT_GUIDE,
   ChatbotIntent.OWNER_FEATURE,
   ChatbotIntent.PROMOTION,
@@ -200,6 +200,9 @@ const PRIORITY_ORDER: ChatbotIntent[] = [
 // ─── Classifier chính ─────────────────────────────────────────────────────
 export function classifyIntent(message: string): ChatbotIntent {
   const lower = message.toLowerCase().normalize('NFC');
+  if (lower.includes('đặt bãi') || lower.includes('book bãi') || lower.includes('đặt chỗ')) {
+  return ChatbotIntent.BOOK_PARKING;
+}
 
   for (const intent of PRIORITY_ORDER) {
     const keywords = INTENT_KEYWORDS[intent];
