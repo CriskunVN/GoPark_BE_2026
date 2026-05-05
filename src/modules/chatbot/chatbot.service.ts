@@ -40,6 +40,9 @@ export class ChatbotService {
     const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
     const intent = classifyIntent(lastUserMessage);
     this.logger.log(`Intent: ${intent} | Message: ${lastUserMessage}`);
+    const session = userId ? this.stateService.getSession(userId) : undefined;
+    const sessionContext = session?.context ?? {};
+    const sessionPendingBooking = sessionContext.pendingBooking ?? {};
 
     // ----- XỬ LÝ CÁC INTENT CẦN DATA -----
     if (requiresData(intent) && INTENT_DB_CONFIG[intent]) {
@@ -51,31 +54,27 @@ export class ChatbotService {
 
       switch (intent) {
         case ChatbotIntent.FIND_NEARBY: {
-          const lots = await this.getParkingLotsRaw();
-          // Sắp xếp theo số chỗ trống nhiều nhất (coi là gần nhất)
-          const sorted = lots.sort((a, b) => b.available_slots - a.available_slots);
-          const results = sorted.slice(0, config.limit);
-          return {
-            text: `🔍 Tìm thấy ${results.length} bãi đỗ gần bạn.`,
-            action: 'list_parking',
-            data: { lots: results, action: 'list_parking' },
-          };
+          const result = await this.searchParking({ criteria: 'nearest', limit: 3 }, userId);
+          if (result.lots?.length) {
+            return {
+              text: `🔍 Đây là những bãi gần bạn nhất hiện có.`,
+              action: 'list_parking',
+              data: { lots: result.lots, action: 'list_parking' },
+            };
+          }
+          return { text: 'Không tìm thấy bãi gần bạn. Vui lòng thử lại với khu vực khác.' };
         }
 
         case ChatbotIntent.FIND_BEST: {
-          const lots = await this.getParkingLotsRaw();
-          // Điểm = rating*10 + chỗ trống/10 - giá/1000
-          const sorted = lots.sort((a, b) => {
-            const scoreA = b.avgRating * 10 + b.available_slots / 10 - b.hourly_rate / 1000;
-            const scoreB = a.avgRating * 10 + a.available_slots / 10 - a.hourly_rate / 1000;
-            return scoreB - scoreA;
-          });
-          const results = sorted.slice(0, config.limit);
-          return {
-            text: `⭐ Gợi ý ${results.length} bãi đỗ tốt nhất dành cho bạn.`,
-            action: 'list_parking',
-            data: { lots: results, action: 'list_parking' },
-          };
+          const result = await this.searchParking({ criteria: 'best_rating', limit: 3 }, userId);
+          if (result.lots?.length) {
+            return {
+              text: `⭐ Đây là bãi phù hợp nhất dành cho bạn, dựa trên giá, đánh giá và chỗ trống.`,
+              action: 'list_parking',
+              data: { lots: result.lots, action: 'list_parking' },
+            };
+          }
+          return { text: 'Không tìm thấy bãi phù hợp. Vui lòng thử lại hoặc mở rộng phạm vi tìm kiếm.' };
         }
 
         case ChatbotIntent.CHECK_BOOKING: {
@@ -109,82 +108,54 @@ export class ChatbotService {
       }
     }
 
-    // ----- XỬ LÝ ĐẶT BÃI (BOOK_PARKING) -----
-    if (intent === ChatbotIntent.BOOK_PARKING) {
-      const bookingContext = context?.pendingBooking ?? {};
-      const parkingName = extractParkingName(lastUserMessage) || bookingContext.parkingLotId;
-      const lots = await this.getParkingLotsRaw();
-
-      if (
-        bookingContext.parkingLotId &&
-        bookingContext.startTime &&
-        bookingContext.endTime &&
-        bookingContext.vehicleId &&
-        bookingContext.paymentMethod
-      ) {
-        const bookingResult = await this.createBooking(bookingContext, userId, context);
-        if (bookingResult.error === 'missing_fields') {
-          return {
-            text: `📝 Vui lòng hoàn tất thông tin đặt chỗ: ${bookingResult.fields.join(', ')}.`,
-          };
-        }
-        if (bookingResult.redirectUrl) {
-          return {
-            text: bookingResult.message || '✅ Đặt chỗ thành công. Đang chuyển đến trang thanh toán...',
-            action: 'redirect',
-            redirectUrl: bookingResult.redirectUrl,
-          };
-        }
-        return { text: bookingResult.message || 'Đã có lỗi xảy ra, vui lòng thử lại.' };
-      }
-
-      if (!parkingName) {
+    // ----- XỬ LÝ ĐẶT BÃI (BOOK_PARKING / BOOK_WITH_DETAILS) -----
+    if (intent === ChatbotIntent.BOOK_PARKING || intent === ChatbotIntent.BOOK_WITH_DETAILS) {
+      if (!userId) {
         return {
-          text: 'Bạn muốn đặt bãi nào? Vui lòng cho tôi tên bãi (ví dụ: "đặt bãi HEHE") hoặc tìm bãi trước bằng "tìm bãi gần tôi".',
+          text: '⚠️ Bạn cần đăng nhập để đặt bãi. Vui lòng đăng nhập để tiếp tục đặt chỗ.',
         };
       }
 
-      let matched = lots.filter(l => l.name.toLowerCase().includes(parkingName.toLowerCase()));
-      if (!matched.length && /^\d+$/.test(parkingName)) {
-        matched = lots.filter(l => String(l.id) === parkingName);
+      const bookingContext = {
+        ...sessionPendingBooking,
+        ...(context?.pendingBooking || {}),
+      };
+
+      const parkingName = extractParkingName(lastUserMessage);
+      if (parkingName && !bookingContext.parkingLotId) {
+        const lots = await this.getParkingLotsRaw();
+        const matched = lots.filter((l) =>
+          l.name.toLowerCase().includes(parkingName.toLowerCase()),
+        );
+        if (matched.length === 1) {
+          bookingContext.parkingLotId = matched[0].id.toString();
+        }
       }
-      if (matched.length === 1) {
-        const lot = matched[0];
-        // Gọi hàm tạo booking với chỉ parkingLotId, các trường khác sẽ thiếu -> trả về missing_fields
-        const bookingResult = await this.createBooking({ parkingLotId: lot.id.toString() }, userId, {});
-        if (bookingResult.error === 'missing_fields') {
-          return {
-            text: `📝 Để đặt bãi "${lot.name}", bạn vui lòng cho tôi biết:\n• Thời gian bắt đầu (vd: 2026-05-05T17:00:00)\n• Thời gian kết thúc (vd: 2026-05-06T17:00:00)\n• Xe bạn sử dụng (hãy thêm xe trong trang Cá nhân nếu chưa có)\n• Phương thức thanh toán (WALLET, VNPAY, CASH)`,
-          };
-        } else if (bookingResult.redirectUrl) {
-          return { text: bookingResult.message, redirectUrl: bookingResult.redirectUrl };
-        } else {
-          return { text: bookingResult.message || 'Đã có lỗi xảy ra, vui lòng thử lại.' };
-        }
-      } else if (matched.length > 1) {
-        // Nhiều bãi trùng tên -> hiển thị danh sách để chọn
+
+      const bookingResult = await this.createBooking(bookingContext, userId, context);
+      if (bookingResult.error === 'missing_fields') {
+        const missingText = bookingResult.fields.join(', ');
+        this.stateService.updateStep(userId, 'awaiting_booking_details', {
+          pendingBooking: bookingResult.partialData,
+        });
         return {
-          text: `Có ${matched.length} bãi trùng tên "${parkingName}". Vui lòng chọn bãi cụ thể:`,
-          action: 'list_parking',
-          data: { lots: matched, action: 'list_parking' },
-        };
-      } else {
-        // Không tìm thấy bãi theo tên -> gợi ý tìm theo khu vực
-        const areaName = parkingName.includes('Đà Nẵng') ? 'Đà Nẵng' : (parkingName.includes('Hải Châu') ? 'Hải Châu' : null);
-        if (areaName) {
-          const areaLots = lots.filter(l => l.address.toLowerCase().includes(areaName.toLowerCase()));
-          if (areaLots.length > 0) {
-            return {
-              text: `❌ Không tìm thấy bãi tên "${parkingName}". Tuy nhiên có ${areaLots.length} bãi tại khu vực ${areaName}. Bạn có thể tham khảo:`,
-              action: 'list_parking',
-              data: { lots: areaLots.slice(0, 5), action: 'list_parking' },
-            };
-          }
-        }
-        return {
-          text: `❌ Không tìm thấy bãi đỗ nào tên "${parkingName}". Bạn có thể tìm bãi gần nhất hoặc theo khu vực.`,
+          text: `📝 Cần bổ sung: ${missingText}. Ví dụ: "Từ 2026-05-05T17:00, đến 2026-05-05T19:00, xe tôi là 43A-12345, thanh toán bằng VNPAY".`,
         };
       }
+      if (bookingResult.error) {
+        return { text: `❌ ${bookingResult.error}` };
+      }
+      if (bookingResult.redirectUrl) {
+        if (userId) this.stateService.deleteSession(userId);
+        return {
+          text:
+            bookingResult.message ||
+            '✅ Đặt chỗ thành công. Đang chuyển sang trang thanh toán...',
+          action: 'redirect',
+          redirectUrl: bookingResult.redirectUrl,
+        };
+      }
+      return { text: bookingResult.message || 'Đã có lỗi xảy ra, vui lòng thử lại.' };
     }
 
     // ----- FALLBACK: GỌI GROQ CHO CÁC CÂU HỎI THƯỜNG (FREE_FORM) -----
@@ -406,10 +377,8 @@ QUAN TRỌNG:
     } else if (criteria === 'best_rating') {
       // ✅ Gợi ý 1 bãi phù hợp nhất kết hợp rating, giá, chỗ trống
       lots.sort((a, b) => {
-        const scoreA =
-          b.avgRating * 10 + b.available_slots / 10 - a.hourly_rate / 1000;
-        const scoreB =
-          a.avgRating * 10 + a.available_slots / 10 - b.hourly_rate / 1000;
+        const scoreA = a.avgRating * 10 + a.available_slots / 10 - a.hourly_rate / 1000;
+        const scoreB = b.avgRating * 10 + b.available_slots / 10 - b.hourly_rate / 1000;
         return scoreB - scoreA;
       });
     } else {
