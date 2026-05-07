@@ -121,9 +121,12 @@ export class ParkingLotService {
         createParkingLotDto.totalSlots ??
         0,
       description: createParkingLotDto.description,
+      open_time: createParkingLotDto.open_time ? new Date(createParkingLotDto.open_time) : undefined,
+      close_time: createParkingLotDto.close_time ? new Date(createParkingLotDto.close_time) : undefined,
+      operating_days: createParkingLotDto.operating_days,
       image: { thumbnail, gallery },
       status: ParkingLotStatus.PENDING,
-      owner: { id: createParkingLotDto.ownerId } as User,
+      owner: { id: createParkingLotDto.ownerId } as any,
     });
 
     const savedParkingLot = await this.parkingLotRepository.save(parkingLot);
@@ -162,6 +165,30 @@ export class ParkingLotService {
 
     if (updateParkingLotDto.description !== undefined) {
       parkingLot.description = updateParkingLotDto.description;
+    }
+
+    if (updateParkingLotDto.address) {
+      parkingLot.address = updateParkingLotDto.address;
+    }
+
+    if (updateParkingLotDto.lat !== undefined) {
+      parkingLot.lat = updateParkingLotDto.lat;
+    }
+
+    if (updateParkingLotDto.lng !== undefined) {
+      parkingLot.lng = updateParkingLotDto.lng;
+    }
+
+    if (updateParkingLotDto.open_time) {
+      parkingLot.open_time = new Date(updateParkingLotDto.open_time);
+    }
+
+    if (updateParkingLotDto.close_time) {
+      parkingLot.close_time = new Date(updateParkingLotDto.close_time);
+    }
+
+    if (updateParkingLotDto.operating_days) {
+      parkingLot.operating_days = updateParkingLotDto.operating_days;
     }
 
     if (files && files.length > 0) {
