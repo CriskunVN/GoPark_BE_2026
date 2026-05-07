@@ -8,7 +8,11 @@ import { UserResDto } from '../users/dto/user-res.dto';
 import { Not, Repository } from 'typeorm';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
 import { RequestService } from '../request/request.service';
-import { ParkingLotStatus, RequestStatus } from 'src/common/enums/status.enum';
+import {
+  ParkingLotStatus,
+  RequestStatus,
+  TransactionStatus,
+} from 'src/common/enums/status.enum';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RequestType, Request } from '../request/entities/request.entity';
 import { ParkingLotService } from '../parking-lot/parking-lot.service';
@@ -19,6 +23,10 @@ import { User } from '../users/entities/user.entity';
 import { NotificationService } from '../notification/notification.service';
 import { ParkingLot } from '../parking-lot/entities/parking-lot.entity';
 import { NotificationType } from 'src/common/enums/type.enum';
+import { Transaction } from '../payment/entities/transaction.entity';
+import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
+import { TransactionType } from '../wallet/enums/transaction-type.enum';
+import { TransactionStatus as WalletTransactionStatus } from '../wallet/enums/transaction-status.enum';
 
 @Injectable()
 export class AdminService {
@@ -32,6 +40,10 @@ export class AdminService {
     @InjectRepository(Request) private requestRepository: Repository<Request>,
     @InjectRepository(ParkingLot)
     private parkingLotRepository: Repository<ParkingLot>,
+    @InjectRepository(Transaction)
+    private transactionRepository: Repository<Transaction>,
+    @InjectRepository(WalletTransaction)
+    private walletTransactionRepository: Repository<WalletTransaction>,
   ) {}
 
   //Admin có thể xem tất cả người dùng
@@ -559,6 +571,146 @@ export class AdminService {
 
   // ========== Get transaction stats (transaction stats) ================
   async getTransactionStats() {
-    // Tổng giao dịch trong tháng
+    const formatVnd = (value: number) =>
+      `${Math.round(value).toLocaleString('vi-VN')} ₫`;
+    // Chỉ lấy dữ liệu trong tháng hiện tại (từ đầu tháng đến đầu tháng sau)
+    const now = new Date();
+    const startOfMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+      0,
+      0,
+      0,
+    );
+    const startOfNextMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      1,
+      0,
+      0,
+      0,
+    );
+
+    // Các loại giao dịch ví cần tính vào thống kê
+    const walletStatTypes = [
+      TransactionType.DEPOSIT,
+      TransactionType.PAYMENT,
+      TransactionType.EARN_PARKING_FEE,
+      TransactionType.REFUND,
+      TransactionType.WITHDRAW,
+    ];
+
+    const [
+      gatewayTotalCount,
+      gatewaySuccessCount,
+      gatewaySuccessSumRaw,
+      gatewayRefundSumRaw,
+      walletTotalCount,
+      walletSuccessCount,
+      walletIncomeSumRaw,
+      walletRefundSumRaw,
+    ] = await Promise.all([
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .getCount(),
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.SUCCESS })
+        .getCount(),
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .select('COALESCE(SUM(t.amount), 0)', 'sum')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.SUCCESS })
+        .getRawOne(),
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .select('COALESCE(SUM(t.amount), 0)', 'sum')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.REFUNDED })
+        .getRawOne(),
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.type IN (:...types)', { types: walletStatTypes })
+        .getCount(),
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.status = :status', {
+          status: WalletTransactionStatus.SUCCESS,
+        })
+        .andWhere('wt.type IN (:...types)', { types: walletStatTypes })
+        .getCount(),
+      // Tổng tiền thu vào: nạp tiền + phí đỗ xe (không tính hoàn tiền)
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .select('COALESCE(SUM(wt.amount), 0)', 'sum')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.status = :status', {
+          status: WalletTransactionStatus.SUCCESS,
+        })
+        .andWhere('wt.type IN (:...types)', {
+          types: [TransactionType.DEPOSIT, TransactionType.EARN_PARKING_FEE],
+        })
+        .getRawOne(),
+      // Tổng tiền hoàn từ ví (hoàn tiền + rút tiền)
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .select('COALESCE(SUM(ABS(wt.amount)), 0)', 'sum')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.status = :status', {
+          status: WalletTransactionStatus.SUCCESS,
+        })
+        .andWhere('wt.type IN (:...types)', {
+          types: [TransactionType.REFUND, TransactionType.WITHDRAW],
+        })
+        .getRawOne(),
+    ]);
+
+    const totalTransactions = gatewayTotalCount + walletTotalCount;
+    const successTransactions = gatewaySuccessCount + walletSuccessCount;
+    // Tổng thu = giao dịch cổng thành công + thu từ ví
+    const totalIncome =
+      Number(gatewaySuccessSumRaw?.sum ?? 0) +
+      Number(walletIncomeSumRaw?.sum ?? 0);
+    // Tổng hoàn = giao dịch cổng hoàn + hoàn từ ví
+    const totalRefund =
+      Number(gatewayRefundSumRaw?.sum ?? 0) +
+      Number(walletRefundSumRaw?.sum ?? 0);
+
+    return {
+      totalTransactions,
+      successTransactions,
+      totalIncome: formatVnd(totalIncome),
+      totalRefund: formatVnd(totalRefund),
+    };
   }
 }

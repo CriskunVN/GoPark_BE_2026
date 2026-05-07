@@ -176,4 +176,11 @@ export class AdminController {
       data,
     };
   }
+
+  // =========== Thống kê giao dịch ================
+  @Get('/stats/transactions')
+  async getTransactionStats() {
+    const stats = await this.adminService.getTransactionStats();
+    return { data: stats };
+  }
 }

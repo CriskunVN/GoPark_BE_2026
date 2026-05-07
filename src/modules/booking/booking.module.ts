@@ -15,6 +15,7 @@ import { ActivityModule } from '../activity/activity.module';
 import { ParkingModule } from '../parking-lot/parking-lot.module';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
+import { VoucherModule } from '../voucher/voucher.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { UsersModule } from '../users/users.module';
     UsersModule,
     forwardRef(() => WalletModule),
     forwardRef(() => ParkingModule),
+    VoucherModule,
   ],
   controllers: [BookingController],
   providers: [BookingService],

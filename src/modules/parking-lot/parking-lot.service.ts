@@ -6,7 +6,15 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Not, EntityManager, ILike, Between, In } from 'typeorm';
+import {
+  Repository,
+  DataSource,
+  Not,
+  EntityManager,
+  ILike,
+  Between,
+  In,
+} from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -53,7 +61,7 @@ export interface OcrSpaceResponse {
 
 @Injectable()
 export class ParkingLotService {
-  private sentReminderIds = new Set<string>()
+  private sentReminderIds = new Set<string>();
   constructor(
     @InjectRepository(ParkingLot)
     private parkingLotRepository: Repository<ParkingLot>,
@@ -82,10 +90,7 @@ export class ParkingLotService {
     private dataSource: DataSource,
     private mailService: EmailService,
     private readonly supabaseService: SupabaseService,
-    
-  ) { }
-
-
+  ) {}
 
   async createParkingLot(
     createParkingLotDto: CreateParkingLotReqDto,
@@ -221,7 +226,9 @@ export class ParkingLotService {
     }
 
     if (!isModified) {
-      throw new BadRequestException('Không tìm thấy hình ảnh trong bãi đỗ xe này');
+      throw new BadRequestException(
+        'Không tìm thấy hình ảnh trong bãi đỗ xe này',
+      );
     }
 
     // Delete physically from Supabase
@@ -237,7 +244,6 @@ export class ParkingLotService {
     const updatedParkingLot = await this.parkingLotRepository.save(parkingLot);
     return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
   }
-
 
   // ─── Get users of a parking lot (with optional search) ───────────────────
   async getUsersByParkingLot(
@@ -484,7 +490,8 @@ export class ParkingLotService {
       const apiKey = String(process.env.OCR_API_KEY || 'K88596879988957');
       const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
       const normalizedLanguage =
-        typeof language === 'string' && ['eng', 'vie'].includes(language.toLowerCase())
+        typeof language === 'string' &&
+        ['eng', 'vie'].includes(language.toLowerCase())
           ? language.toLowerCase()
           : 'eng';
 
@@ -507,7 +514,9 @@ export class ParkingLotService {
       if (
         result.IsErroredOnProcessing &&
         normalizedLanguage === 'vie' &&
-        String(result.ErrorMessage?.[0] || '').includes("parameter 'language' is invalid")
+        String(result.ErrorMessage?.[0] || '').includes(
+          "parameter 'language' is invalid",
+        )
       ) {
         result = await parseWithLanguage('eng');
       }
@@ -632,7 +641,7 @@ export class ParkingLotService {
     user: any,
   ) {
     const parkingLot = await this.validateLotAccess(parkingLotId, user);
-    
+
     // 2. Xác minh slot thuộc bãi này và load thông tin zone + pricing
     const slot = await this.parkingSlotRepository.findOne({
       where: { id: dto.slotId },
@@ -846,7 +855,7 @@ export class ParkingLotService {
     };
   }
 
-  async getPublicParkingLotDetail(lotid: number,userId:string) {
+  async getPublicParkingLotDetail(lotid: number, userId: string) {
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotid }, // Bỏ status ACTIVE để sơ đồ hiển thị ngay cả khi đang PENDING
       relations: [
@@ -855,7 +864,7 @@ export class ParkingLotService {
         'parkingFloor',
         'parkingFloor.parkingZones',
         'parkingFloor.parkingZones.pricingRule',
-        'parkingFloor.parkingZones.slot'
+        'parkingFloor.parkingZones.slot',
       ],
     });
 
@@ -876,7 +885,7 @@ export class ParkingLotService {
       // Giả sử bạn đã inject VehicleRepository vào service này
       userVehicles = await this.vehicleRepository.find({
         where: { user: { id: userId } },
-        relations: ['user']
+        relations: ['user'],
       });
     }
 
@@ -1260,8 +1269,8 @@ export class ParkingLotService {
     if (availableSlots.length < toDisable) {
       throw new BadRequestException(
         `Không thể giảm xuống ${targetCount} slot: ` +
-        `có ${currentActiveCount - availableSlots.length} slot đang OCCUPIED/RESERVED, ` +
-        `chỉ có thể vô hiệu hoá tối đa ${currentActiveCount - (currentActiveCount - availableSlots.length)} slot.`,
+          `có ${currentActiveCount - availableSlots.length} slot đang OCCUPIED/RESERVED, ` +
+          `chỉ có thể vô hiệu hoá tối đa ${currentActiveCount - (currentActiveCount - availableSlots.length)} slot.`,
       );
     }
 
@@ -1460,7 +1469,7 @@ export class ParkingLotService {
         'pl.id AS id',
         'pl.name AS name',
         'pl.address AS address',
-        'pl.image AS image'
+        'pl.image AS image',
       ])
       // parking-lot.service.ts
       .addSelect('ROUND(COALESCE(AVG(r.rating), 0), 1)', 'avgRating')
@@ -1476,7 +1485,7 @@ export class ParkingLotService {
         lng: Number(lng),
         lat: Number(lat),
         parkingLotId,
-        status: 'ACTIVE'
+        status: 'ACTIVE',
       })
       .where('pl.id != :parkingLotId AND pl.status = :status', {
         parkingLotId,
@@ -1772,53 +1781,52 @@ export class ParkingLotService {
   async handleBookingExpirationReminders() {
     const now = new Date();
     const reminderTimeStart = new Date(now.getTime() + 9 * 60000);
-    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000); 
+    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000);
 
-    const bookings = await this.bookingRepository.find({
-      where: {
-        status: In([BookingStatus.CONFIRMED, BookingStatus.ONGOING]),
-        end_time: Between(reminderTimeStart, reminderTimeEnd),
-      },
-      relations: [
-        'user',
-        'user.profile',
-        'slot',
-        'slot.parkingZone',
-        'slot.parkingZone.parkingFloor',
-        'slot.parkingZone.parkingFloor.parkingLot',
-        'vehicle'
-      ],
-      select: {
-        id: true,
-        end_time: true,
-        status: true,
-        user: {
-          id: true,
-          email: true,
-          profile: {
-            id: true,
-            name: true,
-          }
-        },
-        slot: {
-          id: true,
-          parkingZone: {
-            id: true,
-            parkingFloor: {
-              id: true,
-              parkingLot: {
-                id: true,
-                name: true,
-              }
-            }
-          }
-        },
-        vehicle: {
-          id: true,
-          plate_number: true,
-        }
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let bookings: Booking[] = [];
+    try {
+      const bookingIdRows = await queryRunner.manager
+        .getRepository(Booking)
+        .createQueryBuilder('booking')
+        .select('booking.id', 'id')
+        .where('booking.status IN (:...statuses)', {
+          statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING],
+        })
+        .andWhere('booking.end_time BETWEEN :start AND :end', {
+          start: reminderTimeStart,
+          end: reminderTimeEnd,
+        })
+        .setLock('pessimistic_read')
+        .setOnLocked('skip_locked')
+        .getRawMany();
+
+      const bookingIds = bookingIdRows.map((row) => row.id);
+      if (bookingIds.length > 0) {
+        bookings = await queryRunner.manager.getRepository(Booking).find({
+          where: { id: In(bookingIds) },
+          relations: [
+            'user',
+            'user.profile',
+            'slot',
+            'slot.parkingZone',
+            'slot.parkingZone.parkingFloor',
+            'slot.parkingZone.parkingFloor.parkingLot',
+            'vehicle',
+          ],
+        });
       }
-    });
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
 
     for (const booking of bookings) {
       const bId = (booking as any).id;
@@ -1832,12 +1840,17 @@ export class ParkingLotService {
         const userEmail = booking.user.email;
         const userName = booking.user.profile?.name || 'Khách hàng';
         const plateNumber = booking.vehicle?.plate_number || 'không rõ biển số';
-        const lotName = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'Bãi đỗ xe';
-        
-        const endTimeStr = new Date(booking.end_time).toLocaleTimeString('vi-VN', {
-          hour: '2-digit',
-          minute: '2-digit'
-        });
+        const lotName =
+          booking.slot?.parkingZone?.parkingFloor?.parkingLot?.name ||
+          'Bãi đỗ xe';
+
+        const endTimeStr = new Date(booking.end_time).toLocaleTimeString(
+          'vi-VN',
+          {
+            hour: '2-digit',
+            minute: '2-digit',
+          },
+        );
 
         // GỌI HÀM RIÊNG TỪ EMAIL SERVICE
         await this.mailService.sendExpirationReminderEmail(
@@ -1846,14 +1859,13 @@ export class ParkingLotService {
           {
             lotName,
             plateNumber,
-            endTimeStr
-          }
+            endTimeStr,
+          },
         );
 
         // Đánh dấu đã gửi thành công
         this.sentReminderIds.add(bId);
         console.log(`[Success] Đã gửi mail nhắc nhở cho ${userEmail}`);
-        
       } catch (error) {
         console.error(`[Reminder] Lỗi khi gửi mail cho đơn ${bId}:`, error);
       }

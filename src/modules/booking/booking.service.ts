@@ -38,6 +38,8 @@ import { Invoice } from '../payment/entities/invoice.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
+import { VoucherService } from '../voucher/voucher.service';
+import { VoucherCleanupService } from '../voucher/voucher-cleanup.service';
 
 @Injectable()
 export class BookingService {
@@ -65,122 +67,193 @@ export class BookingService {
 
     @Inject(forwardRef(() => ParkingLotService))
     private readonly parkingLotService: ParkingLotService,
-  ) { }
+
+    private readonly voucherService: VoucherService,
+    private readonly voucherCleanupService: VoucherCleanupService,
+  ) {}
 
   // ================= CREATE BOOKING =================
   async createBooking(bookingdto: CreateBookingDto) {
     try {
-      //1. Dọn dẹp booking quá hạn (Cần await để tránh race condition xóa nhầm bản ghi đang xử lý)
-      await this.bookingRepository
-        .createQueryBuilder()
-        .delete()
-        .from(Booking)
-        .where('status = :status', { status: 'PENDING' })
-        .andWhere('created_at < :expiredTime', {
-          expiredTime: new Date(Date.now() - 2 * 60 * 1000),
-        })
-        .execute();
+      const subTotal = bookingdto.sub_total ?? 0;
+      const voucherCode = bookingdto.voucher_code?.trim();
 
-      //2. kiểm tra xe có đang bận ở vị trí khác không
-      const startTime = new Date(bookingdto.start_time);
-      const endTime = new Date(bookingdto.end_time);
+      await this.voucherCleanupService.cleanupExpiredPendingBookings();
 
-      const conflictingVehicle = await this.bookingRepository
-        .createQueryBuilder('booking')
-        .where('booking.vehicle = :vehicleId', {
-          vehicleId: bookingdto.vehicle_id,
-        })
-        // Chỉ check các booking "sống": Đã thanh toán, đang đỗ, hoặc đang chờ thanh toán
-        .andWhere('booking.status IN (:...statuses)', {
-          statuses: [
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-            BookingStatus.ONGOING,
-          ],
-        })
-        // Công thức overlap: (Start1 < End2) AND (End1 > Start2)
-        .andWhere('booking.start_time < :endTime', { endTime })
-        .andWhere('booking.end_time > :startTime', { startTime })
-        .getOne();
+      const queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
 
-      if (conflictingVehicle) {
-        throw new BadRequestException(
-          `Xe này đã có lịch đặt chỗ trong khoảng thời gian từ ${dayjs(conflictingVehicle.start_time).format('HH:mm')} đến ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`,
+      try {
+        //2. kiểm tra xe có đang bận ở vị trí khác không
+        const startTime = new Date(bookingdto.start_time);
+        const endTime = new Date(bookingdto.end_time);
+
+        const conflictingVehicle = await queryRunner.manager
+          .createQueryBuilder(Booking, 'booking')
+          .where('booking.vehicle = :vehicleId', {
+            vehicleId: bookingdto.vehicle_id,
+          })
+          // Chỉ check các booking "sống": Đã thanh toán, đang đỗ, hoặc đang chờ thanh toán
+          .andWhere('booking.status IN (:...statuses)', {
+            statuses: [
+              BookingStatus.PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.ONGOING,
+            ],
+          })
+          // Công thức overlap: (Start1 < End2) AND (End1 > Start2)
+          .andWhere('booking.start_time < :endTime', { endTime })
+          .andWhere('booking.end_time > :startTime', { startTime })
+          .getOne();
+
+        if (conflictingVehicle) {
+          throw new BadRequestException(
+            `Xe này đã có lịch đặt chỗ trong khoảng thời gian từ ${dayjs(conflictingVehicle.start_time).format('HH:mm')} đến ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`,
+          );
+        }
+
+        const slot = await queryRunner.manager.findOne(ParkingSlot, {
+          where: { id: bookingdto.slot_id },
+        });
+
+        if (!slot) {
+          throw new NotFoundException('Không tìm thấy chỗ đỗ');
+        }
+
+        // Kiểm tra trạng thái
+        if (slot.status.toLowerCase() === 'booked') {
+          throw new BadRequestException('Chỗ này đã được đặt');
+        }
+
+        // Kiểm tra xem user đã có booking pending nào chưa
+        let newbooking = await queryRunner.manager.findOne(Booking, {
+          where: {
+            user: { id: bookingdto.user_id },
+            status: BookingStatus.PENDING,
+          },
+          relations: ['qrCode'],
+        });
+
+        if (newbooking) {
+          // NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
+          newbooking.start_time = new Date(bookingdto.start_time);
+          newbooking.end_time = new Date(bookingdto.end_time);
+          newbooking.vehicle = { id: bookingdto.vehicle_id } as any;
+          newbooking.slot = { id: bookingdto.slot_id } as any;
+          newbooking.created_at = new Date();
+        } else {
+          newbooking = queryRunner.manager.create(Booking, {
+            start_time: bookingdto.start_time,
+            end_time: bookingdto.end_time,
+            status: BookingStatus.PENDING,
+            user: { id: bookingdto.user_id },
+            vehicle: { id: bookingdto.vehicle_id },
+            slot: { id: bookingdto.slot_id },
+          });
+        }
+        const savedBooking = await queryRunner.manager.save(
+          Booking,
+          newbooking,
         );
-      }
 
-      const slot = await this.parkingSlotRepository.findOne({
-        where: { id: bookingdto.slot_id },
-      });
+        await this.voucherService.rollbackUsageForBooking(
+          savedBooking.id,
+          queryRunner.manager,
+        );
 
-      if (!slot) {
-        throw new NotFoundException('Không tìm thấy chỗ đỗ');
-      }
+        let appliedVoucher: { id: string } | null = null;
+        let discountAmount = 0;
 
-      // Kiểm tra trạng thái
-      if (slot.status.toLowerCase() === 'booked') {
-        throw new BadRequestException('Chỗ này đã được đặt');
-      }
+        if (voucherCode) {
+          if (subTotal <= 0) {
+            throw new BadRequestException('Gia tri don hang khong hop le');
+          }
 
-      // Kiểm tra xem user đã có booking pending nào chưa
-      let newbooking = await this.bookingRepository.findOne({
-        where: {
-          user: { id: bookingdto.user_id },
-          status: BookingStatus.PENDING,
-        },
-        relations: ['qrCode'],
-      });
+          const result = await this.voucherService.validateAndLockVoucher(
+            voucherCode,
+            bookingdto.user_id,
+            subTotal,
+            queryRunner.manager,
+          );
 
-      if (newbooking) {
-        // NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
-        newbooking.start_time = new Date(bookingdto.start_time);
-        newbooking.end_time = new Date(bookingdto.end_time);
-        newbooking.vehicle = { id: bookingdto.vehicle_id } as any;
-        newbooking.slot = { id: bookingdto.slot_id } as any;
-        newbooking.created_at = new Date();
-      } else {
-        newbooking = this.bookingRepository.create({
-          start_time: bookingdto.start_time,
-          end_time: bookingdto.end_time,
-          status: BookingStatus.PENDING,
-          user: { id: bookingdto.user_id },
-          vehicle: { id: bookingdto.vehicle_id },
-          slot: { id: bookingdto.slot_id },
-        });
-      }
-      const savedBooking = await this.bookingRepository.save(newbooking);
+          appliedVoucher = { id: result.voucher.id };
+          discountAmount = result.discountAmount;
 
-      // Tạo QR
-      let qrCode = await this.qrcodeRepository.findOne({
-        where: { booking: { id: savedBooking.id } },
-      });
+          await this.voucherService.applyVoucherUsage(
+            result.voucher,
+            savedBooking.id,
+            bookingdto.user_id,
+            queryRunner.manager,
+          );
+        }
 
-      if (!qrCode) {
-        qrCode = this.qrcodeRepository.create({
-          booking: savedBooking,
-          content: `PARK-${uuidv4()}`, // Tạo chuỗi ngẫu nhiên duy nhất
-          status: 'active',
+        const total = Math.max(0, subTotal - discountAmount);
+        const invoiceRepo = queryRunner.manager.getRepository(Invoice);
+        let invoice = await invoiceRepo.findOne({
+          where: { booking: { id: savedBooking.id } },
         });
 
-        await this.qrcodeRepository.save(qrCode);
-      } else {
-        // Nếu đã có QR rồi, có thể cập nhật nội dung mới nếu muốn, hoặc giữ nguyên
-        qrCode.status = 'active';
-        await this.qrcodeRepository.save(qrCode);
+        if (invoice) {
+          invoice.sub_total = subTotal;
+          invoice.discount_amount = discountAmount;
+          invoice.total = total;
+          invoice.tax = invoice.tax ?? 0;
+          invoice.status = InvoiceStatus.PENDING;
+          invoice.voucher = appliedVoucher as any;
+        } else {
+          invoice = invoiceRepo.create({
+            booking: savedBooking,
+            sub_total: subTotal,
+            discount_amount: discountAmount,
+            total,
+            tax: 0,
+            status: InvoiceStatus.PENDING,
+            voucher: appliedVoucher as any,
+          });
+        }
+
+        await invoiceRepo.save(invoice);
+
+        // Tạo QR
+        const qrRepo = queryRunner.manager.getRepository(QRCode);
+        let qrCode = await qrRepo.findOne({
+          where: { booking: { id: savedBooking.id } },
+        });
+
+        if (!qrCode) {
+          qrCode = qrRepo.create({
+            booking: savedBooking,
+            content: `PARK-${uuidv4()}`,
+            status: 'active',
+          });
+        } else {
+          // Nếu đã có QR rồi, có thể cập nhật nội dung mới nếu muốn, hoặc giữ nguyên
+          qrCode.status = 'active';
+        }
+
+        await qrRepo.save(qrCode);
+
+        await queryRunner.commitTransaction();
+
+        // Activity log cho việc tạo mới booking
+        this.activityService.templateforBookingActivity(
+          savedBooking.id,
+          bookingdto.user_id,
+          ActivityType.BOOKING_NEW,
+          ActivityStatus.SUCCESS,
+        );
+
+        return {
+          ...savedBooking,
+          qrCodeContent: qrCode.content, //trả về để app vẽ hình QR
+        };
+      } catch (error) {
+        await queryRunner.rollbackTransaction();
+        throw error;
+      } finally {
+        await queryRunner.release();
       }
-
-      // Activity log cho việc tạo mới booking
-      this.activityService.templateforBookingActivity(
-        savedBooking.id,
-        bookingdto.user_id,
-        ActivityType.BOOKING_NEW,
-        ActivityStatus.SUCCESS,
-      );
-
-      return {
-        ...savedBooking,
-        qrCodeContent: qrCode.content, //trả về để app vẽ hình QR
-      };
     } catch (error) {
       // In lỗi ra terminal để bạn đọc được nó bị gì
       console.error('LỖI TẠI CREATE_BOOKING:', error);
@@ -222,8 +295,8 @@ export class BookingService {
         where: { parkingZone: { id: Number(booking.slot.parkingZone.id) } },
         order: { id: 'DESC' },
       });
-      console.log("DEBUG: Tìm giá cho Zone ID =", booking.slot.parkingZone.id);
-      console.log("DEBUG: Kết quả Pricing =", pricing);
+      console.log('DEBUG: Tìm giá cho Zone ID =', booking.slot.parkingZone.id);
+      console.log('DEBUG: Kết quả Pricing =', pricing);
 
       const pricePerHour = pricing?.price_per_hour || 0;
       const priceDay = pricing?.price_per_day || 0;
@@ -305,10 +378,12 @@ export class BookingService {
         // Tạo hóa đơn gia hạn
         const invoiceData: any = {
           booking: booking,
+          sub_total: extraAmount,
+          discount_amount: 0,
           total: extraAmount,
           tax: 0,
           description: `Gia hạn thêm ${days > 0 ? days + ' ngày ' : ''}${remainingMinutes} phút tại ${zoneName}`,
-          status: 'PAID',
+          status: InvoiceStatus.PAID,
         };
 
         const newInvoice = manager.create(Invoice, invoiceData);
@@ -514,26 +589,25 @@ export class BookingService {
         status: In([BookingStatus.CONFIRMED, BookingStatus.ONGOING]),
       },
       relations: [
-        "user",
-        "user.profile",
-        "vehicle",
-        "slot",
-        "slot.parkingZone",
-        "slot.parkingZone.parkingFloor",
-        "invoice",
+        'user',
+        'user.profile',
+        'vehicle',
+        'slot',
+        'slot.parkingZone',
+        'slot.parkingZone.parkingFloor',
+        'invoice',
       ],
-      order: { created_at: "DESC" },
+      order: { created_at: 'DESC' },
     });
 
     if (!booking) {
       throw new NotFoundException(
-        "Không tìm thấy đơn đặt chỗ hoạt động tại vị trí này",
+        'Không tìm thấy đơn đặt chỗ hoạt động tại vị trí này',
       );
     }
 
     return booking;
   }
-
 
   // danh sách các xe đặt(Ve-QR)
   async getLatestActiveBooking(vehicleId: number, userId: string) {
@@ -542,7 +616,7 @@ export class BookingService {
         {
           vehicle: { id: vehicleId },
           user: { id: userId },
-        }
+        },
       ],
       relations: [
         'slot',
@@ -552,14 +626,12 @@ export class BookingService {
       ],
       // Quan trọng: Sắp xếp theo ID hoặc thời gian tạo giảm dần để lấy cái mới nhất
       order: {
-        created_at: 'DESC'
-      }
+        created_at: 'DESC',
+      },
     });
-    console.log(">>> [BE] Kết quả tìm kiếm:", data);
+    console.log('>>> [BE] Kết quả tìm kiếm:', data);
     return data;
   }
-
-
 
   // ================= BOOKING BY PARKING LOT =================
 
@@ -844,8 +916,12 @@ export class BookingService {
         end: firstDayOfThisMonth,
       })
       // Thống kê doanh thu dự kiến từ các đơn hợp lệ
-      .andWhere('b.status IN (:...statuses)', { 
-        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      .andWhere('b.status IN (:...statuses)', {
+        statuses: [
+          BookingStatus.CONFIRMED,
+          BookingStatus.ONGOING,
+          BookingStatus.COMPLETED,
+        ],
       })
       .select('SUM(COALESCE(i.total, 0))', 'total')
       .getRawOne();
@@ -892,12 +968,16 @@ export class BookingService {
 
     const slotsData = await lotsQuery
       .select('COUNT(s.id)', 'total')
-      .addSelect('SUM(CASE WHEN s.status = \'OCCUPIED\' THEN 1 ELSE 0 END)', 'occupied')
+      .addSelect(
+        "SUM(CASE WHEN s.status = 'OCCUPIED' THEN 1 ELSE 0 END)",
+        'occupied',
+      )
       .getRawOne();
 
     const totalSlots = parseInt(slotsData.total, 10) || 0;
     const occupiedSlots = parseInt(slotsData.occupied, 10) || 0;
-    const occupancyRate = totalSlots > 0 ? (occupiedSlots / totalSlots) * 100 : 0;
+    const occupancyRate =
+      totalSlots > 0 ? (occupiedSlots / totalSlots) * 100 : 0;
 
     return {
       monthlyRevenue,
@@ -922,8 +1002,12 @@ export class BookingService {
       .andWhere('EXTRACT(YEAR FROM b.start_time) = :year', { year })
       // Tạm thời bỏ qua status PAID để thấy dữ liệu dự kiến
       // .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
-      .andWhere('b.status IN (:...statuses)', { 
-        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      .andWhere('b.status IN (:...statuses)', {
+        statuses: [
+          BookingStatus.CONFIRMED,
+          BookingStatus.ONGOING,
+          BookingStatus.COMPLETED,
+        ],
       })
       .select('EXTRACT(MONTH FROM b.start_time)', 'month')
       .addSelect('SUM(COALESCE(i.total, 0))', 'revenue')
@@ -950,14 +1034,16 @@ export class BookingService {
   }
 
   async getPaymentMethodStats(
-    ownerId: string, 
+    ownerId: string,
     lotId?: number,
     startDate?: string,
     endDate?: string,
   ) {
     try {
       // Nếu không có ngày, mặc định lấy tháng hiện tại
-      let start = startDate ? new Date(startDate) : dayjs().startOf('month').toDate();
+      let start = startDate
+        ? new Date(startDate)
+        : dayjs().startOf('month').toDate();
       let end = endDate ? new Date(endDate) : dayjs().endOf('month').toDate();
 
       const query = this.bookingRepository
@@ -978,10 +1064,10 @@ export class BookingService {
       }
 
       const rawData = await query
-        .select('COALESCE(p.method, \'WALLET\')', 'method') // Mặc định là WALLET nếu không có bản ghi payment
+        .select("COALESCE(p.method, 'WALLET')", 'method') // Mặc định là WALLET nếu không có bản ghi payment
         .addSelect('COUNT(DISTINCT i.id)', 'count')
         .addSelect('SUM(i.total)', 'total')
-        .groupBy('COALESCE(p.method, \'WALLET\')')
+        .groupBy("COALESCE(p.method, 'WALLET')")
         .getRawMany();
 
       return rawData.map((row) => ({
@@ -989,7 +1075,7 @@ export class BookingService {
         value: parseFloat(row.total) || 0,
         count: parseInt(row.count, 10) || 0,
       }));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching payment method stats:', error.message);
       return [];
     }
@@ -999,7 +1085,7 @@ export class BookingService {
     const queryDate = dateStr ? new Date(dateStr) : new Date();
     const startOfDay = dayjs(queryDate).startOf('day').toDate();
     const endOfDay = dayjs(queryDate).endOf('day').toDate();
-    
+
     const query = this.bookingRepository
       .createQueryBuilder('b')
       .leftJoin('b.invoice', 'i')
@@ -1009,13 +1095,17 @@ export class BookingService {
       .innerJoin('f.parkingLot', 'l')
       .innerJoin('l.owner', 'owner')
       .where('owner.id = :ownerId', { ownerId })
-      .andWhere('b.start_time >= :start AND b.start_time <= :end', { 
-        start: startOfDay, 
-        end: endOfDay 
+      .andWhere('b.start_time >= :start AND b.start_time <= :end', {
+        start: startOfDay,
+        end: endOfDay,
       })
       // Thống kê cả những đơn đang hoạt động
-      .andWhere('b.status IN (:...statuses)', { 
-        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      .andWhere('b.status IN (:...statuses)', {
+        statuses: [
+          BookingStatus.CONFIRMED,
+          BookingStatus.ONGOING,
+          BookingStatus.COMPLETED,
+        ],
       });
 
     if (lotId) {
@@ -1054,8 +1144,12 @@ export class BookingService {
       .innerJoin('l.owner', 'owner')
       .where('owner.id = :ownerId', { ownerId })
       // Thống kê top bãi xe dựa trên tất cả đơn đặt
-      .andWhere('b.status IN (:...statuses)', { 
-        statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.COMPLETED] 
+      .andWhere('b.status IN (:...statuses)', {
+        statuses: [
+          BookingStatus.CONFIRMED,
+          BookingStatus.ONGOING,
+          BookingStatus.COMPLETED,
+        ],
       })
       .select('l.id', 'lotId')
       .addSelect('l.name', 'name')
@@ -1067,8 +1161,8 @@ export class BookingService {
           FROM parking_slots s2 
           JOIN parking_zones z2 ON z2.id = s2.parking_zone_id 
           JOIN parking_floors f2 ON f2.id = z2.parking_floor_id 
-          WHERE f2.parking_lot_id = l.id)`, 
-        'occupancy_rate'
+          WHERE f2.parking_lot_id = l.id)`,
+        'occupancy_rate',
       )
       .groupBy('l.id')
       .addGroupBy('l.name')

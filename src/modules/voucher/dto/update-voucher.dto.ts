@@ -1,0 +1,59 @@
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
+import {
+  VoucherDiscountType,
+  VoucherStatus,
+} from 'src/common/enums/voucher.enum';
+
+export class UpdateVoucherDto {
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsEnum(VoucherDiscountType)
+  discount_type?: VoucherDiscountType;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  discount_value?: number;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  max_discount_amount?: number | null;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  min_booking_value?: number;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  usage_limit?: number;
+
+  @IsOptional()
+  @IsDateString()
+  start_time?: string;
+
+  @IsOptional()
+  @IsDateString()
+  end_time?: string;
+
+  @IsOptional()
+  @IsEnum(VoucherStatus)
+  status?: VoucherStatus;
+}
