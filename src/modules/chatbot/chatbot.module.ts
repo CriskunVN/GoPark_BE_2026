@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { ChatbotService } from './chatbot.service';
 import { ChatbotController } from './chatbot.controller';
+import { OwnerChatbotController } from './owner-chatbot.controller';
+import { OwnerChatbotService } from './owner-chatbot.service';
 import { AuthGuard } from './guards/auth.guard';
 import { OptionalAuthGuard } from './guards/optional-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { ChatbotStateService } from './chatbot-state.service';
 
 @Module({
@@ -30,11 +34,14 @@ import { ChatbotStateService } from './chatbot-state.service';
   ],
   providers: [
     ChatbotService,
+    OwnerChatbotService,
     AuthGuard,
     OptionalAuthGuard,
+    RolesGuard,
+    Reflector,
     ChatbotStateService,
   ],
-  controllers: [ChatbotController],
-  exports: [ChatbotService],
+  controllers: [ChatbotController, OwnerChatbotController],
+  exports: [ChatbotService, OwnerChatbotService],
 })
 export class ChatbotModule {}

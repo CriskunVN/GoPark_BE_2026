@@ -500,7 +500,7 @@ QUAN TRỌNG:
       return { error: `Chỉ hủy được booking ở trạng thái PENDING/CONFIRMED` };
     }
     await this.dataSource.query(
-      `UPDATE bookings SET status = 'CANCELLED' WHERE id = $1`,
+      `UPDATE bookings SET status = 'COMPLETED' WHERE id = $1`,
       [bookingId],
     );
     return { success: true, message: `Đã hủy booking #${bookingId}` };

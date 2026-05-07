@@ -17,9 +17,8 @@ import { OptionalAuthGuard } from './guards/optional-auth.guard';
 export class ChatbotController {
   constructor(private readonly chatbotService: ChatbotService) {}
 
-  // ─── Health check (yêu cầu đăng nhập) ────────────────────────────────────
+  // ─── Health check (public) ───────────────────────────────────────────────
   @Get('status')
-  @UseGuards(AuthGuard)
   async status() {
     const result = await this.chatbotService.checkModels();
     return { status: 'ok', running: true, models: result };

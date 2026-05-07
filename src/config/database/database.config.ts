@@ -13,7 +13,7 @@ export const getDatabaseConfig = (
 
     // Tắt synchronize khi dùng Supabase (cloud DB với RLS).
     // Schema thay đổi phải chạy thủ công qua Supabase SQL Editor.
-    synchronize: true,
+    synchronize: false,
 
     // Log SQL queries - Tắt log query để terminal gọn gàng hơn
     logging: false,
