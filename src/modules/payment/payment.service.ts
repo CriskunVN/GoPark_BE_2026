@@ -23,6 +23,7 @@ import { Booking } from '../booking/entities/booking.entity';
 import { DataSource } from 'typeorm';
 import { ParkingSlot } from '../parking-lot/entities/parking-slot.entity';
 import { WalletService } from '../wallet/wallet.service';
+import { VoucherService } from '../voucher/voucher.service';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
 import { TransactionType } from '../wallet/enums/transaction-type.enum';
@@ -44,6 +45,7 @@ export class PaymentService {
     private readonly bookingRepository: Repository<Booking>,
     private dataSource: DataSource,
     private readonly walletService: WalletService,
+    private readonly voucherService: VoucherService,
   ) {}
 
   async handleBookingVnpayPayment(
@@ -76,14 +78,34 @@ export class PaymentService {
       const tempFileName = `inv-${bookingId}-${Date.now()}.pdf`;
       const invoiceFileUrl = `/invoices/${bookingId}/${tempFileName}`;
 
-      const invoice = queryRunner.manager.create(Invoice, {
-        total: amount,
-        tax: 0,
-        status: InvoiceStatus.PAID,
-        file_url: invoiceFileUrl,
-        booking: { id: bookingId },
+      const invoiceRepo = queryRunner.manager.getRepository(Invoice);
+      let invoice = await invoiceRepo.findOne({
+        where: { booking: { id: bookingId } },
       });
-      const savedInvoice = await queryRunner.manager.save(invoice);
+
+      if (invoice) {
+        invoice.file_url = invoiceFileUrl;
+        invoice.status = InvoiceStatus.PAID;
+        const subTotal = Number(invoice.sub_total ?? 0);
+        const discountAmount = Number(invoice.discount_amount ?? 0);
+        const total = Number(invoice.total ?? 0);
+        invoice.sub_total = subTotal > 0 ? subTotal : amount;
+        invoice.discount_amount = discountAmount;
+        invoice.total = total > 0 ? total : amount;
+        invoice.tax = invoice.tax ?? 0;
+      } else {
+        invoice = invoiceRepo.create({
+          sub_total: amount,
+          discount_amount: 0,
+          total: amount,
+          tax: 0,
+          status: InvoiceStatus.PAID,
+          file_url: invoiceFileUrl,
+          booking: { id: bookingId },
+        });
+      }
+
+      const savedInvoice = await invoiceRepo.save(invoice);
 
       // 3. TẠO PAYMENT (Gán luôn invoice vừa tạo vào đây)
       const payment = queryRunner.manager.create(Payment, {
@@ -281,6 +303,7 @@ export class PaymentService {
     const invoice = await this.invoiceRepository.findOne({
       where: { booking: { id: numericId } },
       relations: [
+        'voucher',
         'booking',
         'booking.slot',
         'booking.slot.parkingZone',
@@ -299,5 +322,33 @@ export class PaymentService {
     }
 
     return invoice;
+  }
+
+  async handleBookingVnpayFailure(bookingId: number) {
+    return this.dataSource.transaction(async (manager) => {
+      const booking = await manager.findOne(Booking, {
+        where: { id: bookingId },
+      });
+
+      if (!booking) {
+        return { updated: false };
+      }
+
+      await manager.update(Booking, bookingId, {
+        status: BookingStatus.CANCELLED,
+      });
+
+      const invoice = await manager.findOne(Invoice, {
+        where: { booking: { id: bookingId } },
+      });
+      if (invoice) {
+        invoice.status = InvoiceStatus.CANCELED;
+        await manager.save(invoice);
+      }
+
+      await this.voucherService.rollbackUsageForBooking(bookingId, manager);
+
+      return { updated: true };
+    });
   }
 }

@@ -160,29 +160,32 @@ export class WalletService {
         status: SlotStatus.OCCUPIED,
       });
 
-      // 2. Trong try block của processPayment:
-      const invoiceData = {
-        total: amount,
-        tax: 0,
-        status: InvoiceStatus.PAID,
-        payment_method: 'WALLET',
-        booking: { id: numericBookingId } as any,
-      };
-
       // Tìm xem đã có invoice nào cho booking này chưa
       const existingInvoice = await queryRunner.manager.findOne(Invoice, {
         where: { booking: { id: numericBookingId } },
       });
 
       if (existingInvoice) {
-        // Nếu là gia hạn: Cộng dồn tiền vào hóa đơn cũ hoặc tạo hóa đơn phụ
+        const subTotal = Number(existingInvoice.sub_total ?? 0);
+        const discountAmount = Number(existingInvoice.discount_amount ?? 0);
+        const total = Number(existingInvoice.total ?? 0);
+
         await queryRunner.manager.update(Invoice, existingInvoice.id, {
           status: InvoiceStatus.PAID,
-          total: Number(existingInvoice.total) + amount
+          sub_total: subTotal > 0 ? subTotal : amount,
+          discount_amount: discountAmount,
+          total: total > 0 ? total : amount,
         });
       } else {
         // Nếu chưa có thì mới tạo mới
-        const newInvoice = queryRunner.manager.create(Invoice, invoiceData);
+        const newInvoice = queryRunner.manager.create(Invoice, {
+          sub_total: amount,
+          discount_amount: 0,
+          total: amount,
+          tax: 0,
+          status: InvoiceStatus.PAID,
+          booking: { id: numericBookingId } as any,
+        });
         await queryRunner.manager.save(newInvoice);
       }
 
@@ -438,16 +441,18 @@ export class WalletService {
    */
   async getTransactions(userId: string): Promise<WalletTransaction[]> {
     const wallet = await this.getWalletByUserId(userId);
-    return this.transactionRepository
-      .createQueryBuilder('tx')
-      .where('tx.wallet_id = :walletId', { walletId: wallet.id })
-      // Theo logic: chưa duyệt thì chưa trừ tiền và KHÔNG hiển thị vào lịch sử giao dịch chung. 
-      .andWhere('(tx.type != :withdrawType OR tx.status = :successStatus)', {
-        withdrawType: TransactionType.WITHDRAW,
-        successStatus: TransactionStatus.SUCCESS,
-      })
-      .orderBy('tx.created_at', 'DESC')
-      .getMany();
+    return (
+      this.transactionRepository
+        .createQueryBuilder('tx')
+        .where('tx.wallet_id = :walletId', { walletId: wallet.id })
+        // Theo logic: chưa duyệt thì chưa trừ tiền và KHÔNG hiển thị vào lịch sử giao dịch chung.
+        .andWhere('(tx.type != :withdrawType OR tx.status = :successStatus)', {
+          withdrawType: TransactionType.WITHDRAW,
+          successStatus: TransactionStatus.SUCCESS,
+        })
+        .orderBy('tx.created_at', 'DESC')
+        .getMany()
+    );
   }
 
   // ============== ADMIN: YÊU CẦU RÚT TIỀN ==============
@@ -512,7 +517,7 @@ export class WalletService {
 
       await this.activityService.logActivity({
         type: ActivityType.WALLET_WITHDRAW,
-        content: `Yêu cầu rút tiền ${amountToDeduct}đ đã được xác nhận (Thành công)` ,
+        content: `Yêu cầu rút tiền ${amountToDeduct}đ đã được xác nhận (Thành công)`,
         status: ActivityStatus.SUCCESS,
         userId: wallet.user_id,
         meta: { transactionId },
@@ -623,7 +628,9 @@ export class WalletService {
       throw new BadRequestException('Chỉ hỗ trợ khiếu nại cho lệnh rút tiền');
     }
     if (tx.wallet?.user_id !== userId) {
-      throw new BadRequestException('Bạn không có quyền khiếu nại giao dịch này');
+      throw new BadRequestException(
+        'Bạn không có quyền khiếu nại giao dịch này',
+      );
     }
 
     await this.activityService.logActivity({
@@ -634,7 +641,9 @@ export class WalletService {
       meta: {
         transactionId,
         withdrawStatus: tx.status,
-        complaintMessage: message || 'Người dùng yêu cầu admin kiểm tra lệnh rút tiền quá hạn xử lý',
+        complaintMessage:
+          message ||
+          'Người dùng yêu cầu admin kiểm tra lệnh rút tiền quá hạn xử lý',
       },
     });
 

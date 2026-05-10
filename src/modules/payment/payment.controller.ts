@@ -102,7 +102,6 @@ export class PaymentController {
           if (orderInfo && orderInfo.startsWith('PayBooking_')) {
             const matched = orderInfo.match(/PayBooking_([\w-]+)_(\d+)/);
             if (matched) {
-              const userId = matched[1];
               const bookingId = parseInt(matched[2]);
               await this.paymentService.handleBookingVnpayPayment(
                 bookingId,
@@ -133,6 +132,14 @@ export class PaymentController {
         }
       } else {
         // Code !== 00 tức là thất bại
+        const orderInfo = query['vnp_OrderInfo'];
+        if (orderInfo && orderInfo.startsWith('PayBooking_')) {
+          const matched = orderInfo.match(/PayBooking_([\w-]+)_(\d+)/);
+          if (matched) {
+            const bookingId = parseInt(matched[2]);
+            await this.paymentService.handleBookingVnpayFailure(bookingId);
+          }
+        }
         return {
           RspCode: '00',
           Message: 'Confirm Success (Failed Transaction)',

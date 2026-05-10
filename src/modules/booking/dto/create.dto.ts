@@ -1,4 +1,11 @@
-import { IsDateString, IsNumber, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreateBookingDto {
   @IsString()
@@ -18,6 +25,16 @@ export class CreateBookingDto {
 
   @IsNumber()
   slot_id: number;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sub_total?: number;
+
+  @IsOptional()
+  @IsString()
+  voucher_code?: string;
 
   @IsOptional()
   @IsDateString()
