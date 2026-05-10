@@ -106,7 +106,7 @@ export class PaymentController {
               await this.paymentService.handleBookingVnpayPayment(
                 bookingId,
                 amount,
-                refId,
+                query, 
               );
               return { RspCode: '00', Message: 'Confirm Success' };
             }

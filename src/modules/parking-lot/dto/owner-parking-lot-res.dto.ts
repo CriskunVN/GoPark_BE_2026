@@ -10,6 +10,9 @@ export class OwnerParkingLotResDto {
   availableSlots: number;
   status: string;
   description?: string;
+  open_time?: Date;
+  close_time?: Date;
+  operating_days?: string;
   image?: any;
 
   static fromEntity(lot: ParkingLot): OwnerParkingLotResDto {
@@ -23,6 +26,9 @@ export class OwnerParkingLotResDto {
       availableSlots: lot.available_slots,
       status: lot.status,
       description: lot.description,
+      open_time: lot.open_time,
+      close_time: lot.close_time,
+      operating_days: lot.operating_days,
       image: lot.image,
     };
   }

@@ -397,5 +397,12 @@ export class ParkingLotController {
   async getComment(@Param('lotid') lotid: number) {
     return await this.parkingLotService.getCommentUser(lotid);
   }
-
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  @Get(':parkingLotId/gates')
+  async getGatesByParkingLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+  ) {
+    return await this.parkingLotService.getGatesByParkingLot(parkingLotId);
+  }
 }
