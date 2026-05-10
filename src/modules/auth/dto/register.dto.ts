@@ -1,5 +1,12 @@
-import { IsEmail, IsNotEmpty, MaxLength, MinLength, IsEnum, IsOptional } from 'class-validator';
-import { Role } from '../../../common/enums/role.enum';
+import {
+  IsEmail,
+  IsNotEmpty,
+  MaxLength,
+  MinLength,
+  IsEnum,
+  IsOptional,
+} from 'class-validator';
+import { UserRoleEnum } from '../../../common/enums/role.enum';
 
 export class RegisterDto {
   @IsEmail({}, { message: 'Email không hợp lệ' })

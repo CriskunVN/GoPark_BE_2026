@@ -15,8 +15,17 @@ export class Vehicle {
   @Column()
   plate_number: string;
 
-  @Column()
+  @Column({ nullable: true })
+  owner_name: string;
+
+  @Column({ nullable: true })
+  brand: string;
+
+  @Column({ nullable: true })
   type: string;
+
+  @Column({ type: 'text', nullable: true })
+  image: string;
 
   @ManyToOne('User', (user: User) => user.vehicles, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

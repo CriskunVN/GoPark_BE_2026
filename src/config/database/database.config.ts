@@ -11,22 +11,27 @@ export const getDatabaseConfig = (
     // Tự động load entities (đỡ phải khai báo thủ công)
     autoLoadEntities: true,
 
-    // Sync database schema (tắt trong production)
-    synchronize: configService.get('NODE_ENV') !== 'production',
+    // Tắt synchronize khi dùng Supabase (cloud DB với RLS).
+    // Schema thay đổi phải chạy thủ công qua Supabase SQL Editor.
+    synchronize: true,
 
     // Log SQL queries - Tắt log query để terminal gọn gàng hơn
     logging: false,
 
     // Cấu hình SSL (chỉ bật khi production hoặc có env DB_SSL=true)
-    ssl: (configService.get('NODE_ENV') === 'production' || configService.get('DB_SSL') === 'true')
-      ? { rejectUnauthorized: false }
-      : false, // Tắt SSL hoàn toàn ở local
+    ssl:
+      configService.get('NODE_ENV') === 'production' ||
+      configService.get('DB_SSL') === 'true'
+        ? { rejectUnauthorized: false }
+        : false, // Tắt SSL hoàn toàn ở local
 
     // Đảm bảo extra options cũng tắt ssl
     extra: {
-      ssl: (configService.get('NODE_ENV') === 'production' || configService.get('DB_SSL') === 'true')
-        ? { rejectUnauthorized: false }
-        : false,
+      ssl:
+        configService.get('NODE_ENV') === 'production' ||
+        configService.get('DB_SSL') === 'true'
+          ? { rejectUnauthorized: false }
+          : false,
     },
   };
 };

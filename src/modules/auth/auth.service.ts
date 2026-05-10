@@ -15,6 +15,7 @@ import { LoginDto } from './dto/login.dto';
 import * as nodemailer from 'nodemailer';
 import { getVerificationEmailTemplate } from './email/template/verification-email.template';
 import { EmailService } from './email/email.service';
+import { UserResDto } from '../users/dto/user-res.dto';
 
 @Injectable()
 export class AuthService {
@@ -33,7 +34,7 @@ export class AuthService {
         { sub: userId, email, roles }, // Thêm roles vào payload
         {
           secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
-          expiresIn: '15m', // thời gian  của access token.
+          expiresIn: '2h', // thời gian  của access token.
         },
       ),
       this.jwtService.signAsync(
@@ -81,9 +82,8 @@ export class AuthService {
 
     await this.emailService.sendVerificationEmail(newUser.email, verifyToken); // Gửi email xác thực sau khi tạo người dùng mới
 
-    // trả về thông tin người dùng đã được tạo, loại bỏ password và refreshToken khỏi kết quả trả về
-    const { password, refreshToken, ...result } = newUser;
-    return result;
+    // Trả về DTO an toàn, không lộ các trường nhạy cảm
+    return UserResDto.fromEntity(newUser);
   }
 
   // Login
@@ -110,7 +110,20 @@ export class AuthService {
     const tokens = await this.getTokens(user.id, user.email, roles); // Tạo access token và refresh token cho người dùng
     await this.updateRefreshTokenHash(user.id, tokens.refresh_token); // Lưu hash của refresh token vào database để sử dụng cho việc cấp lại access token sau này
 
-    return tokens;
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      user: {
+        ...UserResDto.fromEntity(user),
+        role: roles.includes('ADMIN') 
+          ? 'ADMIN' 
+          : roles.includes('OWNER') 
+            ? 'OWNER' 
+            : roles.includes('STAFF') 
+              ? 'STAFF' 
+              : roles[0] || 'USER',
+      },
+    };
   }
 
   // Logout

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -7,20 +6,23 @@ import {
   JoinColumn,
   OneToOne,
   OneToMany,
+  CreateDateColumn,
+  Index,
 } from 'typeorm';
 import type { User } from '../../users/entities/user.entity';
 import type { Vehicle } from '../../users/entities/vehicle.entity';
-import type { ParkingLot } from '../../parking/entities/parking-lot.entity';
-import type { ParkingSlot } from '../../parking/entities/parking-slot.entity';
-import type { QRCode } from './qr-code.entity';
-import type { CheckInLog } from './check-in-log.entity';
-import type { CheckOutLog } from './check-out-log.entity';
-import type { Payment } from '../../payment/entities/payment.entity';
-import type { Invoice } from '../../payment/entities/invoice.entity';
+import type { ParkingSlot } from '../../parking-lot/entities/parking-slot.entity';
+import { QRCode } from './qr-code.entity';
+import { Invoice } from '../../payment/entities/invoice.entity';
+import { CheckLog } from './check-log.entity';
+import { Review } from 'src/modules/users/entities/review.entity';
+import { BookingStatus } from 'src/common/enums/status.enum';
+import { Transaction } from 'src/modules/payment/entities/transaction.entity';
 
 @Entity('bookings')
 export class Booking {
   @PrimaryGeneratedColumn()
+  @Index()
   id: number;
 
   @Column({ type: 'timestamp' })
@@ -29,40 +31,46 @@ export class Booking {
   @Column({ type: 'timestamp' })
   end_time: Date;
 
-  @Column()
-  status: string;
+  @Column({
+    type: 'enum',
+    enum: BookingStatus,
+    default: BookingStatus.PENDING,
+  })
+  status: BookingStatus;
 
-  @ManyToOne('User', (user: User) => user.bookings)
+  @CreateDateColumn({
+    type: 'timestamp',
+    nullable: true,
+    default: () => 'CURRENT_TIMESTAMP',
+  })
+  created_at: Date;
+
+  @ManyToOne('User', (user: User) => user.bookings, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @ManyToOne('Vehicle')
+  @ManyToOne('Vehicle', {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'vehicle_id' })
   vehicle: Vehicle;
 
-  @ManyToOne('ParkingLot')
-  @JoinColumn({ name: 'parking_lot_id' })
-  parkingLot: ParkingLot;
-
-  @ManyToOne('ParkingSlot')
+  @ManyToOne('ParkingSlot', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'slot_id' })
   slot: ParkingSlot;
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   @OneToOne('QRCode', (qrCode: QRCode) => qrCode.booking)
   qrCode: QRCode;
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  @OneToMany('CheckInLog', (log: CheckInLog) => log.booking)
-  checkInLogs: CheckInLog[];
+  @OneToMany('Invoice', (invoice: Invoice) => invoice.booking)
+  invoice: Invoice[];
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  @OneToMany('CheckOutLog', (log: CheckOutLog) => log.booking)
-  checkOutLogs: CheckOutLog[];
+  @OneToMany('CheckLog', (checkout: CheckLog) => checkout.booking)
+  checkout: CheckLog[];
 
-  @OneToMany('Payment', (payment: Payment) => payment.booking)
-  payments: Payment[];
+  @OneToMany('Review', (review: Review) => review.booking)
+  review: Review;
 
-  @OneToOne('Invoice', (invoice: Invoice) => invoice.booking)
-  invoice: Invoice;
+  @OneToMany('Transaction', (transaction: Transaction) => transaction.booking)
+  transactions: Transaction[];
 }

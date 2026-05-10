@@ -5,13 +5,16 @@ import {
   ManyToOne,
   JoinColumn,
   CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import type { Wallet } from './wallet.entity';
+import { Wallet } from './wallet.entity';
+import { TransactionType } from '../enums/transaction-type.enum';
+import { TransactionStatus } from '../enums/transaction-status.enum';
 
 @Entity('wallet_transactions')
 export class WalletTransaction {
-  @PrimaryGeneratedColumn()
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Column({ type: 'decimal', precision: 15, scale: 2 })
   amount: number;
@@ -22,16 +25,32 @@ export class WalletTransaction {
   @Column({ type: 'decimal', precision: 15, scale: 2 })
   balance_after: number;
 
-  @Column()
-  ref_type: string; // BOOKING, PAYMENT, REFUND
+  @Column({ type: 'enum', enum: TransactionType, nullable: true })
+  type: TransactionType;
 
-  @Column()
-  ref_id: number;
+  @Column({
+    type: 'enum',
+    enum: TransactionStatus,
+    default: TransactionStatus.PENDING,
+  })
+  status: TransactionStatus;
+
+  @Column({ nullable: true })
+  ref_type: string; // e.g., 'BOOKING', 'VNPAY', etc.
+
+  @Column({ nullable: true })
+  ref_id: string;
 
   @CreateDateColumn()
   created_at: Date;
 
-  @ManyToOne('Wallet', (wallet: Wallet) => wallet.transactions)
+  @UpdateDateColumn()
+  updated_at: Date;
+
+  @Column({ name: 'wallet_id', type: 'uuid', nullable: true })
+  wallet_id: string;
+
+  @ManyToOne(() => Wallet, (wallet) => wallet.transactions)
   @JoinColumn({ name: 'wallet_id' })
   wallet: Wallet;
 }

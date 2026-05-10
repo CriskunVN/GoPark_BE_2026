@@ -2,19 +2,29 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/create-user.dto';
+import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository, Like } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
 import { Profile } from './entities/profile.entity';
+import { UserResDto } from './dto/user-res.dto';
+import { Review } from './entities/review.entity';
+import { UserRoleEnum } from '../../common/enums/role.enum';
 
 @Injectable()
 export class UsersService {
   constructor(
+    private readonly configService: ConfigService,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @InjectRepository(Role)
@@ -23,23 +33,22 @@ export class UsersService {
     private userRoleRepository: Repository<UserRole>,
     @InjectRepository(Profile)
     private profileRepository: Repository<Profile>,
+    @InjectRepository(Review)
+    private ratingUser: Repository<Review>,
   ) {}
-
-  async create(createUserDto: CreateUserDto): Promise<User> {
+  // Tạo người dùng mới với vai trò mặc định là "USER" và thông tin hồ sơ nếu có
+  async create(createUserDto: CreateUserDto) {
     const {
       role: roleName,
       fullName,
       phoneNumber,
       ...userData
     } = createUserDto;
-    // Bắt buộc xóa id nếu có để tránh lỗi duplicate PK khi insert (đặc biệt khi DTO được map từ entity cũ hoặc test data)
-    // Nếu userData chứa id=1 mà db đã có id=1 thì sẽ lỗi 23505
     if ('id' in userData) delete userData['id'];
-
+    // Nếu có role được gửi lên mà không phải là "USER", trả về lỗi vì role này sẽ bị bỏ qua và mặc định là "USER"
     const user = this.usersRepository.create(userData);
     const savedUser = await this.usersRepository.save(user);
 
-    // Tạo Profile
     if (fullName || phoneNumber) {
       const profile = this.profileRepository.create({
         name: fullName,
@@ -48,17 +57,21 @@ export class UsersService {
       });
       await this.profileRepository.save(profile);
     }
-
-    // Luôn gán role mặc định là CLIENT (USER) cho người dùng đăng ký mới
-    const targetRoleName = 'USER';
+    // Gán vai trò mặc định là "USER", nhưng cho phép override nếu role hợp lệ (VD: STAFF do owner tạo)
+    const allowedRoles: string[] = [
+      UserRoleEnum.USER,
+      UserRoleEnum.OWNER,
+      UserRoleEnum.STAFF,
+    ];
+    const targetRoleName =
+      roleName && allowedRoles.includes(roleName)
+        ? roleName
+        : UserRoleEnum.USER;
     const role = await this.roleRepository.findOne({
       where: { name: targetRoleName },
     });
 
     if (!role) {
-      // Nếu role chưa tồn tại trong DB, có thể throw error hoặc tự tạo (tùy logic)
-      // Ở đây ta giả sử role USER/OWNER/ADMIN đã đợc seed.
-      // Tuy nhiên để đảm bảo code chạy được khi chưa seed, ta có thể tạo tạm:
       const newRole = this.roleRepository.create({ name: targetRoleName });
       await this.roleRepository.save(newRole);
 
@@ -77,43 +90,472 @@ export class UsersService {
 
     return this.findOne(savedUser.id);
   }
-
+  // Lấy danh sách tất cả người dùng, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
   async findAll(): Promise<User[]> {
     return this.usersRepository.find({
-      relations: ['userRoles', 'userRoles.role'],
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
     });
   }
+  // Lấy danh sách người dùng có phân trang, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
+  async findAllPaginated(page = 1, limit = 10) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
 
-  async findOne(id: string): Promise<User> {
+    const [items, totalItems] = await this.usersRepository.findAndCount({
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
+      order: { createdAt: 'DESC' },
+      skip: (currentPage - 1) * itemsPerPage,
+      take: itemsPerPage,
+    });
+
+    return {
+      items: items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
+  }
+  // ========== Lấy danh sách người dùng có phân trang và tìm kiếm theo email hoặc tên, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ ================
+  async findAllPaginatedWithSearch(
+    page = 1,
+    limit = 10,
+    search?: string,
+    roleName?: UserRoleEnum,
+  ) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
+    let queryBuilder = this.usersRepository
+      .createQueryBuilder('user')
+      .leftJoin('user.userRoles', 'userRoles')
+      .leftJoin('userRoles.role', 'role')
+      .leftJoinAndSelect('user.profile', 'profile')
+      .select([
+        'user.id',
+        'user.email',
+        'user.status',
+        'user.createdAt',
+        'profile.id',
+        'profile.name',
+        'profile.phone',
+      ])
+      .where('role.name = :roleName', { roleName: roleName });
+    if (search) {
+      queryBuilder = queryBuilder.andWhere(
+        'user.email ILIKE :search OR profile.name ILIKE :search',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [items, totalItems] = await queryBuilder
+      .orderBy('user.createdAt', 'DESC')
+      .skip((currentPage - 1) * itemsPerPage)
+      .take(itemsPerPage)
+      .getManyAndCount();
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
+  }
+
+  // Lấy thông tin chi tiết một người dùng theo ID, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
+  async findOne(id: string) {
     const user = await this.usersRepository.findOne({
       where: { id },
-      relations: ['userRoles', 'userRoles.role', 'profile'],
+      relations: [
+        'userRoles',
+        'userRoles.role',
+        'profile',
+        'vehicles',
+        'bookings',
+        'bookings.qrCode',
+        'bookings.vehicle',
+      ],
     });
     if (!user)
       throw new NotFoundException(`Không tìm thấy người dùng với ID ${id}`);
     return user;
   }
-
-  async findByEmail(email: string): Promise<User | null> {
+  // Tìm người dùng theo email, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
+  async findByEmail(email: string) {
     const user = await this.usersRepository.findOne({
       where: { email },
-      relations: ['userRoles', 'userRoles.role'],
+      relations: ['userRoles', 'userRoles.role', 'profile'],
     });
     return user;
   }
-
-  async findByVerifyToken(verifyToken: string): Promise<User | null> {
+  // Tìm người dùng theo mã xác thực email, bao gồm thông tin vai trò, hồ sơ và phương tiện của họ
+  async findByVerifyToken(verifyToken: string) {
     return this.usersRepository.findOne({ where: { verifyToken } });
   }
+  // Cấp quyền OWNER cho người dùng, nếu họ chưa có quyền này
+  async makeOwner(userId: string) {
+    let ownerRole = await this.roleRepository.findOne({
+      where: { name: UserRoleEnum.OWNER },
+    });
 
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+    if (!ownerRole) {
+      ownerRole = this.roleRepository.create({ name: UserRoleEnum.OWNER });
+      ownerRole = await this.roleRepository.save(ownerRole);
+    }
+
+    // Kiểm tra xem người dùng đã có quyền OWNER chưa
+    const existingOwnerRole = await this.userRoleRepository.findOne({
+      where: {
+        user: { id: userId },
+        role: { id: ownerRole.id },
+      },
+    });
+
+    // Nếu chưa có thì mới thêm vào (giữ nguyên các quyền cũ như USER)
+    if (!existingOwnerRole) {
+      const newRole = this.userRoleRepository.create({
+        user: { id: userId } as any,
+        role: { id: ownerRole.id } as any,
+      });
+      await this.userRoleRepository.save(newRole);
+    }
+    return true;
+  }
+  // Cập nhật thông tin người dùng, bao gồm cả thông tin hồ sơ nếu có, đảm bảo rằng người dùng tồn tại trước khi cập nhật
+  async update(id: string, updateUserDto: UpdateUserDto) {
     const user = await this.findOne(id);
+    if (!user)
+      throw new NotFoundException(`Không tìm thấy người dùng với ID ${id}`);
     Object.assign(user, updateUserDto);
     return this.usersRepository.save(user);
   }
-
+  // Xóa người dùng theo ID, đảm bảo rằng người dùng tồn tại trước khi xóa
   async remove(id: string): Promise<void> {
     const user = await this.findOne(id);
     await this.usersRepository.remove(user);
+  }
+  // Lấy danh sách tất cả chủ bãi đỗ xe (OWNER), bao gồm thông tin vai trò, hồ sơ và phương tiện của họ, với phân trang
+  async findAllOwners(page = 1, limit = 10) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
+    const [owners, totalItems] = await this.usersRepository.findAndCount({
+      relations: ['userRoles', 'userRoles.role', 'profile', 'vehicles'],
+      where: {
+        userRoles: {
+          role: {
+            name: 'OWNER',
+          },
+        },
+      },
+      order: { createdAt: 'DESC' },
+      skip: (currentPage - 1) * itemsPerPage,
+      take: itemsPerPage,
+    });
+
+    const items = UserResDto.fromEntities(owners);
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
+  }
+  // Cập nhật thông tin hồ sơ của người dùng, đảm bảo rằng người dùng tồn tại trước khi cập nhật
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.findOne(userId);
+    if (!user.profile) {
+      const profile = this.profileRepository.create({ ...dto, user });
+      await this.profileRepository.save(profile);
+    } else {
+      Object.assign(user.profile, dto);
+      await this.profileRepository.save(user.profile);
+    }
+    return this.findOne(userId);
+  }
+
+  // Upload ảnh đại diện của người dùng lên Supabase Storage, sau đó cập nhật URL ảnh vào hồ sơ người dùng
+  async uploadAvatar(userId: string, file: Express.Multer.File) {
+    const supabaseUrl = this.configService.get<string>('SUPABASE_URL')?.trim();
+    const serviceRoleKey = this.configService
+      .get<string>('SUPABASE_SERVICE_ROLE_KEY')
+      ?.trim()
+      .replace(/^['"]|['"]$/g, '');
+    const bucket =
+      this.configService.get<string>('SUPABASE_BUCKET')?.trim() ||
+      'IMG_GOPARK2026';
+    const avatarFolder =
+      this.configService.get<string>('SUPABASE_AVATAR_FOLDER')?.trim() ||
+      'avatars';
+
+    if (!supabaseUrl || !serviceRoleKey)
+      throw new InternalServerErrorException('Thiếu cấu hình SUPABASE');
+
+    const extension = (
+      file.originalname?.split('.').pop() || 'jpg'
+    ).toLowerCase();
+    const safeExt = extension.replace(/[^a-z0-9]/g, '') || 'jpg';
+    const filePath = `${avatarFolder}/${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+    const candidateBuckets = Array.from(
+      new Set([bucket, 'img_GoPark2026', 'IMG_GOPARK2026'].filter(Boolean)),
+    );
+    let usedBucket: string | null = null;
+
+    for (const candidateBucket of candidateBuckets) {
+      const uploadUrl = `${supabaseUrl}/storage/v1/object/${candidateBucket}/${filePath}`;
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+          'Content-Type': file.mimetype,
+          'x-upsert': 'false',
+        },
+        body: new Uint8Array(file.buffer),
+      });
+
+      if (uploadResponse.ok) {
+        usedBucket = candidateBucket;
+        break;
+      }
+    }
+
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${usedBucket}/${filePath}`;
+    let resolvedImageUrl = publicUrl;
+
+    if (usedBucket) {
+      try {
+        const signUrl = `${supabaseUrl}/storage/v1/object/sign/${usedBucket}/${filePath}`;
+        const signResponse = await fetch(signUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${serviceRoleKey}`,
+            apikey: serviceRoleKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 365 }),
+        });
+
+        if (signResponse.ok) {
+          const signData = await signResponse.json();
+          const signedPath = signData?.signedURL || signData?.signedUrl;
+          if (signedPath) {
+            // FIX: prepend /storage/v1 since Supabase signedURL returns a path without it
+            const fixPath = signedPath.startsWith('/storage/v1')
+              ? signedPath
+              : `/storage/v1${signedPath.startsWith('/') ? '' : '/'}${signedPath}`;
+            resolvedImageUrl = signedPath.startsWith('http')
+              ? signedPath
+              : `${supabaseUrl}${fixPath}`;
+          }
+        }
+      } catch (e) {}
+    }
+
+    return this.updateProfile(userId, { image: resolvedImageUrl });
+  }
+
+  // =========== Lấy name bằng userId ================
+  async getNameByUserId(userId: string): Promise<string> {
+    const user = await this.usersRepository.findOne({
+      where: { id: userId },
+      relations: ['profile'],
+    });
+    if (!user) {
+      throw new NotFoundException(`Không tìm thấy người dùng với ID ${userId}`);
+    }
+    return user.profile?.name || 'Tên không có';
+  }
+
+  // =========== Đếm tổng số người dùng và owners ================
+  async countTotalUserWithRole(role: UserRoleEnum) {
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+      },
+    });
+  }
+
+  async countTotalUsers() {
+    return this.usersRepository.count();
+  }
+
+  // =========== Đếm số người dùng mới trong 1 tháng qua ================
+  async countNewUsersInLastMonth() {
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    return this.usersRepository.count({
+      where: {
+        createdAt: MoreThanOrEqual(oneMonthAgo),
+      },
+    });
+  }
+  // =========== Đếm số người dùng mới trong 1 tháng qua theo role ================
+  async countNewUsersInLastMonthWithRole(role: UserRoleEnum) {
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+        createdAt: MoreThanOrEqual(oneMonthAgo),
+      },
+    });
+  }
+
+  // =========== đếm số user bị khóa ================
+  async countBlockedUsers() {
+    return this.usersRepository.count({
+      where: {
+        status: 'BLOCKED',
+      },
+    });
+  }
+
+  // ============ đếm số user bị khóa theo role ================
+  async countBlockedUsersWithRole(role: UserRoleEnum) {
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        status: 'BLOCKED',
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+      },
+    });
+  }
+
+  // =========== đếm số user còn hoạt động ================
+  async countActiveUsers() {
+    return this.usersRepository.count({
+      where: {
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  // =========== đếm số user còn hoạt động theo role ================
+  async countActiveUserWithRole(role: UserRoleEnum) {
+    return this.usersRepository.count({
+      relations: ['userRoles', 'userRoles.role'],
+      where: {
+        status: 'ACTIVE',
+        userRoles: {
+          role: {
+            name: role,
+          },
+        },
+      },
+    });
+  }
+
+  // =========== Owner tạo tài khoản nhân viên (STAFF) ================
+  // Sử dụng Email Convention: staff.[parkingLotId].[unique_name]@gopark.com
+  async createStaff(dto: CreateStaffDto) {
+    // Trích xuất phần tên từ email cũ hoặc dùng trực tiếp fullName không dấu
+    const emailPrefix = dto.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const formattedEmail = `staff.${dto.parkingLotId}.${emailPrefix}@gopark.com`;
+
+    const existingUser = await this.findByEmail(formattedEmail);
+    if (existingUser) {
+      throw new BadRequestException(
+        `Nhân viên với định danh '${emailPrefix}' đã tồn tại trong bãi này`,
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    console.log('--- CREATE STAFF DEBUG ---');
+    console.log('Original Email:', dto.email);
+    console.log('ParkingLotId:', dto.parkingLotId);
+    console.log('Formatted Email:', formattedEmail);
+    console.log('--------------------------');
+
+    return this.create({
+      email: formattedEmail,
+      password: hashedPassword,
+      fullName: dto.fullName,
+      phoneNumber: dto.phoneNumber,
+      role: UserRoleEnum.STAFF,
+      status: 'ACTIVE', // owner đã xác nhận nhân viên trực tiếp → không cần email verify
+      verifyToken: null,
+    });
+  }
+
+  // Lấy danh sách nhân viên theo bãi đỗ xe
+  async findStaffByParkingLot(parkingLotId: number) {
+    return this.usersRepository.find({
+      where: {
+        email: Like(`staff.${parkingLotId}.%`),
+      },
+      relations: ['profile', 'userRoles', 'userRoles.role'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // Xóa nhân viên (kiểm tra quyền sở hữu của Owner)
+  async removeStaff(staffId: string, ownerId: string) {
+    const staff = await this.usersRepository.findOne({
+      where: { id: staffId },
+      relations: ['userRoles', 'userRoles.role'],
+    });
+
+    if (!staff) throw new NotFoundException('Không tìm thấy nhân viên');
+
+    // Kiểm tra role STAFF
+    const isStaff = staff.userRoles.some(
+      (ur) => ur.role.name === UserRoleEnum.STAFF,
+    );
+    if (!isStaff) throw new BadRequestException('Đây không phải tài khoản nhân viên');
+
+    // Trích xuất lotId từ email: staff.10.name@gopark.com
+    const emailParts = staff.email.split('.');
+    if (emailParts.length < 3 || emailParts[0] !== 'staff') {
+      throw new BadRequestException('Định dạng email nhân viên không hợp lệ');
+    }
+
+    const lotId = parseInt(emailParts[1]);
+
+    // Kiểm tra quyền sở hữu bãi xe của Owner
+    const owner = await this.usersRepository.findOne({
+      where: { id: ownerId },
+      relations: ['ownedParkingLots'],
+    });
+
+    if (!owner) throw new UnauthorizedException('Không tìm thấy tài khoản Owner');
+
+    const isOwnerOfLot = owner.ownedParkingLots?.some((lot) => lot.id === lotId);
+    if (!isOwnerOfLot) {
+      throw new BadRequestException(
+        'Bạn không có quyền xóa nhân viên của bãi xe này',
+      );
+    }
+
+    return this.usersRepository.remove(staff);
   }
 }
