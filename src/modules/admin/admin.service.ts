@@ -713,4 +713,6 @@ export class AdminService {
       totalRefund: formatVnd(totalRefund),
     };
   }
+
+  async getTransactionList(page = 1, limit = 10, search?: string) {}
 }

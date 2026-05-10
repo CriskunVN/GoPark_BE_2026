@@ -34,7 +34,7 @@ export class AdminVoucherController {
   @Get()
   getAll(
     @Query('page') page = '1',
-    @Query('limit') limit = '10',
+    @Query('limit') limit = '5',
     @Query('status') status?: string,
   ) {
     let statusFilter: VoucherStatus | undefined;

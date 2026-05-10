@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNotEmpty,
@@ -52,4 +53,14 @@ export class CreateVoucherDto {
   @IsOptional()
   @IsEnum(VoucherStatus)
   status?: VoucherStatus;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  min_booking_count?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  first_booking_only?: boolean;
 }

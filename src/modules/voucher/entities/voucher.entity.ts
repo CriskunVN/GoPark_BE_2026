@@ -11,38 +11,44 @@ import type { Invoice } from '../../payment/entities/invoice.entity';
 export class Voucher extends BaseEntity {
   @Column({ unique: true })
   @Index()
-  code: string;
+  code!: string;
 
   @Column({ type: 'enum', enum: VoucherDiscountType })
-  discount_type: VoucherDiscountType;
+  discount_type!: VoucherDiscountType;
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
-  discount_value: number;
+  discount_value!: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
-  max_discount_amount: number | null;
+  max_discount_amount!: number | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
-  min_booking_value: number;
+  min_booking_value!: number;
 
   @Column({ type: 'int', default: 0 })
-  usage_limit: number;
+  usage_limit!: number;
 
   @Column({ type: 'int', default: 0 })
-  used_count: number;
+  used_count!: number;
+
+  @Column({ type: 'int', nullable: true })
+  min_booking_count!: number | null;
+
+  @Column({ type: 'boolean', default: false })
+  first_booking_only!: boolean;
 
   @Column({ type: 'timestamptz' })
-  start_time: Date;
+  start_time!: Date;
 
   @Column({ type: 'timestamptz' })
-  end_time: Date;
+  end_time!: Date;
 
   @Column({ type: 'enum', enum: VoucherStatus, default: VoucherStatus.ACTIVE })
-  status: VoucherStatus;
+  status!: VoucherStatus;
 
   @OneToMany('UserVoucherUsage', (usage: UserVoucherUsage) => usage.voucher)
-  usages: UserVoucherUsage[];
+  usages!: UserVoucherUsage[];
 
   @OneToMany('Invoice', (invoice: Invoice) => invoice.voucher)
-  invoices: Invoice[];
+  invoices!: Invoice[];
 }

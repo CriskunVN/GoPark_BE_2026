@@ -13,7 +13,6 @@ import { Gate } from '../parking-lot/entities/gate.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { ActivityModule } from '../activity/activity.module';
 import { ParkingModule } from '../parking-lot/parking-lot.module';
-import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
 import { VoucherModule } from '../voucher/voucher.module';
 

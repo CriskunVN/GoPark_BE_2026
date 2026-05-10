@@ -24,6 +24,9 @@ export class VoucherCleanupService {
     await this.cleanupExpiredPendingBookings();
   }
 
+  // ======== Hàm này sẽ tìm kiếm tất cả các booking có trạng thái PENDING đã tạo cách đây hơn 10 phút (hoặc thời gian được cấu hình),
+  // sau đó cập nhật trạng thái của chúng thành CANCELLED, đồng thời nếu có hóa đơn liên quan sẽ cập nhật trạng thái hóa đơn thành CANCELED,
+  // và gọi hàm rollbackUsageForBooking để hoàn tác việc sử dụng mã giảm giá nếu booking đó đã áp dụng mã giảm giá nào. Cuối cùng, hàm sẽ log số lượng booking đã được làm sạch ========
   async cleanupExpiredPendingBookings() {
     const expiredTime = new Date(Date.now() - this.expireMinutes * 60 * 1000);
 

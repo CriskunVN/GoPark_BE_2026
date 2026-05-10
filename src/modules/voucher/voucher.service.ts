@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { Voucher } from './entities/voucher.entity';
 import { UserVoucherUsage } from './entities/user-voucher-usage.entity';
+import { Booking } from '../booking/entities/booking.entity';
 import { CreateVoucherDto } from './dto/create-voucher.dto';
 import { UpdateVoucherDto } from './dto/update-voucher.dto';
 import { CalculateVoucherDto } from './dto/calculate-voucher.dto';
@@ -14,6 +15,7 @@ import {
   VoucherDiscountType,
   VoucherStatus,
 } from 'src/common/enums/voucher.enum';
+import { BookingStatus } from 'src/common/enums/status.enum';
 
 @Injectable()
 export class VoucherService {
@@ -22,12 +24,17 @@ export class VoucherService {
     private voucherRepository: Repository<Voucher>,
     @InjectRepository(UserVoucherUsage)
     private usageRepository: Repository<UserVoucherUsage>,
+    @InjectRepository(Booking)
+    private bookingRepository: Repository<Booking>,
   ) {}
 
+  // ========= Hàm này sẽ chuẩn hóa mã giảm giá bằng cách loại bỏ khoảng trắng
+  // và chuyển thành chữ hoa để đảm bảo tính nhất quán khi lưu trữ và so sánh ==========
   normalizeCode(code: string): string {
     return code.trim().toUpperCase();
   }
 
+  // ========= Hàm này sẽ đảm bảo rằng thời gian bắt đầu nhỏ hơn thời gian kết thúc ==========
   private ensureDateRange(start: Date, end: Date) {
     if (start >= end) {
       throw new BadRequestException(
@@ -36,6 +43,8 @@ export class VoucherService {
     }
   }
 
+  // ========= Hàm này sẽ đảm bảo rằng giá trị giảm phù hợp với loại giảm giá
+  // (phần trăm phải trong 1-100, số tiền cố định phải lớn hơn 0) ==========
   private ensureDiscountRules(
     discountType: VoucherDiscountType,
     discountValue: number,
@@ -55,6 +64,74 @@ export class VoucherService {
     }
   }
 
+  // ======== Hàm này sẽ đảm bảo rằng các điều kiện liên quan đến số lần booking của người dùng không mâu thuẫn với nhau
+  // và có logic hợp lý (ví dụ: không thể vừa yêu cầu là booking lần đầu vừa yêu cầu số lần booking tối thiểu) ========
+  private ensureBookingConditionRules(
+    firstBookingOnly: boolean,
+    minBookingCount?: number | null,
+  ) {
+    if (firstBookingOnly && (minBookingCount ?? 0) > 0) {
+      throw new BadRequestException(
+        'Khong the vua yeu cau booking lan dau vua dat so lan booking toi thieu',
+      );
+    }
+  }
+
+  // ========= Hàm lấy số lần booking đã hoàn thành của người dùng,
+  //  được sử dụng để kiểm tra điều kiện áp dụng voucher dựa trên số lần booking của người dùng ==========
+  private async getUserBookingCount(userId: string, manager?: EntityManager) {
+    const repo = manager
+      ? manager.getRepository(Booking)
+      : this.bookingRepository;
+
+    return repo.count({
+      where: {
+        user: { id: userId },
+        status: BookingStatus.COMPLETED,
+      },
+    });
+  }
+
+  // ======== Hàm này sẽ kiểm tra xem voucher có áp dụng được cho người dùng hay không
+  // dựa trên điều kiện về số lần booking đã có của người dùng và các điều kiện khác của voucher ========
+  private isVoucherEligibleForBookingCount(
+    voucher: Voucher,
+    bookingCount: number,
+  ): boolean {
+    if (voucher.first_booking_only) {
+      return bookingCount === 0;
+    }
+
+    if (
+      voucher.min_booking_count !== null &&
+      voucher.min_booking_count !== undefined
+    ) {
+      return bookingCount >= Number(voucher.min_booking_count);
+    }
+
+    return true;
+  }
+
+  // ========= Hàm này sẽ kiểm tra xem voucher có áp dụng được cho người dùng hay không dựa trên
+  // điều kiện về số lần booking đã có của người dùng và các điều kiện khác của voucher ==========
+  private ensureVoucherEligibleForUser(voucher: Voucher, bookingCount: number) {
+    if (voucher.first_booking_only && bookingCount > 0) {
+      throw new BadRequestException('Voucher chi ap dung cho booking lan dau');
+    }
+
+    if (
+      voucher.min_booking_count !== null &&
+      voucher.min_booking_count !== undefined &&
+      bookingCount < Number(voucher.min_booking_count)
+    ) {
+      throw new BadRequestException(
+        `Can it nhat ${voucher.min_booking_count} lan dat cho de su dung voucher`,
+      );
+    }
+  }
+
+  // ========= Hàm này sẽ kiểm tra xem voucher có thể sử dụng được không dựa trên trạng thái,
+  // thời gian, số lượt đã dùng và giá trị đơn hàng ==========
   private ensureVoucherUsable(voucher: Voucher, subTotal: number) {
     const now = new Date();
 
@@ -75,6 +152,7 @@ export class VoucherService {
     }
   }
 
+  // ========= Hàm này sẽ tính toán số tiền được giảm dựa trên loại và giá trị giảm của voucher, cũng như áp dụng giới hạn tối đa nếu có ==========
   private calculateDiscount(voucher: Voucher, subTotal: number): number {
     let discount = 0;
 
@@ -108,6 +186,10 @@ export class VoucherService {
     this.ensureDateRange(startTime, endTime);
     this.ensureDiscountRules(dto.discount_type, dto.discount_value);
 
+    const firstBookingOnly = dto.first_booking_only ?? false;
+    const minBookingCount = dto.min_booking_count ?? null;
+    this.ensureBookingConditionRules(firstBookingOnly, minBookingCount);
+
     const voucher = this.voucherRepository.create({
       code,
       discount_type: dto.discount_type,
@@ -116,6 +198,8 @@ export class VoucherService {
       min_booking_value: dto.min_booking_value ?? 0,
       usage_limit: dto.usage_limit,
       used_count: 0,
+      min_booking_count: minBookingCount,
+      first_booking_only: firstBookingOnly,
       start_time: startTime,
       end_time: endTime,
       status: dto.status ?? VoucherStatus.ACTIVE,
@@ -124,6 +208,7 @@ export class VoucherService {
     return this.voucherRepository.save(voucher);
   }
 
+  // ========= Hàm này sẽ lấy danh sách mã giảm giá với phân trang và lọc theo trạng thái (nếu có) để hiển thị cho admin ==========
   async getAdminVouchers(page = 1, limit = 10, status?: VoucherStatus) {
     const currentPage = Math.max(1, Number(page) || 1);
     const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
@@ -183,6 +268,16 @@ export class VoucherService {
       dto.discount_value ?? Number(voucher.discount_value);
     this.ensureDiscountRules(nextDiscountType, nextDiscountValue);
 
+    const nextMinBookingCount =
+      dto.min_booking_count !== undefined
+        ? dto.min_booking_count
+        : voucher.min_booking_count;
+    const nextFirstBookingOnly =
+      dto.first_booking_only !== undefined
+        ? dto.first_booking_only
+        : voucher.first_booking_only;
+    this.ensureBookingConditionRules(nextFirstBookingOnly, nextMinBookingCount);
+
     if (dto.start_time || dto.end_time) {
       const startTime = dto.start_time
         ? new Date(dto.start_time)
@@ -213,10 +308,18 @@ export class VoucherService {
     if (dto.status !== undefined) {
       voucher.status = dto.status;
     }
+    if (dto.min_booking_count !== undefined) {
+      voucher.min_booking_count = dto.min_booking_count;
+    }
+    if (dto.first_booking_only !== undefined) {
+      voucher.first_booking_only = dto.first_booking_only;
+    }
 
     return this.voucherRepository.save(voucher);
   }
 
+  // ========= Hàm này sẽ cập nhật trạng thái của voucher,
+  //  thường được sử dụng để kích hoạt hoặc hủy kích hoạt voucher ==========
   async updateVoucherStatus(id: string, status: VoucherStatus) {
     const voucher = await this.voucherRepository.findOne({ where: { id } });
     if (!voucher) {
@@ -227,6 +330,8 @@ export class VoucherService {
     return this.voucherRepository.save(voucher);
   }
 
+  // ========= Hàm này sẽ lấy danh sách mã giảm giá đang hoạt động và có thể sử dụng được cho người dùng,
+  //  thường được gọi khi người dùng muốn xem các mã giảm giá có sẵn để áp dụng cho đơn hàng của họ ==========
   async getActiveVouchers() {
     const now = new Date();
 
@@ -240,16 +345,33 @@ export class VoucherService {
       .getMany();
   }
 
+  async getEligibleVouchers(userId: string) {
+    const bookingCount = await this.getUserBookingCount(userId);
+    const vouchers = await this.getActiveVouchers();
+
+    return vouchers.filter((voucher) =>
+      this.isVoucherEligibleForBookingCount(voucher, bookingCount),
+    );
+  }
+
+  // ========= Hàm này sẽ tính toán tổng tiền sau khi áp dụng mã giảm giá,
+  //  đồng thời kiểm tra tính hợp lệ của mã và đảm bảo rằng nó có thể được sử dụng cho đơn hàng hiện tại ==========
   async calculateVoucher(dto: CalculateVoucherDto) {
+    // để đảm bảo tính nhất quán khi so sánh mã giảm giá,
+    //  chúng ta sẽ chuẩn hóa mã trước khi tìm kiếm trong cơ sở dữ liệu
     const code = this.normalizeCode(dto.code);
+
     const voucher = await this.voucherRepository.findOne({ where: { code } });
 
     if (!voucher) {
       throw new NotFoundException('Khong tim thay ma giam gia');
     }
 
+    // để đảm bảo rằng mã giảm giá có thể được sử dụng cho đơn hàng này,
+    // sẽ kiểm tra các điều kiện như trạng thái, thời gian, số lượt đã dùng và giá trị đơn hàng
     this.ensureVoucherUsable(voucher, dto.sub_total);
 
+    // nếu mã giảm giá hợp lệ, sẽ tính toán số tiền được giảm dựa trên loại và giá trị giảm của voucher,
     const discountAmount = this.calculateDiscount(voucher, dto.sub_total);
     const total = Math.max(0, dto.sub_total - discountAmount);
 
@@ -261,6 +383,8 @@ export class VoucherService {
     };
   }
 
+  // ========= Hàm này sẽ thực hiện việc kiểm tra tính hợp lệ của voucher
+  // và khóa nó để tránh tình trạng race condition khi nhiều người dùng cùng sử dụng một mã giảm giá ==========
   async validateAndLockVoucher(
     code: string,
     userId: string,
@@ -283,6 +407,9 @@ export class VoucherService {
 
     this.ensureVoucherUsable(voucher, subTotal);
 
+    const bookingCount = await this.getUserBookingCount(userId, manager);
+    this.ensureVoucherEligibleForUser(voucher, bookingCount);
+
     const usage = await usageRepo.findOne({
       where: { user_id: userId, voucher_id: voucher.id },
     });
@@ -296,6 +423,8 @@ export class VoucherService {
     return { voucher, discountAmount };
   }
 
+  // ========= Hàm này sẽ ghi nhận việc sử dụng voucher sau khi đã được xác thực và khóa,
+  //  đảm bảo tính nhất quán của dữ liệu và cập nhật số lượt đã dùng của voucher ==========
   async applyVoucherUsage(
     voucher: Voucher,
     bookingId: number,
@@ -316,6 +445,8 @@ export class VoucherService {
     await voucherRepo.save(voucher);
   }
 
+  // ========= Hàm này sẽ thực hiện việc hoàn tác việc sử dụng voucher trong trường hợp booking bị hủy hoặc có lỗi,
+  // đảm bảo rằng số lượt đã dùng của voucher được cập nhật chính xác và người dùng có thể sử dụng lại voucher nếu cần ==========
   async rollbackUsageForBooking(
     bookingId: number,
     manager?: EntityManager,

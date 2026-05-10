@@ -78,8 +78,10 @@ export class BookingService {
       const subTotal = bookingdto.sub_total ?? 0;
       const voucherCode = bookingdto.voucher_code?.trim();
 
+      // gọi hàm dọn dẹp các booking pending đã hết hạn trước khi tạo mới để tránh xung đột dữ liệu và đảm bảo tính nhất quán của hệ thống
       await this.voucherCleanupService.cleanupExpiredPendingBookings();
 
+      // Tạo transaction
       const queryRunner = this.dataSource.createQueryRunner();
       await queryRunner.connect();
       await queryRunner.startTransaction();
@@ -157,6 +159,7 @@ export class BookingService {
           newbooking,
         );
 
+        // Nếu có mã voucher, thì validate và áp dụng nó vào booking mới tạo này (trước khi tạo invoice)
         await this.voucherService.rollbackUsageForBooking(
           savedBooking.id,
           queryRunner.manager,

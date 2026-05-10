@@ -183,4 +183,22 @@ export class AdminController {
     const stats = await this.adminService.getTransactionStats();
     return { data: stats };
   }
+
+  // =========== Get danh sách giao dịch  ================
+  @Get('/transactions/list')
+  async getTransactionList(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    const data = await this.adminService.getTransactionList(
+      Number(page),
+      Number(limit),
+      search,
+    );
+    return {
+      message: 'Lấy danh sách giao dịch thành công',
+      data,
+    };
+  }
 }
