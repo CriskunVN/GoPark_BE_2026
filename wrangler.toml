@@ -1,4 +1,0 @@
-name = "goparkbe2026"
-compatibility_date = "2026-05-11"
-main = "dist/main.js"
-compatibility_flags = [ "nodejs_compat" ]
