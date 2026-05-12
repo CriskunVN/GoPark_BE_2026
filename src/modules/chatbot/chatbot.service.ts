@@ -96,6 +96,18 @@ export class ChatbotService {
           return { text: `💰 Số dư ví GoPark của bạn: ${balance.toLocaleString('vi-VN')}đ.` };
         }
 
+        case ChatbotIntent.CHECK_VEHICLES: {
+          const data = await this.getUserVehicles(userId);
+          if (data.error) return { text: data.error };
+          const vehicles = data.vehicles || [];
+          if (vehicles.length === 0) return { text: '🚗 Bạn chưa đăng ký xe nào. Vào mục "Xe của tôi" để thêm xe.' };
+          let text = `🚗 Danh sách xe đã đăng ký:\n`;
+          vehicles.forEach((v: any, i: number) => {
+            text += `${i+1}. ${v.plate_number} (${v.type || 'Xe hơi'})\n`;
+          });
+          return { text };
+        }
+
         case ChatbotIntent.CHECK_INVOICE:
           return { text: '📄 Tính năng xem hóa đơn đang được phát triển. Bạn có thể xem trong trang Cá nhân.' };
 
