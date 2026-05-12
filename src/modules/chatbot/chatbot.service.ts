@@ -1,11 +1,11 @@
-// chatbot.service.ts - thay toàn bộ nội dung (hoặc merge các phần sửa)
-
 import { Injectable, Logger } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 import Groq from 'groq-sdk';
 import { ParkingLot } from '../parking-lot/entities/parking-lot.entity';
 import { ChatbotStateService } from './chatbot-state.service';
 import { classifyIntent, requiresData, INTENT_DB_CONFIG, extractParkingName, ChatbotIntent } from './Chatbot.intent';
+import { ChatbotSession } from './entities/chatbot-session.entity';
 
 @Injectable()
 export class ChatbotService {
@@ -14,7 +14,9 @@ export class ChatbotService {
 
   constructor(
     private readonly dataSource: DataSource,
-    private readonly stateService: ChatbotStateService, // ✅ thêm state
+    private readonly stateService: ChatbotStateService,
+    @InjectRepository(ChatbotSession)
+    private readonly sessionRepo: Repository<ChatbotSession>,
   ) {
     const apiKey = process.env.GROQ_API_KEY || process.env.GORQ_API_KEY;
     if (!apiKey) {
@@ -281,20 +283,24 @@ export class ChatbotService {
 }
 
   private getSystemPrompt(): string {
-    return `Bạn là trợ lý ảo thông minh của GoPark – ứng dụng đặt chỗ giữ xe. Nhiệm vụ: giúp người dùng tìm bãi đỗ, đặt chỗ, xem lịch sử, số dư ví, hủy đặt, giải đáp thắc mắc.
+    return `Bạn là GoPark AI – trợ lý thông minh của ứng dụng đặt chỗ giữ xe GoPark. Bạn nói chuyện tự nhiên, thân thiện như một người bạn am hiểu về đỗ xe tại Việt Nam.
 
-QUAN TRỌNG:
-- Bạn LUÔN gọi tool khi cần dữ liệu thật. KHÔNG tự bịa thông tin.
-- Sau khi nhận kết quả từ tool, bạn phân tích và trả lời bằng giọng tự nhiên, thân thiện, không lặp lại nguyên bản.
-- Khi người dùng hỏi "bãi phù hợp nhất với tôi" hoặc "gợi ý một bãi" → gọi search_parking với criteria='best_rating', limit=1, và giải thích lý do chọn bãi đó (giá tốt, đánh giá cao, chỗ trống nhiều).
-- Khi người dùng hỏi "bãi gần tôi" → gọi search_parking criteria='nearest'.
-- Khi hỏi "bãi giá rẻ" → criteria='price_cheapest'.
-- Khi hỏi "tìm bãi <tên>" → gọi criteria='by_name', name='<tên>'.
-  * Nếu kết quả trả về lots=[], bạn hãy tự động gọi lại search_parking với criteria='area' và lấy tên khu vực từ câu hỏi (ví dụ: "Đà Nẵng") để gợi ý các bãi trong khu vực.
-- Khi người dùng muốn đặt bãi, hãy hỏi tuần tự: thời gian (bắt đầu, kết thúc) → xe → phương thức thanh toán.
-- Nếu thiếu thông tin, tool book_parking sẽ trả về error missing_fields. Dựa vào đó bạn hỏi bổ sung. KHÔNG tự điền.
-- Trả lời ngắn gọn, có dấu câu, dùng icon cảm xúc phù hợp.
-- Nếu được hỏi về giờ mở cửa: "GoPark mở cửa 24/7". Liên hệ: hotline 1800-GOPARK.`;
+NGUYÊN TẮC QUAN TRỌNG:
+1. KHÔNG bao giờ bịa số liệu, giá cả, địa chỉ cụ thể – chỉ dùng dữ liệu từ tool/DB.
+2. Trả lời NGẮN GỌN, súc tích. Không lặp lại câu hỏi của user.
+3. Nhớ ngữ cảnh cuộc trò chuyện – nếu user vừa hỏi về bãi A thì câu tiếp theo liên quan đến bãi A.
+4. Dùng emoji phù hợp nhưng không lạm dụng.
+5. Nếu không biết → thành thật nói "Tôi chưa có thông tin về điều này".
+6. Hỗ trợ cả tiếng Việt có dấu và không dấu.
+
+KHẢ NĂNG:
+- Tìm bãi đỗ: gần nhất, rẻ nhất, phù hợp nhất (dựa trên rating + giá + chỗ trống)
+- Đặt chỗ: redirect đến trang đặt với thông tin đã điền sẵn
+- Xem tài khoản: số dư ví, xe đã đăng ký, lịch sử đặt
+- Hỗ trợ: thanh toán, giờ mở cửa, liên hệ, khuyến mãi
+- Trả lời câu hỏi chung về đỗ xe, giao thông, GoPark
+
+GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   }
 
   private getToolsDefinition(): any[] {
@@ -769,6 +775,89 @@ QUAN TRỌNG:
 
   async checkModels(): Promise<any> {
     return { groq: { ok: this.groq !== null } };
+  }
+
+  // ─── SESSION MANAGEMENT ───────────────────────────────────────────────────
+
+  async getUserSessions(userId: string): Promise<any> {
+    const sessions = await this.sessionRepo.find({
+      where: { userId },
+      order: { updatedAt: 'DESC' },
+      select: ['id', 'title', 'isActive', 'createdAt', 'updatedAt'],
+    });
+    return sessions;
+  }
+
+  async createSession(userId: string, title?: string): Promise<any> {
+    const session = this.sessionRepo.create({
+      userId,
+      title: title || `Cuộc trò chuyện ${new Date().toLocaleDateString('vi-VN')}`,
+      messages: [],
+      isActive: true,
+    });
+    return this.sessionRepo.save(session);
+  }
+
+  async getSession(sessionId: string, userId: string): Promise<any> {
+    const session = await this.sessionRepo.findOne({ where: { id: sessionId, userId } });
+    if (!session) return { messages: [] };
+    return session;
+  }
+
+  async updateSession(sessionId: string, userId: string, data: any): Promise<any> {
+    await this.sessionRepo.update({ id: sessionId, userId }, data);
+    return { success: true };
+  }
+
+  async deleteSession(sessionId: string, userId: string): Promise<any> {
+    await this.sessionRepo.delete({ id: sessionId, userId });
+    return { success: true };
+  }
+
+  async processMessageWithSession(
+    messages: { role: string; content: string }[],
+    userId: string,
+    sessionId: string,
+    context?: any,
+  ): Promise<any> {
+    // Lấy session từ DB để có full context
+    const session = await this.sessionRepo.findOne({ where: { id: sessionId, userId } });
+    if (!session) return { text: '❌ Không tìm thấy session.' };
+
+    // Merge lịch sử session với messages mới
+    const fullHistory = [
+      ...session.messages.map(m => ({ role: m.role, content: m.content })),
+      ...messages,
+    ].slice(-20); // Giữ 20 tin nhắn gần nhất để tránh token overflow
+
+    const result = await this.processMessage(fullHistory, userId, context);
+
+    // Lưu messages mới vào session
+    const lastUser = messages.filter(m => m.role === 'user').pop();
+    const newMessages = [...session.messages];
+    if (lastUser) {
+      newMessages.push({ role: 'user', content: lastUser.content, timestamp: Date.now() });
+    }
+    newMessages.push({
+      role: 'assistant',
+      content: result.text || '',
+      type: result.action === 'list_parking' ? 'parking-list' : 'text',
+      data: result.data,
+      timestamp: Date.now(),
+    });
+
+    // Auto-generate title từ tin nhắn đầu tiên
+    let title = session.title;
+    if (session.messages.length === 0 && lastUser) {
+      title = lastUser.content.substring(0, 50) + (lastUser.content.length > 50 ? '...' : '');
+    }
+
+    await this.sessionRepo.update(
+      { id: sessionId, userId },
+      { messages: newMessages.slice(-50), title }, // Giữ tối đa 50 tin nhắn
+    );
+
+    return result;
   }
 
   async streamToResponse(messages: any[], res: any, userId?: string) {
