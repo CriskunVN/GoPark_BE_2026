@@ -127,19 +127,21 @@ export class EmailService {
     to: string,
     userName: string,
     reminderData: {
-      lotName: string;
-      plateNumber: string;
-      endTimeStr: string;
-    },
+      lotName: string,
+      plateNumber: string,
+      endTimeStr: string,
+      graceTimeStr: string
+    }
   ) {
     const html = expirationReminderTemplate({
       userName,
       lotName: reminderData.lotName,
       plateNumber: reminderData.plateNumber,
       endTimeStr: reminderData.endTimeStr,
+      graceTimeStr: reminderData.graceTimeStr,
     });
 
-    const text = `Chào ${userName}, lượt đỗ xe ${reminderData.plateNumber} tại ${reminderData.lotName} sẽ hết hạn vào lúc ${reminderData.endTimeStr}.`;
+    const text = `Chào ${userName}, bạn gần kết thúc thời gian đặt chỗ vui lòng lấy xe lúc ${reminderData.endTimeStr}. Bạn có 15 phút (đến ${reminderData.graceTimeStr}) để lấy xe ra khỏi bãi.`;
 
     await this.sendEmail(
       to,
@@ -148,4 +150,5 @@ export class EmailService {
       text,
     );
   }
+
 }

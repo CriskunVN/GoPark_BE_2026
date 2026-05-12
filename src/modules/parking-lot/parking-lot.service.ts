@@ -48,7 +48,9 @@ import { PricingRule } from '../payment/entities/pricingrule.entity';
 import { ManualBookingDto } from './dto/manual-booking.dto';
 import { SupabaseService } from '../../common/supabase/supabase.service';
 import { EmailService } from '../auth/email/email.service';
+import { NotificationService } from '../notification/notification.service';
 import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
+
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as vision from '@google-cloud/vision';
 import { Gate } from './entities/gate.entity';
@@ -94,8 +96,10 @@ export class ParkingLotService {
     private usersService: UsersService,
     private dataSource: DataSource,
     private mailService: EmailService,
+    private notificationService: NotificationService,
     private readonly supabaseService: SupabaseService,
   ) {}
+
 
   async createParkingLot(
     createParkingLotDto: CreateParkingLotReqDto,
@@ -1880,12 +1884,13 @@ export class ParkingLotService {
     return map;
   }
 
-  // =========== Tự động gửi thông báo nhắc nhở trước 10p khi hết hạn ============
+  // =========== Tự động gửi thông báo nhắc nhở trước 15p khi hết hạn ============
   @Cron(CronExpression.EVERY_MINUTE)
   async handleBookingExpirationReminders() {
     const now = new Date();
-    const reminderTimeStart = new Date(now.getTime() + 9 * 60000);
-    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000);
+    const reminderTimeStart = new Date(now.getTime() + 14 * 60000);
+    const reminderTimeEnd = new Date(now.getTime() + 15 * 60000);
+
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -1946,7 +1951,15 @@ export class ParkingLotService {
         const plateNumber = booking.vehicle?.plate_number || 'không rõ biển số';
         const lotName = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'Bãi đỗ xe';
 
-        const endTimeStr = new Date(booking.end_time).toLocaleTimeString('vi-VN', {
+        const endTimeDate = new Date(booking.end_time);
+        const endTimeStr = endTimeDate.toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        // Tính thời gian ân hạn (15 phút sau khi hết giờ)
+        const graceTimeDate = new Date(endTimeDate.getTime() + 15 * 60000);
+        const graceTimeStr = graceTimeDate.toLocaleTimeString('vi-VN', {
           hour: '2-digit',
           minute: '2-digit'
         });
@@ -1959,12 +1972,25 @@ export class ParkingLotService {
             lotName,
             plateNumber,
             endTimeStr,
+            graceTimeStr,
           },
+        );
+
+        // GỬI THÔNG BÁO IN-APP
+        await this.notificationService.sendNotificationToUsers(
+          {
+            title: 'Sắp hết hạn đỗ xe',
+            content: `Bạn gần kết thúc thời gian đặt chỗ vui lòng lấy xe lúc ${endTimeStr}. Bạn có 15 phút (đến ${graceTimeStr}) để lấy xe ra khỏi bãi.`,
+            type: 'REMINDER',
+            target_role: 'USER',
+          },
+          [booking.user.id],
         );
 
         // Đánh dấu đã gửi thành công
         this.sentReminderIds.add(bId);
-        console.log(`[Success] Đã gửi mail nhắc nhở cho ${userEmail}`);
+        console.log(`[Success] Đã gửi mail & thông báo nhắc nhở cho ${userEmail}`);
+
 
       } catch (error) {
         console.error(`[Reminder] Lỗi khi gửi mail cho đơn ${bId}:`, error);
