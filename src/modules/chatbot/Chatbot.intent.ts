@@ -271,4 +271,10 @@ export const INTENT_DB_CONFIG: Partial<
     limit: 1,
     requiresUserId: true,
   },
+  [ChatbotIntent.CHECK_VEHICLES]: {
+    table: 'vehicles',
+    orderBy: 'id',
+    limit: 10,
+    requiresUserId: true,
+  },
 };
