@@ -8,14 +8,25 @@ import { UserResDto } from '../users/dto/user-res.dto';
 import { Not, Repository } from 'typeorm';
 import { UserStatus } from 'src/common/enums/userStatus.enum';
 import { RequestService } from '../request/request.service';
-import { ParkingLotStatus, RequestStatus } from 'src/common/enums/status.enum';
+import {
+  ParkingLotStatus,
+  RequestStatus,
+  TransactionStatus,
+} from 'src/common/enums/status.enum';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RequestType, Request } from '../request/entities/request.entity';
 import { ParkingLotService } from '../parking-lot/parking-lot.service';
 import { BookingService } from '../booking/booking.service';
 import { ActivityService } from '../activity/activity.service';
-import { UserRoleEnum } from 'src/common/enums/role.enum';
+import { TargetRole, UserRoleEnum } from 'src/common/enums/role.enum';
 import { User } from '../users/entities/user.entity';
+import { NotificationService } from '../notification/notification.service';
+import { ParkingLot } from '../parking-lot/entities/parking-lot.entity';
+import { NotificationType } from 'src/common/enums/type.enum';
+import { Transaction } from '../payment/entities/transaction.entity';
+import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
+import { TransactionType } from '../wallet/enums/transaction-type.enum';
+import { TransactionStatus as WalletTransactionStatus } from '../wallet/enums/transaction-status.enum';
 
 @Injectable()
 export class AdminService {
@@ -25,7 +36,14 @@ export class AdminService {
     private readonly parkingLotService: ParkingLotService,
     private readonly bookingService: BookingService,
     private readonly activityService: ActivityService,
+    private readonly notificationService: NotificationService,
     @InjectRepository(Request) private requestRepository: Repository<Request>,
+    @InjectRepository(ParkingLot)
+    private parkingLotRepository: Repository<ParkingLot>,
+    @InjectRepository(Transaction)
+    private transactionRepository: Repository<Transaction>,
+    @InjectRepository(WalletTransaction)
+    private walletTransactionRepository: Repository<WalletTransaction>,
   ) {}
 
   //Admin có thể xem tất cả người dùng
@@ -109,7 +127,7 @@ export class AdminService {
   async approveRequest(
     requestId: string,
     adminId: string,
-    approvalNote?: string,
+    approvalNote: string,
   ) {
     const request = await this.requestRepository.findOne({
       where: { id: requestId },
@@ -131,14 +149,11 @@ export class AdminService {
         break;
       // xử lý logic duyệt yêu cầu trở thành chủ bãi
       case RequestType.BECOME_OWNER:
-        // await this.handleApproveBecomeOwner(request, adminId);
+        await this.handleApproveBecomeOwner(request, adminId);
         break;
       // xử lý logic duyệt yêu cầu thanh toán
       case RequestType.PAYMENT:
         // await this.handleApprovePayment(request, adminId);
-        break;
-      case RequestType.BOOKING_ISSUE:
-        // Legacy type - no specific action needed
         break;
       default:
         throw new BadRequestException('Loại request không hợp lệ');
@@ -156,6 +171,35 @@ export class AdminService {
         },
       ],
     });
+
+    // Gửi thông báo cho User
+    let notificationTitle = 'Yêu cầu đã được phê duyệt';
+    let notificationContent =
+      'Yêu cầu của bạn đã được quản trị viên chấp nhận.';
+
+    if (request.type === RequestType.BECOME_OWNER) {
+      notificationTitle = 'Chúc mừng! Bạn đã trở thành Chủ bãi đỗ';
+      notificationContent =
+        'Yêu cầu trở thành chủ bãi đỗ đã được duyệt thành công. Hãy đăng nhập với tài khoản và mật khẩu của tài khoản user này để hoàn thành.';
+    } else if (request.type === RequestType.NEW_PARKING_LOT) {
+      notificationTitle = 'Bãi đỗ xe đã được xác thực';
+      notificationContent = `Bãi đỗ xe "${request.payload.parkingLotName}" của bạn đã được phê duyệt và đưa vào hoạt động.`;
+    }
+
+    // Gửi thông báo cho User (Không await để tránh treo UI nếu hàng đợi chậm)
+    this.notificationService
+      .sendNotificationToUsers(
+        {
+          title: notificationTitle,
+          content: notificationContent,
+          type: NotificationType.SYSTEM,
+          target_role: TargetRole.NULL,
+        },
+        [request.requester.id],
+      )
+      .catch((err) => {
+        console.error('[AdminService] Lỗi khi gửi thông báo phê duyệt:', err);
+      });
   }
 
   // ================== Admin từ chối yêu cầu ==================
@@ -203,6 +247,19 @@ export class AdminService {
       },
     );
   }
+  // =========== admin xử lý chấp nhận yêu cầu trở thành chủ bãi =================
+  private async handleApproveBecomeOwner(request: Request, adminId: string) {
+    const requesterId = request.requester.id;
+
+    await this.requestRepository.manager.transaction(
+      async (transactionalEntityManager) => {
+        // KHÔNG cập nhật role ở đây nữa. Role sẽ được cập nhật khi User bấm "Xác nhận" ở phía FE.
+        // await this.userService.makeOwner(requesterId);
+        // TODO: Gửi email thông báo
+        // await this.emailService.sendApprovalEmail(request.requester.email);
+      },
+    );
+  }
 
   // totalUsers, totalParkingLots, todayBookings, monthlyRevenue (kèm % tăng trưởng)
   async getOverviewStats() {
@@ -232,13 +289,20 @@ export class AdminService {
     );
 
     // get new users in the last month
-    const newUsersLastMonth = await this.userService.countNewUsersInLastMonth();
+    const newUsersLastMonth =
+      await this.userService.countNewUsersInLastMonthWithRole(
+        UserRoleEnum.USER,
+      );
 
     // get active users
-    const activeUsers = await this.userService.countActiveUsers();
+    const activeUsers = await this.userService.countActiveUserWithRole(
+      UserRoleEnum.USER,
+    );
 
     // get blocked users
-    const blockedUsers = await this.userService.countBlockedUsers();
+    const blockedUsers = await this.userService.countBlockedUsersWithRole(
+      UserRoleEnum.USER,
+    );
 
     return {
       totalUsers,
@@ -349,4 +413,306 @@ export class AdminService {
       blockedOwners,
     };
   }
+
+  async getParkingLotStats() {
+    // Tổng bãi đỗ xe
+    const totalParkingLots =
+      await this.parkingLotService.countTotalParkingLots();
+    // Số bãi đỗ xe theo từng trạng thái
+    const activeParkingLots =
+      await this.parkingLotService.countParkingLotsByStatus(
+        ParkingLotStatus.ACTIVE,
+      );
+    // Tất cả chỗ đỗ đang trống 33/100
+    const availableSpacesParkingSlot =
+      await this.parkingLotService.countAllAvailableSpacesParkingSlot();
+
+    // Đánh giá trung bình của các bãi đỗ xe
+    const averageRating = await this.parkingLotService.calculateAverageRating();
+
+    return {
+      totalParkingLots,
+      activeParkingLots,
+      availableSpacesParkingSlot,
+      averageRating,
+    };
+  }
+
+  // =========== Lấy danh sách bãi đỗ xe  ================
+  // Data : Thông tin bãi đỗ xe, Tên chủ bãi , số lượng chỗ trống / tổng chỗ, giá giờ , đánh giá trung bình, trạng thái hoạt động
+  async getParkingLotList(page = 1, limit = 10, search?: string) {
+    // Lấy danh sách bãi đỗ xe có phân trang và tìm kiếm
+    const { items, meta } =
+      await this.parkingLotService.findAllPaginatedWithSearch(
+        page,
+        limit,
+        search,
+      );
+
+    // --- Tối ưu hóa N+1 (Gom nhóm Query) ---
+    const lotIds = items.map((lot) => lot.id);
+    const ownerIds = items.map((lot) => lot.owner?.id).filter(Boolean);
+    const allZoneIds = items
+      .flatMap((lot) =>
+        (lot.parkingFloor || []).flatMap((floor) => floor.parkingZones || []),
+      )
+      .map((zone) => zone.id);
+
+    // Thực hiện truy vấn 1 lần cho từng thành phần
+    const [
+      availableZoneMap,
+      availableLotMap,
+      pricingMap,
+      reviewStatsMap,
+      bookingStatsMap,
+    ] = await Promise.all([
+      this.parkingLotService.countAvailableSpacesByZoneIds(allZoneIds),
+      this.parkingLotService.countAvailableSpacesByLotIds(lotIds),
+      this.parkingLotService.getPricingByLotIds(lotIds),
+      this.parkingLotService.getReviewStatsByLotIds(lotIds),
+      this.bookingService.getOwnerBookingStatsByOwnerIds(ownerIds),
+    ]);
+
+    const data = items.map((parkingLot) => {
+      // lấy số lượng chỗ trống và tổng chỗ
+      const lotSpaces = availableLotMap.get(parkingLot.id) || {
+        totalSlots: 0,
+        availableSlots: 0,
+      };
+      const totalSpaces = parkingLot.total_slots;
+
+      // lấy giá giờ từ bảng pricing (chỉ lấy 1 rule đầu tiên hoặc lớn nhất như đã gom nhóm)
+      const pricing = pricingMap.get(parkingLot.id);
+      const pricePerHour = pricing
+        ? [
+            {
+              pricePerHour: pricing.pricePerHour,
+              pricePerDay: pricing.pricePerDay,
+            },
+          ]
+        : [];
+
+      // tính đánh giá trung bình của bãi đỗ xe
+      const reviewStats = reviewStatsMap.get(parkingLot.id) || {
+        avgRating: '0.0',
+        totalReviews: 0,
+      };
+
+      const ownerStats = parkingLot.owner?.id
+        ? bookingStatsMap.get(parkingLot.owner.id)
+        : null;
+
+      const totalBookings = ownerStats?.totalBookings || 0;
+      const totalRevenue = ownerStats?.totalRevenue || '0 Tr ₫';
+
+      // Mock data về tiện ích của bãi đỗ xe
+      const amenities = [
+        'EV Charging',
+        'Covered Parking',
+        'Security',
+        'CCTV',
+        'Handicap Accessible',
+        'Car Wash',
+        'Valet Service',
+        '24/7 Access',
+      ];
+
+      // Lấy zones của bãi đỗ xe
+      const zones = (parkingLot.parkingFloor || [])
+        .map((floor) => floor.parkingZones || [])
+        .flat()
+        .map((zone) => ({
+          id: zone.id,
+          name: zone.zone_name,
+          totalSlots: zone.total_slots || 0,
+          availableSlots: availableZoneMap.get(zone.id) || 0, // Lookup nhanh O(1) từ bộ nhớ
+        }));
+
+      // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
+      const formatTime = (date?: Date) => {
+        if (!date) return '00:00';
+        const d = new Date(date);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      };
+
+      return {
+        id: parkingLot.id,
+        name: parkingLot.name,
+        location: parkingLot.address,
+        description: parkingLot.description,
+        status: parkingLot.status,
+        type: 'Floor',
+        occupiedSlots: totalSpaces - lotSpaces.availableSlots,
+        owner: parkingLot.owner?.profile || null,
+        availableSpaces: lotSpaces,
+        totalSpaces,
+        pricePerHour,
+        averageRating: reviewStats.avgRating,
+        totalReviews: reviewStats.totalReviews,
+        totalBookings,
+        totalRevenue,
+        openTime: formatTime(parkingLot.open_time),
+        closeTime: formatTime(parkingLot.close_time),
+        amenities,
+        zones,
+      };
+    });
+
+    return {
+      success: true,
+      message: 'Lấy danh sách bãi đỗ xe thành công',
+      data,
+      meta: {
+        ...meta,
+        itemCount: data.length, // Cập nhật lại itemCount dựa trên số lượng phần tử thực tế trong data
+      },
+    };
+  }
+
+  // ========== Get transaction stats (transaction stats) ================
+  async getTransactionStats() {
+    const formatVnd = (value: number) =>
+      `${Math.round(value).toLocaleString('vi-VN')} ₫`;
+    // Chỉ lấy dữ liệu trong tháng hiện tại (từ đầu tháng đến đầu tháng sau)
+    const now = new Date();
+    const startOfMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+      0,
+      0,
+      0,
+    );
+    const startOfNextMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      1,
+      0,
+      0,
+      0,
+    );
+
+    // Các loại giao dịch ví cần tính vào thống kê
+    const walletStatTypes = [
+      TransactionType.DEPOSIT,
+      TransactionType.PAYMENT,
+      TransactionType.EARN_PARKING_FEE,
+      TransactionType.REFUND,
+      TransactionType.WITHDRAW,
+    ];
+
+    const [
+      gatewayTotalCount,
+      gatewaySuccessCount,
+      gatewaySuccessSumRaw,
+      gatewayRefundSumRaw,
+      walletTotalCount,
+      walletSuccessCount,
+      walletIncomeSumRaw,
+      walletRefundSumRaw,
+    ] = await Promise.all([
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .getCount(),
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.SUCCESS })
+        .getCount(),
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .select('COALESCE(SUM(t.amount), 0)', 'sum')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.SUCCESS })
+        .getRawOne(),
+      this.transactionRepository
+        .createQueryBuilder('t')
+        .select('COALESCE(SUM(t.amount), 0)', 'sum')
+        .where('t.time >= :start AND t.time < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.REFUNDED })
+        .getRawOne(),
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.type IN (:...types)', { types: walletStatTypes })
+        .getCount(),
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.status = :status', {
+          status: WalletTransactionStatus.SUCCESS,
+        })
+        .andWhere('wt.type IN (:...types)', { types: walletStatTypes })
+        .getCount(),
+      // Tổng tiền thu vào: nạp tiền + phí đỗ xe (không tính hoàn tiền)
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .select('COALESCE(SUM(wt.amount), 0)', 'sum')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.status = :status', {
+          status: WalletTransactionStatus.SUCCESS,
+        })
+        .andWhere('wt.type IN (:...types)', {
+          types: [TransactionType.DEPOSIT, TransactionType.EARN_PARKING_FEE],
+        })
+        .getRawOne(),
+      // Tổng tiền hoàn từ ví (hoàn tiền + rút tiền)
+      this.walletTransactionRepository
+        .createQueryBuilder('wt')
+        .select('COALESCE(SUM(ABS(wt.amount)), 0)', 'sum')
+        .where('wt.created_at >= :start AND wt.created_at < :end', {
+          start: startOfMonth,
+          end: startOfNextMonth,
+        })
+        .andWhere('wt.status = :status', {
+          status: WalletTransactionStatus.SUCCESS,
+        })
+        .andWhere('wt.type IN (:...types)', {
+          types: [TransactionType.REFUND, TransactionType.WITHDRAW],
+        })
+        .getRawOne(),
+    ]);
+
+    const totalTransactions = gatewayTotalCount + walletTotalCount;
+    const successTransactions = gatewaySuccessCount + walletSuccessCount;
+    // Tổng thu = giao dịch cổng thành công + thu từ ví
+    const totalIncome =
+      Number(gatewaySuccessSumRaw?.sum ?? 0) +
+      Number(walletIncomeSumRaw?.sum ?? 0);
+    // Tổng hoàn = giao dịch cổng hoàn + hoàn từ ví
+    const totalRefund =
+      Number(gatewayRefundSumRaw?.sum ?? 0) +
+      Number(walletRefundSumRaw?.sum ?? 0);
+
+    return {
+      totalTransactions,
+      successTransactions,
+      totalIncome: formatVnd(totalIncome),
+      totalRefund: formatVnd(totalRefund),
+    };
+  }
+
+  async getTransactionList(page = 1, limit = 10, search?: string) {}
 }

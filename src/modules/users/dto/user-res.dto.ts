@@ -11,6 +11,9 @@ export class UserProfileResDto {
 export class VehicleResDto {
   id: number;
   plate_number: string;
+  owner_name?: string;
+  brand?: string;
+  type?: string;
   image: string;
 }
 
@@ -19,7 +22,9 @@ export class BookingResDto {
   status: string;
   qrCode?: any; // Hoặc định nghĩa rõ DTO của QR Code
   vehicle?: any;
-  created_at:Date
+  created_at: Date;
+  start_time:Date;
+  end_time:Date;;
 }
 
 export class UserResDto {
@@ -57,18 +62,23 @@ export class UserResDto {
         ? user.vehicles.map((v) => ({
             id: v.id,
             plate_number: v.plate_number,
+            owner_name: v.owner_name,
+            brand: v.brand,
+            type: v.type,
             image: v.image,
           }))
         : [],
-      
+
       // 2. MAP DỮ LIỆU BOOKINGS TỪ ENTITY SANG DTO
-      bookings: user.bookings 
+      bookings: user.bookings
         ? user.bookings.map((b) => ({
             id: b.id,
             status: b.status,
             qrCode: b.qrCode, // Đảm bảo relation qrCode đã được load ở findOne
             vehicle: b.vehicle,
-            created_at:b.created_at
+            created_at: b.created_at,
+            start_time:b.start_time,
+            end_time:b.end_time,
           }))
         : [],
     };

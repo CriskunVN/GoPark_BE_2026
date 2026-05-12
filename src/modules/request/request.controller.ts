@@ -74,4 +74,12 @@ export class RequestController {
       data,
     };
   }
+
+  // Xác nhận yêu cầu đã được duyệt (Để chuyển role sang Owner)
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/confirm')
+  async confirmRequest(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user['userId'];
+    return this.requestService.confirmRequest(id, userId);
+  }
 }

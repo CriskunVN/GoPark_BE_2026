@@ -16,8 +16,13 @@ import { AdminModule } from './modules/admin/admin.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { RequestModule } from './modules/request/request.module';
 import { NotificationModule } from './modules/notification/notification.module';
-import { ChatbotModule } from './modules/chatbot/chatbot.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { ChatModule } from './modules/chat/chat.module';
 import { BullModule } from '@nestjs/bull';
+import { SupabaseModule } from './common/supabase/supabase.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { VoucherModule } from './modules/voucher/voucher.module';
+import { ReviewsModule } from './modules/reviews/reviews.module';
 
 @Module({
   imports: [
@@ -38,13 +43,18 @@ import { BullModule } from '@nestjs/bull';
     UsersModule,
     VehiclesModule,
     WalletModule,
-    ChatbotModule,
     ParkingModule,
     BookingModule,
     PaymentModule,
     AdminModule,
     RequestModule,
     NotificationModule,
+    AnalyticsModule,
+    SupabaseModule,
+    ChatModule,
+    VoucherModule,
+    ScheduleModule.forRoot(),
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

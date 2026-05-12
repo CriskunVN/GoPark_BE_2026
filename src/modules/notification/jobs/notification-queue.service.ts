@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue, Job } from 'bull';
 import { NotificationJobData, NotificationJobType } from './notification.job';
-import { randomUUID } from 'crypto';
+import { uuidv7 } from 'uuidv7';
 import { CreateNotificationDto } from '../dto/create-notification.dto';
 
 @Injectable()
@@ -19,7 +19,7 @@ export class NotificationQueueService {
     userIds: string[],
   ): Promise<{ jobId: string; message: string }> {
     // Tạo jobId duy nhất cho mỗi job
-    const jobId = randomUUID();
+    const jobId = uuidv7();
     // Chuẩn bị dữ liệu cho job
     const jobData: NotificationJobData = {
       type: NotificationJobType.SEND_TO_USERS,
@@ -59,7 +59,7 @@ export class NotificationQueueService {
   async sendToRole(
     notificationDto: CreateNotificationDto,
   ): Promise<{ jobId: string; message: string }> {
-    const jobId = randomUUID();
+    const jobId = uuidv7();
     const jobData: NotificationJobData = {
       type: NotificationJobType.SEND_TO_ROLE,
       notificationDto,
@@ -94,7 +94,7 @@ export class NotificationQueueService {
   async broadcast(
     notificationDto: any,
   ): Promise<{ jobId: string; message: string }> {
-    const jobId = randomUUID();
+    const jobId = uuidv7();
     const batchSize = 100; // chia 100 users/batch
 
     const jobData: NotificationJobData = {
@@ -169,7 +169,8 @@ export class NotificationQueueService {
       processedAt,
       finishedAt,
       durationMs,
-      durationSeconds: durationMs !== null ? Number((durationMs / 1000).toFixed(2)) : null,
+      durationSeconds:
+        durationMs !== null ? Number((durationMs / 1000).toFixed(2)) : null,
       failedReason: job.failedReason || null,
       result: job.returnvalue ?? null,
     };

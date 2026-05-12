@@ -69,7 +69,9 @@ export class PaymentController {
 
     // Xoá khoảng trắng để VNPAY không báo lỗi định dạng
     // Phân loại: PayBooking cho thanh toán giữ chỗ, NapTien cho nạp ví
-    const orderInfo = body.bookingId ? `PayBooking_${userId}_${body.bookingId}` : `NapTien_${userId}`;
+    const orderInfo = body.bookingId
+      ? `PayBooking_${userId}_${body.bookingId}`
+      : `NapTien_${userId}`;
 
     const url = this.vnpayService.createPaymentUrl(
       body.amount,
@@ -77,7 +79,7 @@ export class PaymentController {
       orderInfo,
       userId,
     );
-    console.log(url)
+    console.log(url);
     return { success: true, url };
   }
 
@@ -100,9 +102,12 @@ export class PaymentController {
           if (orderInfo && orderInfo.startsWith('PayBooking_')) {
             const matched = orderInfo.match(/PayBooking_([\w-]+)_(\d+)/);
             if (matched) {
-              const userId = matched[1];
               const bookingId = parseInt(matched[2]);
-              await this.paymentService.handleBookingVnpayPayment(bookingId, amount, refId);
+              await this.paymentService.handleBookingVnpayPayment(
+                bookingId,
+                amount,
+                query, 
+              );
               return { RspCode: '00', Message: 'Confirm Success' };
             }
           }
@@ -127,6 +132,14 @@ export class PaymentController {
         }
       } else {
         // Code !== 00 tức là thất bại
+        const orderInfo = query['vnp_OrderInfo'];
+        if (orderInfo && orderInfo.startsWith('PayBooking_')) {
+          const matched = orderInfo.match(/PayBooking_([\w-]+)_(\d+)/);
+          if (matched) {
+            const bookingId = parseInt(matched[2]);
+            await this.paymentService.handleBookingVnpayFailure(bookingId);
+          }
+        }
         return {
           RspCode: '00',
           Message: 'Confirm Success (Failed Transaction)',
@@ -150,5 +163,11 @@ export class PaymentController {
     } else {
       return { success: false, message: 'Chữ ký không hợp lệ', data: query };
     }
+  }
+
+  // GET invoice by booking id
+  @Get('invoice/booking/:bookingId')
+  async getInvoiceByBooking(@Param('bookingId') bookingId: number) {
+    return await this.paymentService.getInvoiceByBooking(bookingId);
   }
 }

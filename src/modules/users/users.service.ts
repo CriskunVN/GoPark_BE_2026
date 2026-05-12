@@ -1,13 +1,18 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/create-user.dto';
+import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository, Like } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
@@ -19,6 +24,7 @@ import { UserRoleEnum } from '../../common/enums/role.enum';
 @Injectable()
 export class UsersService {
   constructor(
+    private readonly configService: ConfigService,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @InjectRepository(Role)
@@ -51,8 +57,16 @@ export class UsersService {
       });
       await this.profileRepository.save(profile);
     }
-    // Gán vai trò "USER" mặc định cho người dùng mới tạo, nếu role này chưa tồn tại trong database thì sẽ được tạo mới
-    const targetRoleName = 'USER';
+    // Gán vai trò mặc định là "USER", nhưng cho phép override nếu role hợp lệ (VD: STAFF do owner tạo)
+    const allowedRoles: string[] = [
+      UserRoleEnum.USER,
+      UserRoleEnum.OWNER,
+      UserRoleEnum.STAFF,
+    ];
+    const targetRoleName =
+      roleName && allowedRoles.includes(roleName)
+        ? roleName
+        : UserRoleEnum.USER;
     const role = await this.roleRepository.findOne({
       where: { name: targetRoleName },
     });
@@ -187,20 +201,29 @@ export class UsersService {
   }
   // Cấp quyền OWNER cho người dùng, nếu họ chưa có quyền này
   async makeOwner(userId: string) {
-    const user = await this.findOne(userId);
     let ownerRole = await this.roleRepository.findOne({
-      where: { name: 'OWNER' },
+      where: { name: UserRoleEnum.OWNER },
     });
+
     if (!ownerRole) {
-      ownerRole = this.roleRepository.create({ name: 'OWNER' });
-      await this.roleRepository.save(ownerRole);
+      ownerRole = this.roleRepository.create({ name: UserRoleEnum.OWNER });
+      ownerRole = await this.roleRepository.save(ownerRole);
     }
-    // Kiểm tra xem người dùng đã có quyền OWNER chưa, nếu chưa thì gán quyền này cho họ
-    const hasOwnerRole = user.userRoles?.some(
-      (ur) => ur.role?.name === 'OWNER',
-    );
-    if (!hasOwnerRole) {
-      const newRole = this.userRoleRepository.create({ user, role: ownerRole });
+
+    // Kiểm tra xem người dùng đã có quyền OWNER chưa
+    const existingOwnerRole = await this.userRoleRepository.findOne({
+      where: {
+        user: { id: userId },
+        role: { id: ownerRole.id },
+      },
+    });
+
+    // Nếu chưa có thì mới thêm vào (giữ nguyên các quyền cũ như USER)
+    if (!existingOwnerRole) {
+      const newRole = this.userRoleRepository.create({
+        user: { id: userId } as any,
+        role: { id: ownerRole.id } as any,
+      });
       await this.userRoleRepository.save(newRole);
     }
     return true;
@@ -261,6 +284,87 @@ export class UsersService {
       await this.profileRepository.save(user.profile);
     }
     return this.findOne(userId);
+  }
+
+  // Upload ảnh đại diện của người dùng lên Supabase Storage, sau đó cập nhật URL ảnh vào hồ sơ người dùng
+  async uploadAvatar(userId: string, file: Express.Multer.File) {
+    const supabaseUrl = this.configService.get<string>('SUPABASE_URL')?.trim();
+    const serviceRoleKey = this.configService
+      .get<string>('SUPABASE_SERVICE_ROLE_KEY')
+      ?.trim()
+      .replace(/^['"]|['"]$/g, '');
+    const bucket =
+      this.configService.get<string>('SUPABASE_BUCKET')?.trim() ||
+      'IMG_GOPARK2026';
+    const avatarFolder =
+      this.configService.get<string>('SUPABASE_AVATAR_FOLDER')?.trim() ||
+      'avatars';
+
+    if (!supabaseUrl || !serviceRoleKey)
+      throw new InternalServerErrorException('Thiếu cấu hình SUPABASE');
+
+    const extension = (
+      file.originalname?.split('.').pop() || 'jpg'
+    ).toLowerCase();
+    const safeExt = extension.replace(/[^a-z0-9]/g, '') || 'jpg';
+    const filePath = `${avatarFolder}/${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+    const candidateBuckets = Array.from(
+      new Set([bucket, 'img_GoPark2026', 'IMG_GOPARK2026'].filter(Boolean)),
+    );
+    let usedBucket: string | null = null;
+
+    for (const candidateBucket of candidateBuckets) {
+      const uploadUrl = `${supabaseUrl}/storage/v1/object/${candidateBucket}/${filePath}`;
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+          'Content-Type': file.mimetype,
+          'x-upsert': 'false',
+        },
+        body: new Uint8Array(file.buffer),
+      });
+
+      if (uploadResponse.ok) {
+        usedBucket = candidateBucket;
+        break;
+      }
+    }
+
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${usedBucket}/${filePath}`;
+    let resolvedImageUrl = publicUrl;
+
+    if (usedBucket) {
+      try {
+        const signUrl = `${supabaseUrl}/storage/v1/object/sign/${usedBucket}/${filePath}`;
+        const signResponse = await fetch(signUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${serviceRoleKey}`,
+            apikey: serviceRoleKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 365 }),
+        });
+
+        if (signResponse.ok) {
+          const signData = await signResponse.json();
+          const signedPath = signData?.signedURL || signData?.signedUrl;
+          if (signedPath) {
+            // FIX: prepend /storage/v1 since Supabase signedURL returns a path without it
+            const fixPath = signedPath.startsWith('/storage/v1')
+              ? signedPath
+              : `/storage/v1${signedPath.startsWith('/') ? '' : '/'}${signedPath}`;
+            resolvedImageUrl = signedPath.startsWith('http')
+              ? signedPath
+              : `${supabaseUrl}${fixPath}`;
+          }
+        }
+      } catch (e) {}
+    }
+
+    return this.updateProfile(userId, { image: resolvedImageUrl });
   }
 
   // =========== Lấy name bằng userId ================
@@ -368,5 +472,90 @@ export class UsersService {
         },
       },
     });
+  }
+
+  // =========== Owner tạo tài khoản nhân viên (STAFF) ================
+  // Sử dụng Email Convention: staff.[parkingLotId].[unique_name]@gopark.com
+  async createStaff(dto: CreateStaffDto) {
+    // Trích xuất phần tên từ email cũ hoặc dùng trực tiếp fullName không dấu
+    const emailPrefix = dto.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const formattedEmail = `staff.${dto.parkingLotId}.${emailPrefix}@gopark.com`;
+
+    const existingUser = await this.findByEmail(formattedEmail);
+    if (existingUser) {
+      throw new BadRequestException(
+        `Nhân viên với định danh '${emailPrefix}' đã tồn tại trong bãi này`,
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    console.log('--- CREATE STAFF DEBUG ---');
+    console.log('Original Email:', dto.email);
+    console.log('ParkingLotId:', dto.parkingLotId);
+    console.log('Formatted Email:', formattedEmail);
+    console.log('--------------------------');
+
+    return this.create({
+      email: formattedEmail,
+      password: hashedPassword,
+      fullName: dto.fullName,
+      phoneNumber: dto.phoneNumber,
+      role: UserRoleEnum.STAFF,
+      status: 'ACTIVE', // owner đã xác nhận nhân viên trực tiếp → không cần email verify
+      verifyToken: null,
+    });
+  }
+
+  // Lấy danh sách nhân viên theo bãi đỗ xe
+  async findStaffByParkingLot(parkingLotId: number) {
+    return this.usersRepository.find({
+      where: {
+        email: Like(`staff.${parkingLotId}.%`),
+      },
+      relations: ['profile', 'userRoles', 'userRoles.role'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // Xóa nhân viên (kiểm tra quyền sở hữu của Owner)
+  async removeStaff(staffId: string, ownerId: string) {
+    const staff = await this.usersRepository.findOne({
+      where: { id: staffId },
+      relations: ['userRoles', 'userRoles.role'],
+    });
+
+    if (!staff) throw new NotFoundException('Không tìm thấy nhân viên');
+
+    // Kiểm tra role STAFF
+    const isStaff = staff.userRoles.some(
+      (ur) => ur.role.name === UserRoleEnum.STAFF,
+    );
+    if (!isStaff) throw new BadRequestException('Đây không phải tài khoản nhân viên');
+
+    // Trích xuất lotId từ email: staff.10.name@gopark.com
+    const emailParts = staff.email.split('.');
+    if (emailParts.length < 3 || emailParts[0] !== 'staff') {
+      throw new BadRequestException('Định dạng email nhân viên không hợp lệ');
+    }
+
+    const lotId = parseInt(emailParts[1]);
+
+    // Kiểm tra quyền sở hữu bãi xe của Owner
+    const owner = await this.usersRepository.findOne({
+      where: { id: ownerId },
+      relations: ['ownedParkingLots'],
+    });
+
+    if (!owner) throw new UnauthorizedException('Không tìm thấy tài khoản Owner');
+
+    const isOwnerOfLot = owner.ownedParkingLots?.some((lot) => lot.id === lotId);
+    if (!isOwnerOfLot) {
+      throw new BadRequestException(
+        'Bạn không có quyền xóa nhân viên của bãi xe này',
+      );
+    }
+
+    return this.usersRepository.remove(staff);
   }
 }

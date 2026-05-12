@@ -1,11 +1,20 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
   InternalServerErrorException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Not, EntityManager } from 'typeorm';
+import {
+  Repository,
+  DataSource,
+  Not,
+  EntityManager,
+  ILike,
+  Between,
+  In,
+} from 'typeorm';
 import { ParkingLot } from './entities/parking-lot.entity';
 import { Booking } from '../booking/entities/booking.entity';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -14,7 +23,12 @@ import {
   OwnerParkingLotTotalsResDto,
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
-import { BookingStatus, ParkingLotStatus, SlotStatus } from 'src/common/enums/status.enum';
+import {
+  BookingStatus,
+  ParkingLotStatus,
+  SlotStatus,
+} from 'src/common/enums/status.enum';
+import { UserRoleEnum } from 'src/common/enums/role.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
@@ -30,6 +44,14 @@ import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { Review } from '../users/entities/review.entity';
+import { PricingRule } from '../payment/entities/pricingrule.entity';
+import { ManualBookingDto } from './dto/manual-booking.dto';
+import { SupabaseService } from '../../common/supabase/supabase.service';
+import { EmailService } from '../auth/email/email.service';
+import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import * as vision from '@google-cloud/vision';
+import { Gate } from './entities/gate.entity';
 
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
@@ -41,6 +63,7 @@ export interface OcrSpaceResponse {
 
 @Injectable()
 export class ParkingLotService {
+  private sentReminderIds = new Set<string>();
   constructor(
     @InjectRepository(ParkingLot)
     private parkingLotRepository: Repository<ParkingLot>,
@@ -60,14 +83,39 @@ export class ParkingLotService {
     @InjectRepository(Review)
     private reviewRepository: Repository<Review>,
 
+    @InjectRepository(PricingRule)
+    private pricingRuleRepository: Repository<PricingRule>,
+
+    @InjectRepository(Gate)
+    private gateRepository: Repository<Gate>,
+
     private requestService: RequestService,
 
     private usersService: UsersService,
     private dataSource: DataSource,
+    private mailService: EmailService,
+    private readonly supabaseService: SupabaseService,
   ) {}
 
-  async createParkingLot(createParkingLotDto: CreateParkingLotReqDto) {
-    const parkingLot = this.parkingLotRepository.create({
+  async createParkingLot(
+    createParkingLotDto: CreateParkingLotReqDto,
+    files?: Array<Express.Multer.File>,
+  ) {
+    let thumbnail: string | undefined = undefined;
+    let gallery: string[] | undefined = undefined;
+
+    if (files && files.length > 0) {
+      const uploadPromises = files.map((file) =>
+        this.supabaseService.uploadFile(file, 'parkinglot'),
+      );
+      const uploadedUrls = await Promise.all(uploadPromises);
+      thumbnail = uploadedUrls[0];
+      if (uploadedUrls.length > 1) {
+        gallery = uploadedUrls.slice(1);
+      }
+    }
+
+    const parkingLot: ParkingLot = this.parkingLotRepository.create({
       name: createParkingLotDto.name,
       address: createParkingLotDto.address,
       lat: createParkingLotDto.lat,
@@ -77,8 +125,13 @@ export class ParkingLotService {
         createParkingLotDto.availableSlots ??
         createParkingLotDto.totalSlots ??
         0,
-      status: ParkingLotStatus.INACTIVE,
-      owner: { id: createParkingLotDto.ownerId } as User,
+      description: createParkingLotDto.description,
+      open_time: createParkingLotDto.open_time ? new Date(createParkingLotDto.open_time) : undefined,
+      close_time: createParkingLotDto.close_time ? new Date(createParkingLotDto.close_time) : undefined,
+      operating_days: createParkingLotDto.operating_days,
+      image: { thumbnail, gallery },
+      status: ParkingLotStatus.PENDING,
+      owner: { id: createParkingLotDto.ownerId } as any,
     });
 
     const savedParkingLot = await this.parkingLotRepository.save(parkingLot);
@@ -102,19 +155,135 @@ export class ParkingLotService {
     return OwnerParkingLotResDto.fromEntity(savedParkingLot);
   }
 
+  // ─── Update parking lot ────────────────────────────────────────────────────
+  async updateParkingLot(
+    parkingLotId: number,
+    updateParkingLotDto: UpdateParkingLotReqDto,
+    user: any,
+    files?: Array<Express.Multer.File>,
+  ) {
+    const parkingLot = await this.validateLotAccess(parkingLotId, user);
+
+    if (updateParkingLotDto.name) {
+      parkingLot.name = updateParkingLotDto.name;
+    }
+
+    if (updateParkingLotDto.description !== undefined) {
+      parkingLot.description = updateParkingLotDto.description;
+    }
+
+    if (updateParkingLotDto.address) {
+      parkingLot.address = updateParkingLotDto.address;
+    }
+
+    if (updateParkingLotDto.lat !== undefined) {
+      parkingLot.lat = updateParkingLotDto.lat;
+    }
+
+    if (updateParkingLotDto.lng !== undefined) {
+      parkingLot.lng = updateParkingLotDto.lng;
+    }
+
+    if (updateParkingLotDto.open_time) {
+      parkingLot.open_time = new Date(updateParkingLotDto.open_time);
+    }
+
+    if (updateParkingLotDto.close_time) {
+      parkingLot.close_time = new Date(updateParkingLotDto.close_time);
+    }
+
+    if (updateParkingLotDto.operating_days) {
+      parkingLot.operating_days = updateParkingLotDto.operating_days;
+    }
+
+    if (files && files.length > 0) {
+      const uploadPromises = files.map((file) =>
+        this.supabaseService.uploadFile(file, 'parkinglot'),
+      );
+      const uploadedUrls = await Promise.all(uploadPromises);
+
+      const currentImage = parkingLot.image || {};
+      const currentGallery = Array.isArray(currentImage.gallery)
+        ? currentImage.gallery
+        : [];
+
+      const newThumbnail = currentImage.thumbnail || uploadedUrls[0];
+      const newGallery = currentImage.thumbnail
+        ? [...currentGallery, ...uploadedUrls]
+        : [...uploadedUrls.slice(1), ...currentGallery];
+
+      parkingLot.image = {
+        ...currentImage,
+        thumbnail: newThumbnail,
+        gallery: newGallery,
+      };
+    }
+
+    const updatedParkingLot = await this.parkingLotRepository.save(parkingLot);
+    return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
+  }
+
+  // ─── Delete a specific image from parking lot ──────────────────────────────
+  async deleteParkingLotImage(
+    parkingLotId: number,
+    user: any,
+    imageUrl: string,
+  ) {
+    const parkingLot = await this.validateLotAccess(parkingLotId, user);
+
+    if (!parkingLot.image) {
+      throw new BadRequestException('Bãi đỗ xe không có hình ảnh nào');
+    }
+
+    const { thumbnail, gallery = [] } = parkingLot.image;
+    let isModified = false;
+    let newThumbnail = thumbnail;
+
+    // Check if the image to delete is in the gallery
+    const galleryIndex = gallery.indexOf(imageUrl);
+    if (galleryIndex !== -1) {
+      gallery.splice(galleryIndex, 1);
+      isModified = true;
+    }
+
+    // Check if the image to delete is the thumbnail
+    if (thumbnail === imageUrl) {
+      // Promote the first gallery image to thumbnail if available
+      if (gallery.length > 0) {
+        newThumbnail = gallery.shift();
+      } else {
+        newThumbnail = undefined;
+      }
+      isModified = true;
+    }
+
+    if (!isModified) {
+      throw new BadRequestException(
+        'Không tìm thấy hình ảnh trong bãi đỗ xe này',
+      );
+    }
+
+    // Delete physically from Supabase
+    await this.supabaseService.deleteFilesByUrls([imageUrl]);
+
+    // Update entity
+    parkingLot.image = {
+      ...parkingLot.image,
+      thumbnail: newThumbnail,
+      gallery,
+    };
+
+    const updatedParkingLot = await this.parkingLotRepository.save(parkingLot);
+    return OwnerParkingLotResDto.fromEntity(updatedParkingLot);
+  }
+
   // ─── Get users of a parking lot (with optional search) ───────────────────
   async getUsersByParkingLot(
     parkingLotId: number,
+    user: any,
     search?: string,
   ): Promise<ParkingLotUserResDto[]> {
-    const parkingLot = await this.parkingLotRepository.findOne({
-      where: { id: parkingLotId },
-    });
-    if (!parkingLot) {
-      throw new NotFoundException(
-        `Không tìm thấy bãi đỗ xe với ID ${parkingLotId}`,
-      );
-    }
+    await this.validateLotAccess(parkingLotId, user);
 
     // Nếu có keyword search → dùng QueryBuilder tối ưu
     if (search?.trim()) {
@@ -187,7 +356,13 @@ export class ParkingLotService {
   async getAllParkingLots() {
     return await this.parkingLotRepository.find({
       where: { status: ParkingLotStatus.ACTIVE },
-      relations: ['parkingFloor', 'parkingFloor.parkingZones'],
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.slot',
+      ],
     });
   }
 
@@ -245,7 +420,7 @@ export class ParkingLotService {
       address: dto.address,
       lat: Number(dto.lat),
       lng: Number(dto.lng),
-      status: 'PENDING',
+      status: ParkingLotStatus.PENDING,
       owner: user,
     });
     // 4. Dựa trên thông tin về số lượng chỗ đậu xe trên mỗi tầng (được cung cấp trong dto.floorSlots), tạo các bản ghi tương ứng trong bảng ParkingSlot và liên kết chúng với bãi đậu xe mới tạo.
@@ -335,7 +510,10 @@ export class ParkingLotService {
   }
 
   // ─── Extract License Plate (OCR) ───────────────────────────────────────────
-  async extractLicensePlate(file: Express.Multer.File): Promise<string> {
+  async extractLicensePlate(
+    file: Express.Multer.File,
+    language?: string,
+  ): Promise<string> {
     if (!file) {
       throw new BadRequestException('Image file is required');
     }
@@ -343,41 +521,129 @@ export class ParkingLotService {
     try {
       const apiKey = String(process.env.OCR_API_KEY || 'K88596879988957');
       const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      const normalizedLanguage =
+        typeof language === 'string' &&
+        ['eng', 'vie'].includes(language.toLowerCase())
+          ? language.toLowerCase()
+          : 'eng';
 
-      const formData = new FormData();
-      formData.append('base64Image', base64Image);
-      formData.append('apikey', apiKey);
-      formData.append('language', 'eng');
-      formData.append('OCREngine', '2');
+      const parseWithLanguage = async (lang: 'eng' | 'vie') => {
+        const formData = new FormData();
+        formData.append('base64Image', base64Image);
+        formData.append('apikey', apiKey);
+        formData.append('language', lang);
+        formData.append('OCREngine', '2');
 
-      const response = await fetch('https://api.ocr.space/parse/image', {
-        method: 'POST',
-        body: formData as unknown as BodyInit,
-      });
+        const response = await fetch('https://api.ocr.space/parse/image', {
+          method: 'POST',
+          body: formData as unknown as BodyInit,
+        });
 
-      const result = (await response.json()) as OcrSpaceResponse;
+        return (await response.json()) as OcrSpaceResponse;
+      };
+
+      let result = await parseWithLanguage(normalizedLanguage as 'eng' | 'vie');
+      if (
+        result.IsErroredOnProcessing &&
+        normalizedLanguage === 'vie' &&
+        String(result.ErrorMessage?.[0] || '').includes(
+          "parameter 'language' is invalid",
+        )
+      ) {
+        result = await parseWithLanguage('eng');
+      }
 
       if (result.IsErroredOnProcessing) {
         throw new BadRequestException(result.ErrorMessage?.[0] || 'OCR Error');
       }
 
-      const parsedText = String(result.ParsedResults?.[0]?.ParsedText || '');
-      return parsedText.trim().replace(/\r?\n|\r/g, ' ');
+      const parsedText = (result.ParsedResults || [])
+        .map((item) => String(item?.ParsedText || '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+      return parsedText;
     } catch (error: unknown) {
       console.error('OCR Error:', error);
       throw new InternalServerErrorException('Failed to extract license plate');
     }
   }
 
-  // ─── Guest Check-in (Walk-in) ──────────────────────────────────────────────
-  async handleWalkIn(parkingLotId: number, dto: WalkInDto) {
-    const parkingLot = await this.parkingLotRepository.findOne({
-      where: { id: parkingLotId },
-    });
+  async extractLicensePlateFromBuffer(
+    buffer: Buffer,
+    mimetype: string,
+    language?: string,
+  ): Promise<string> {
+    try {
+      const apiKey = String(process.env.OCR_API_KEY || 'K88596879988957');
+      const base64Image = `data:${mimetype};base64,${buffer.toString('base64')}`;
+      const normalizedLanguage =
+        typeof language === 'string' && ['eng', 'vie'].includes(language.toLowerCase())
+          ? language.toLowerCase()
+          : 'eng';
 
-    if (!parkingLot) {
-      throw new NotFoundException('Parking lot not found');
+      const parseWithLanguage = async (lang: 'eng' | 'vie') => {
+        const formData = new FormData();
+        formData.append('base64Image', base64Image);
+        formData.append('apikey', apiKey);
+        formData.append('language', lang);
+        formData.append('OCREngine', '2');
+
+        const response = await fetch('https://api.ocr.space/parse/image', {
+          method: 'POST',
+          body: formData as unknown as BodyInit,
+        });
+
+        return (await response.json()) as OcrSpaceResponse;
+      };
+
+      let result = await parseWithLanguage(normalizedLanguage as 'eng' | 'vie');
+      if (result.IsErroredOnProcessing) {
+        result = await parseWithLanguage('eng');
+      }
+
+      const parsedText = (result.ParsedResults || [])
+        .map((item) => String(item?.ParsedText || '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+      return parsedText.replace(/[^A-Z0-9]/g, '');
+    } catch (error: unknown) {
+      console.error('OCR Error:', error);
+      return '';
     }
+  }
+
+  // ─── Extract License Plate (OCR - GOOGLE VISION) ───────────────────────────
+  async extractLicensePlateGoogleVision(
+    file: Express.Multer.File,
+  ): Promise<string> {
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    try {
+      const client = new vision.ImageAnnotatorClient();
+      const [result] = await client.textDetection(file.buffer);
+      const fullText = result.fullTextAnnotation?.text || '';
+
+      if (!fullText) return '';
+
+      const plateRegex = /([0-9]{2}[A-Z]{1,2}[-.\s]?[0-9]{3,5}(?:[-.\s]?[0-9]{2})?)/g;
+      const matches = fullText.toUpperCase().match(plateRegex);
+
+      if (!matches || matches.length === 0) return '';
+
+      return matches[0].replace(/[^A-Z0-9]/g, '');
+    } catch (error: unknown) {
+      console.error('Google Vision OCR Error:', error);
+      throw new InternalServerErrorException('Failed to extract license plate via Google Vision');
+    }
+  }
+
+  // ─── Guest Check-in (Walk-in) ──────────────────────────────────────────────
+  async handleWalkIn(parkingLotId: number, dto: WalkInDto, user: any) {
+    const parkingLot = await this.validateLotAccess(parkingLotId, user);
 
     if (parkingLot.available_slots <= 0) {
       throw new BadRequestException('Parking lot is full');
@@ -472,12 +738,161 @@ export class ParkingLotService {
     }
   }
 
-  //Get bãi đỗ
-    async getMapForBooking(lotid: number, userId: string) {
-    console.log('Getting map for booking - ParkingLotService', {
-      lotid,
-      userId,
+  // ─── Manual Booking (Owner đặt chỗ thủ công cho khách vãng lai) ───────────
+  async handleManualBooking(
+    parkingLotId: number,
+    dto: ManualBookingDto,
+    user: any,
+  ) {
+    const parkingLot = await this.validateLotAccess(parkingLotId, user);
+
+    // 2. Xác minh slot thuộc bãi này và load thông tin zone + pricing
+    const slot = await this.parkingSlotRepository.findOne({
+      where: { id: dto.slotId },
+      relations: [
+        'parkingZone',
+        'parkingZone.parkingFloor',
+        'parkingZone.parkingFloor.parkingLot',
+        'parkingZone.pricingRule',
+      ],
     });
+
+    if (
+      !slot ||
+      slot.parkingZone?.parkingFloor?.parkingLot?.id !== parkingLotId
+    ) {
+      throw new NotFoundException(
+        'Không tìm thấy vị trí đỗ hoặc vị trí không thuộc bãi này',
+      );
+    }
+
+    if (slot.status !== SlotStatus.AVAILABLE) {
+      throw new BadRequestException(
+        `Vị trí đỗ ${slot.code} hiện không khả dụng (${slot.status})`,
+      );
+    }
+
+    // 3. Lấy thông tin giá từ zone
+    const pricingRule = slot.parkingZone.pricingRule?.[0] ?? null;
+    const pricePerHour = pricingRule?.price_per_hour ?? 0;
+    const pricePerDay = pricingRule?.price_per_day ?? 0;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 4. Tìm/Tạo ghost user theo SĐT
+      let user = await queryRunner.manager
+        .createQueryBuilder(User, 'user')
+        .innerJoinAndSelect('user.profile', 'profile')
+        .where('profile.phone = :phone', { phone: dto.phoneNumber })
+        .getOne();
+
+      if (!user) {
+        const email = `guest_${dto.phoneNumber}@gopark.local`;
+        const randomPassword = Math.random().toString(36).slice(-8);
+
+        const newUser = queryRunner.manager.create(User, {
+          email,
+          password: randomPassword,
+          status: 'ACTIVE',
+        });
+        user = await queryRunner.manager.save(User, newUser);
+
+        const profile = queryRunner.manager.create(Profile, {
+          name: dto.name,
+          phone: dto.phoneNumber,
+          user: user,
+        });
+        await queryRunner.manager.save(Profile, profile);
+        user.profile = profile;
+      }
+
+      // 5. Tìm/Tạo vehicle theo biển số
+      const standardizedPlate = dto.licensePlate
+        .toUpperCase()
+        .replace(/\W/g, '');
+
+      let vehicle = await queryRunner.manager.findOne(Vehicle, {
+        where: { plate_number: standardizedPlate },
+        relations: ['user'],
+      });
+
+      if (!vehicle) {
+        vehicle = queryRunner.manager.create(Vehicle, {
+          plate_number: standardizedPlate,
+          user: user,
+        });
+        vehicle = await queryRunner.manager.save(Vehicle, vehicle);
+      } else if (vehicle.user.id !== user.id) {
+        vehicle.user = user;
+        vehicle = await queryRunner.manager.save(Vehicle, vehicle);
+      }
+
+      // 6. Tạo booking ONGOING (owner đặt = check-in luôn)
+      const booking = queryRunner.manager.create(Booking, {
+        status: BookingStatus.ONGOING,
+        start_time: new Date(dto.startTime),
+        end_time: new Date(dto.startTime), // placeholder — cập nhật khi checkout
+        user: user,
+        vehicle: vehicle,
+        slot: slot,
+      });
+      await queryRunner.manager.save(Booking, booking);
+
+      // 7. Cập nhật trạng thái slot → OCCUPIED
+      await queryRunner.manager.update(
+        ParkingSlot,
+        { id: slot.id },
+        { status: SlotStatus.OCCUPIED },
+      );
+
+      // 8. Giảm available_slots của bãi
+      await queryRunner.manager.decrement(
+        ParkingLot,
+        { id: parkingLotId },
+        'available_slots',
+        1,
+      );
+
+      await queryRunner.commitTransaction();
+
+      return {
+        message: 'Đặt chỗ thủ công thành công',
+        bookingId: booking.id,
+        slotCode: slot.code,
+        zoneName: slot.parkingZone.zone_name,
+        floorName: slot.parkingZone.parkingFloor.floor_name,
+        startTime: booking.start_time,
+        customerName: dto.name,
+        phoneNumber: dto.phoneNumber,
+        licensePlate: standardizedPlate,
+        pricing: {
+          pricePerHour,
+          pricePerDay,
+        },
+      };
+    } catch (error: unknown) {
+      await queryRunner.rollbackTransaction();
+      console.error('Manual Booking Error:', error);
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        'Không thể tạo đặt chỗ thủ công, vui lòng thử lại',
+      );
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  //Get bãi đỗ
+  async getMapForBooking(lotid: number, user: any) {
+    await this.validateLotAccess(lotid, user);
     //lấy thông tin bãi đỗ cùng với các tầng, zone, slot để hiển thị trên map khi booking
     const lot = await this.parkingLotRepository.findOne({
       where: { id: lotid },
@@ -493,19 +908,19 @@ export class ParkingLotService {
 
     if (!lot) throw new NotFoundException('Not found Parking Lot');
 
-    const flatpricingRules = lot.parkingFloor.flatMap(floor => 
-      floor.parkingZones.flatMap(zone => 
-        zone.pricingRule.map(rule => ({
+    const flatpricingRules = lot.parkingFloor.flatMap((floor) =>
+      floor.parkingZones.flatMap((zone) =>
+        zone.pricingRule.map((rule) => ({
           ...rule,
           zone_name: zone.zone_name,
-          floor_name: floor.floor_name
-        }))
-      )
+          floor_name: floor.floor_name,
+        })),
+      ),
     );
 
     //lấy danh sách xe của người dùng
     const vehicleUser = await this.vehicleRepository.find({
-      where: { user: { id: userId } },
+      where: { user: { id: user.userId || user.sub } },
       relations: ['user'],
     });
 
@@ -528,7 +943,7 @@ export class ParkingLotService {
                   parkingFloor: {
                     id: floor.id,
                     floor_name: floor.floor_name,
-                  }
+                  },
                 });
               }
             }
@@ -543,12 +958,172 @@ export class ParkingLotService {
       pricingRules: flatpricingRules,
     };
   }
+
+  async getPublicParkingLotDetail(lotid: number, userId: string) {
+    const lot = await this.parkingLotRepository.findOne({
+      where: { id: lotid }, // Bỏ status ACTIVE để sơ đồ hiển thị ngay cả khi đang PENDING
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+        'parkingFloor.parkingZones.pricingRule',
+        'parkingFloor.parkingZones.slot',
+      ],
+    });
+
+    if (!lot) throw new NotFoundException('Not found Parking Lot');
+
+    const flatpricingRules = lot.parkingFloor.flatMap((floor) =>
+      floor.parkingZones.flatMap((zone) =>
+        zone.pricingRule.map((rule) => ({
+          ...rule,
+          zone_name: zone.zone_name,
+          floor_name: floor.floor_name,
+        })),
+      ),
+    );
+
+    let userVehicles: Vehicle[] = [];
+    if (userId) {
+      // Giả sử bạn đã inject VehicleRepository vào service này
+      userVehicles = await this.vehicleRepository.find({
+        where: { user: { id: userId } },
+        relations: ['user'],
+      });
+    }
+
+    return {
+      ...lot,
+      userVehicles,
+      pricingRules: flatpricingRules,
+    };
+  }
+
+  /**
+   * Lấy sơ đồ bãi đỗ và tính toán lại trạng thái slot dựa trên khung giờ yêu cầu
+   * (Dành cho chức năng đặt chỗ rạp chiếu phim - Cinema Style)
+   */
+  async getAvailableMapByTime(
+    parkingLotId: number,
+    user: any,
+    startTime: string,
+    endTime: string,
+  ) {
+    await this.validateLotAccess(parkingLotId, user);
+    // 1. Lấy sơ đồ gốc và xe của user (tận dụng logic getMapForBooking)
+    const lotData: any = await this.getMapForBooking(parkingLotId, user);
+
+    // 2. Tìm tất cả các booking trùng lặp thời gian trong bãi này
+    // Điều kiện overlap: (b.start_time < requested_end) AND (b.end_time > requested_start)
+    const busyBookings = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoinAndSelect('b.slot', 'slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .where('floor.parkingLot = :lotId', { lotId: parkingLotId })
+      .andWhere('b.status NOT IN (:...excludeStatuses)', {
+        excludeStatuses: [BookingStatus.COMPLETED, BookingStatus.CANCELLED],
+      })
+      .andWhere('b.start_time < :endTime', { endTime: new Date(endTime) })
+      .andWhere('b.end_time > :startTime', { startTime: new Date(startTime) })
+      .getMany();
+
+    // 3. Tạo tập hợp các Slot ID đã bị đặt
+    const busySlotIds = new Set(
+      busyBookings.map((b) => b.slot?.id).filter((id) => id !== undefined),
+    );
+
+    // 4. Duyệt qua cấu trúc phân cấp và cập nhật trạng thái slot dựa trên logic rạp phim
+    if (lotData.parkingFloor) {
+      lotData.parkingFloor.forEach((floor: any) => {
+        if (floor.parkingZones) {
+          floor.parkingZones.forEach((zone: any) => {
+            if (zone.slot) {
+              zone.slot.forEach((slot: any) => {
+                // Nếu slot thực tế đang AVAILABLE nhưng lại nằm trong danh sách bận của khung giờ này
+                if (
+                  slot.status === SlotStatus.AVAILABLE &&
+                  busySlotIds.has(slot.id)
+                ) {
+                  // Ghi đè thành RESERVED để FE đổi màu xám/đỏ khách không chọn được
+                  slot.status = SlotStatus.RESERVED;
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+
+    return lotData;
+  }
+
+  /**
+   * Lấy lịch trình chi tiết của 1 Slot cụ thể trong 1 ngày
+   * Giúp Owner biết slot đó bận/trống vào lúc nào trong ngày
+   */
+  async getSlotAvailability(slotId: number, dateStr: string) {
+    const startOfDay = new Date(dateStr);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(dateStr);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const slot = await this.parkingSlotRepository.findOne({
+      where: { id: slotId },
+      relations: [
+        'parkingZone',
+        'parkingZone.parkingFloor',
+        'parkingZone.parkingFloor.parkingLot',
+      ],
+    });
+
+    if (!slot) {
+      throw new NotFoundException('Không tìm thấy vị trí đỗ');
+    }
+
+    const bookings = await this.bookingRepository
+      .createQueryBuilder('b')
+      .leftJoinAndSelect('b.user', 'user')
+      .leftJoinAndSelect('user.profile', 'profile')
+      .leftJoinAndSelect('b.vehicle', 'vehicle')
+      .where('b.slot_id = :slotId', { slotId }) // Dùng slot_id là tên cột trong DB
+      .andWhere('b.status NOT IN (:...excludeStatuses)', {
+        excludeStatuses: [
+          BookingStatus.CANCELLED,
+          BookingStatus.COMPLETED, // Thường owner chỉ quan tâm các lịch sắp tới hoặc đang diễn ra
+        ],
+      })
+      .andWhere('b.start_time <= :endOfDay', { endOfDay })
+      .andWhere('b.end_time >= :startOfDay', { startOfDay })
+      .orderBy('b.start_time', 'ASC')
+      .getMany();
+
+    return {
+      slotId: slot.id,
+      slotCode: slot.code,
+      zoneName: slot.parkingZone.zone_name,
+      floorName: slot.parkingZone.parkingFloor.floor_name,
+      parkingLotName: slot.parkingZone.parkingFloor.parkingLot.name,
+      date: dateStr,
+      bookings: bookings.map((b) => ({
+        id: b.id,
+        startTime: b.start_time,
+        endTime: b.end_time,
+        status: b.status,
+        userName: b.user?.profile?.name || b.user?.email || 'N/A',
+        licensePlate: b.vehicle?.plate_number || 'N/A',
+      })),
+    };
+  }
+
   // ─── Floor & Zone Management (Customization) ──────────────────────────────
 
   async getFloorsByParkingLot(lotId: number) {
     return await this.parkingFloorRepository.find({
       where: { parkingLot: { id: lotId } },
-      relations: ['parkingZone'],
+      relations: ['parkingZones'],
     });
   }
 
@@ -990,11 +1565,7 @@ export class ParkingLotService {
   }
 
   //bãi đỗ xe gần nhất
-  async haversineParkingLot(
-    parkingLotId: number,
-    lat: number,
-    lng: number,
-  ) {
+  async haversineParkingLot(parkingLotId: number, lat: number, lng: number) {
     return await this.parkingLotRepository
       .createQueryBuilder('pl')
       .leftJoin('Review', 'r', 'r.parking_lot_id = pl.id')
@@ -1018,6 +1589,7 @@ export class ParkingLotService {
         lng: Number(lng),
         lat: Number(lat),
         parkingLotId,
+        status: 'ACTIVE',
       })
       .where('pl.id != :parkingLotId AND pl.status = :status', {
         parkingLotId,
@@ -1068,4 +1640,410 @@ export class ParkingLotService {
       rows.map((row) => [row.ownerId, Number(row.totalParkingLots) || 0]),
     );
   }
+
+  // ============ Đếm số bãi đỗ xe theo trạng thái (ADMIN) ==================
+  async countParkingLotsByStatus(status: string) {
+    return this.parkingLotRepository.count({
+      where: { status },
+    });
+  }
+  // =========== Đếm số slot theo trạng thái (ADMIN) vd: 33/100 ==================
+  async countAllAvailableSpacesParkingSlot() {
+    const totalSlots = await this.parkingSlotRepository.count();
+    const availableSlots = await this.parkingSlotRepository.count({
+      where: { status: SlotStatus.AVAILABLE },
+    });
+    return `${availableSlots}/${totalSlots}`;
+  }
+
+  // ============ Tính trung bình đánh giá của tất cả bãi đỗ xe (ADMIN) theo 0-5.0 ==================
+  async calculateAverageRating() {
+    const result = await this.reviewRepository
+      .createQueryBuilder('review')
+      .select('ROUND(AVG(review.rating), 1)', 'avgRating')
+      .getRawOne();
+
+    return result?.avgRating || '0.0';
+  }
+
+  // ============ Tính trung bình đánh giá của 1 bãi đỗ xe (ADMIN) theo 0-5.0 ==================
+  async calculateAverageRatingByParkingLotId(parkingLotId: number) {
+    const result = await this.reviewRepository
+      .createQueryBuilder('review')
+      .where('review.parking_lot_id = :parkingLotId', { parkingLotId })
+      .select('ROUND(AVG(review.rating), 1)', 'avgRating')
+      .getRawOne();
+
+    return result?.avgRating || '0.0';
+  }
+
+  // ============ Lấy danh sách bãi đỗ xe (ADMIN) với phân trang ==================
+  // return: {items , meta}
+  async findAllPaginatedWithSearch(
+    page: number,
+    limit: number,
+    search?: string,
+  ) {
+    const [items, total] = await this.parkingLotRepository.findAndCount({
+      where: search ? { name: ILike(`%${search}%`) } : {}, // Nếu có search thì filter theo tên, không thì lấy tất cả
+      relations: [
+        'owner',
+        'owner.profile',
+        'parkingFloor',
+        'parkingFloor.parkingZones',
+      ], // Kéo thêm dữ liệu các bảng liên kết
+      order: { id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items,
+      meta: {
+        totalItems: total,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      },
+    };
+  }
+
+  // =========== Đếm slot còn trống theo từng bãi đỗ xe (ADMIN) ==================
+  async countAvailableSpaces(parkingLotId: number) {
+    const totalSlots = await this.parkingSlotRepository.count({
+      where: {
+        parkingZone: {
+          parkingFloor: {
+            parkingLot: { id: parkingLotId },
+          },
+        },
+      },
+    });
+
+    const availableSlots = await this.parkingSlotRepository.count({
+      where: {
+        parkingZone: {
+          parkingFloor: {
+            parkingLot: { id: parkingLotId },
+          },
+        },
+        status: SlotStatus.AVAILABLE,
+      },
+    });
+
+    return { totalSlots, availableSlots };
+  }
+
+  // =========== Đếm slot còn trống theo Mảng LOT ID (Solve N+1) ==================
+  async countAvailableSpacesByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { totalSlots: number; availableSlots: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    const result = await this.parkingSlotRepository
+      .createQueryBuilder('slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .select('lot.id', 'lotId')
+      .addSelect('COUNT(slot.id)', 'totalSlots')
+      .addSelect(
+        "SUM(CASE WHEN slot.status = 'AVAILABLE' THEN 1 ELSE 0 END)",
+        'availableSlots',
+      )
+      .where('lot.id IN (:...lotIds)', { lotIds })
+      .groupBy('lot.id')
+      .getRawMany();
+
+    const map = new Map<
+      number,
+      { totalSlots: number; availableSlots: number }
+    >();
+    result.forEach((row) => {
+      map.set(Number(row.lotId), {
+        totalSlots: Number(row.totalSlots) || 0,
+        availableSlots: Number(row.availableSlots) || 0,
+      });
+    });
+
+    return map;
+  }
+
+  // =========== Đếm slot còn trống theo Mảng ZONE ID==================
+  async countAvailableSpacesByZoneIds(
+    zoneIds: number[],
+  ): Promise<Map<number, number>> {
+    if (!zoneIds || zoneIds.length === 0) return new Map();
+
+    const result = await this.parkingSlotRepository
+      .createQueryBuilder('slot')
+      .innerJoin('slot.parkingZone', 'zone')
+      .select('zone.id', 'zoneId')
+      .addSelect('COUNT(slot.id)', 'count')
+      .where('zone.id IN (:...zoneIds)', { zoneIds })
+      .andWhere('slot.status = :status', { status: SlotStatus.AVAILABLE })
+      .groupBy('zone.id')
+      .getRawMany();
+
+    const map = new Map<number, number>();
+    result.forEach((row) => {
+      map.set(Number(row.zoneId), Number(row.count));
+    });
+    return map;
+  }
+
+  // ============ lấy giá giờ của bãi đỗ xe (ADMIN) ==================
+  async getParkingLotPricing(parkingLotId: number) {
+    const pricingRules = await this.pricingRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .where('lot.id = :parkingLotId', { parkingLotId })
+      .select([
+        'zone.zone_name AS zoneName',
+        'rule.price_per_hour AS pricePerHour',
+        'rule.price_per_day AS pricePerDay',
+      ])
+      .getRawMany();
+
+    return pricingRules;
+  }
+
+  // ============ lấy giá đồng loạt của nhiều bãi đỗ xe ==================
+  async getPricingByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { pricePerHour: number; pricePerDay: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    // Tìm rules thuộc các lotIds
+    const results = await this.pricingRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.parkingZone', 'zone')
+      .innerJoin('zone.parkingFloor', 'floor')
+      .innerJoin('floor.parkingLot', 'lot')
+      .where('lot.id IN (:...lotIds)', { lotIds })
+      .select([
+        'lot.id AS "lotId"',
+        'rule.price_per_hour AS "pricePerHour"',
+        'rule.price_per_day AS "pricePerDay"',
+      ])
+      .getRawMany();
+
+    // Gom nhóm rule đầu tiên hoặc lớn nhất vào Map
+    const map = new Map<
+      number,
+      { pricePerHour: number; pricePerDay: number }
+    >();
+    results.forEach((row) => {
+      const lotId = Number(row.lotId);
+      if (!map.has(lotId)) {
+        map.set(lotId, {
+          pricePerHour: Number(row.pricePerHour) || 0,
+          pricePerDay: Number(row.pricePerDay) || 0,
+        });
+      }
+    });
+    return map;
+  }
+
+  // =========== Đếm tổng review của bãi đỗ xe (ADMIN) ==================
+  async countTotalReviewsByParkingLotId(parkingLotId: number) {
+    return await this.reviewRepository.count({
+      where: { lot: { id: parkingLotId } },
+    });
+  }
+
+  // =========== Tính Rate và Review đồng loạt cho nhiều bãi ==================
+  async getReviewStatsByLotIds(
+    lotIds: number[],
+  ): Promise<Map<number, { avgRating: string; totalReviews: number }>> {
+    if (!lotIds || lotIds.length === 0) return new Map();
+
+    const results = await this.reviewRepository
+      .createQueryBuilder('review')
+      .where('review.parking_lot_id IN (:...lotIds)', { lotIds })
+      .select('review.parking_lot_id', 'lotId')
+      .addSelect('ROUND(AVG(review.rating), 1)', 'avg')
+      .addSelect('COUNT(review.id)', 'count')
+      .groupBy('review.parking_lot_id')
+      .getRawMany();
+
+    const map = new Map<number, { avgRating: string; totalReviews: number }>();
+    results.forEach((row) => {
+      map.set(Number(row.lotId), {
+        avgRating: row.avg ? String(row.avg) : '0.0',
+        totalReviews: Number(row.count) || 0,
+      });
+    });
+    return map;
+  }
+
+  // =========== Tự động gửi thông báo nhắc nhở trước 10p khi hết hạn ============
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleBookingExpirationReminders() {
+    const now = new Date();
+    const reminderTimeStart = new Date(now.getTime() + 9 * 60000);
+    const reminderTimeEnd = new Date(now.getTime() + 10 * 60000);
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let bookings: Booking[] = [];
+    try {
+      const bookingIdRows = await queryRunner.manager
+        .getRepository(Booking)
+        .createQueryBuilder('booking')
+        .select('booking.id', 'id')
+        .where('booking.status IN (:...statuses)', {
+          statuses: [BookingStatus.CONFIRMED, BookingStatus.ONGOING],
+        })
+        .andWhere('booking.end_time BETWEEN :start AND :end', {
+          start: reminderTimeStart,
+          end: reminderTimeEnd,
+        })
+        .setLock('pessimistic_read')
+        .setOnLocked('skip_locked')
+        .getRawMany();
+
+      const bookingIds = bookingIdRows.map((row) => row.id);
+      if (bookingIds.length > 0) {
+        bookings = await queryRunner.manager.getRepository(Booking).find({
+          where: { id: In(bookingIds) },
+          relations: [
+            'user',
+            'user.profile',
+            'slot',
+            'slot.parkingZone',
+            'slot.parkingZone.parkingFloor',
+            'slot.parkingZone.parkingFloor.parkingLot',
+            'vehicle',
+          ],
+        });
+      }
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    for (const booking of bookings) {
+      const bId = (booking as any).id;
+
+      // KIỂM TRA: Nếu đã gửi rồi thì bỏ qua
+      if (this.sentReminderIds.has(bId)) {
+        continue;
+      }
+
+      try {
+        const userEmail = booking.user.email;
+        const userName = booking.user.profile?.name || 'Khách hàng';
+        const plateNumber = booking.vehicle?.plate_number || 'không rõ biển số';
+        const lotName = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.name || 'Bãi đỗ xe';
+
+        const endTimeStr = new Date(booking.end_time).toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        // GỌI HÀM RIÊNG TỪ EMAIL SERVICE
+        await this.mailService.sendExpirationReminderEmail(
+          userEmail,
+          userName,
+          {
+            lotName,
+            plateNumber,
+            endTimeStr,
+          },
+        );
+
+        // Đánh dấu đã gửi thành công
+        this.sentReminderIds.add(bId);
+        console.log(`[Success] Đã gửi mail nhắc nhở cho ${userEmail}`);
+
+      } catch (error) {
+        console.error(`[Reminder] Lỗi khi gửi mail cho đơn ${bId}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Kiểm tra quyền truy cập của User (Owner/Staff) vào bãi xe
+   */
+  async validateLotAccess(lotId: number, user: any): Promise<ParkingLot> {
+    const roles = user.roles || [];
+    const email = user.email || '';
+    const userId = String(user.userId || user.sub || user.id || '');
+
+    const lot = await this.parkingLotRepository.findOne({
+      where: { id: lotId },
+      relations: ['owner'],
+    });
+
+    if (!lot) {
+      throw new NotFoundException('Không tìm thấy bãi đỗ xe');
+    }
+
+    // Nếu đúng chủ bãi thì cho phép ngay cả khi token thiếu roles do dữ liệu đăng nhập không đồng nhất.
+    const lotOwnerId = String(lot.owner?.id || '');
+    const lotOwnerEmail = lot.owner?.email || '';
+    if (lotOwnerId && (lotOwnerId === userId || lotOwnerEmail === email)) {
+      return lot;
+    }
+
+    // 1. Nếu là OWNER: Kiểm tra quyền sở hữu bãi xe
+    if (roles.includes(UserRoleEnum.OWNER)) {
+      if (lotOwnerId !== userId && lotOwnerEmail !== email) {
+        throw new ForbiddenException('Bạn không sở hữu bãi đỗ xe này');
+      }
+      return lot;
+    }
+
+    // 2. Nếu là STAFF: Kiểm tra gán bãi qua Email Convention
+    if (roles.includes(UserRoleEnum.STAFF)) {
+      const emailParts = email.split('.');
+      if (
+        emailParts.length < 3 ||
+        emailParts[0] !== 'staff' ||
+        parseInt(emailParts[1]) !== lotId
+      ) {
+        throw new ForbiddenException(
+          'Bạn không được phân công quản lý bãi đỗ xe này',
+        );
+      }
+      return lot;
+    }
+
+    // 3. Admin hoặc các quyền khác
+    if (roles.includes(UserRoleEnum.ADMIN)) return lot;
+
+    throw new ForbiddenException('Bạn không có quyền thực hiện thao tác này');
+  }
+
+  //gate check-in check-out
+  async getGatesByParkingLot(parkingLotId: number) {
+    const gates = await this.gateRepository.find({
+      where: {
+        parkingLot: { id: parkingLotId },
+      },
+      relations: ['checkLogs'],
+      order: { name: 'ASC' },
+    });
+
+    return gates.map((gate) => ({
+      id: gate.id,
+      name: gate.name,
+      desc: gate.description || '',
+      status: gate.status,
+      type: gate.type,
+      count: gate.checkLogs?.length || 0,
+    }));
+  }
+  
+
 }

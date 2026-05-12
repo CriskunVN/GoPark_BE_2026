@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -12,6 +13,7 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  Delete,
 } from '@nestjs/common';
 import { ParkingLotService } from './parking-lot.service';
 import { ParkingLotUserResDto } from './dto/parking-lot-user-res.dto';
@@ -21,13 +23,25 @@ import {
 } from './dto/owner-parking-lot-res.dto';
 import { CreateParkingLotReqDto } from './dto/create-parking-lot-req.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRoleEnum } from '../../common/enums/role.enum';
+import {
+  AnyFilesInterceptor,
+  FileInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
 import { BecomeOwnerDto } from './dto/become-owner.dto';
 import { WalkInDto } from './dto/walk-in.dto';
 import { CreateFloorDto } from './dto/create-floor.dto';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { UpdateFloorDto } from './dto/update-floor.dto';
+import { CheckAvailableSlotsDto } from './dto/check-available-slots.dto';
+import { GetSlotAvailabilityDto } from './dto/get-slot-availability.dto';
+import { ManualBookingDto } from './dto/manual-booking.dto';
+import { UpdateParkingLotReqDto } from './dto/update-parking-lot-req.dto';
+import { DeleteParkingLotImageDto } from './dto/delete-parking-lot-image.dto';
 
 // chia vung ra roi thay nghe
 
@@ -40,18 +54,47 @@ export class ParkingLotController {
     return this.parkingLotService.getAllParkingLots();
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('public/:lotid')
+  async getPublicParkingLotDetail(
+    @Param('lotid', ParseIntPipe) lotid: number,
+    @Req() req: any
+  ) {
+    const userId = req.user?.userId;
+    return this.parkingLotService.getPublicParkingLotDetail(lotid,userId);
+  }
+
   // ─── Routes: owner (đặt TRƯỚC :parkingLotId để tránh route collision) ──────
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner/me/lots')
+  async getMyParkingLots(
+    @Req() req: any,
+  ): Promise<OwnerParkingLotResDto[]> {
+    const ownerId = req.user.userId;
+    return this.parkingLotService.getParkingLotsByOwner(ownerId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER)
+  @Get('owner/me/totals')
+  async getMyTotals(
+    @Req() req: any,
+  ): Promise<OwnerParkingLotTotalsResDto> {
+    const ownerId = req.user.userId;
+    return this.parkingLotService.getTotalsByOwner(ownerId);
+  }
   @Get('owner/:ownerId')
   async getParkingLotsByOwner(
-    @Param('ownerId') ownerId: string,
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
   ): Promise<OwnerParkingLotResDto[]> {
     return this.parkingLotService.getParkingLotsByOwner(ownerId);
   }
 
   @Get('owner/:ownerId/totals')
   async getTotalsByOwner(
-    @Param('ownerId') ownerId: string,
+    @Param('ownerId', ParseUUIDPipe) ownerId: string,
   ): Promise<OwnerParkingLotTotalsResDto> {
     return this.parkingLotService.getTotalsByOwner(ownerId);
   }
@@ -59,36 +102,117 @@ export class ParkingLotController {
   // ─── Route: users of a specific parking lot ─────────────────────────────────
 
   @Get(':parkingLotId/users')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   async getUsersByParkingLot(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Req() req: any,
     @Query('search') search?: string,
   ): Promise<ParkingLotUserResDto[]> {
-    return this.parkingLotService.getUsersByParkingLot(parkingLotId, search);
+    return this.parkingLotService.getUsersByParkingLot(
+      parkingLotId,
+      req.user,
+      search,
+    );
   }
   // get bãi đỗ
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   @Get('map/:lotid')
   async getMapBooing(@Param('lotid') lotid: number, @Req() req: any) {
-    const userId = req.user['userId'];
-    return this.parkingLotService.getMapForBooking(lotid,userId);
+    const user = req.user;
+    return this.parkingLotService.getMapForBooking(lotid, user);
+  }
+
+  // Lấy bản đồ bãi đỗ với trạng thái slot theo khung giờ (Cinema Style)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  @Get(':parkingLotId/available-map')
+  async getAvailableMap(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Query() dto: CheckAvailableSlotsDto,
+    @Req() req: any,
+  ) {
+    const user = req.user;
+    return this.parkingLotService.getAvailableMapByTime(
+      parkingLotId,
+      user,
+      dto.start_time,
+      dto.end_time,
+    );
+  }
+
+  // Lấy lịch trình chi tiết của 1 Slot cụ thể trong 1 ngày
+  @Get('slots/:slotId/availability')
+  async getSlotAvailability(
+    @Param('slotId', ParseIntPipe) slotId: number,
+    @Query() dto: GetSlotAvailabilityDto,
+  ) {
+    return this.parkingLotService.getSlotAvailability(slotId, dto.date);
   }
 
   //bãi đỗ gần nhất
   @Get('nearby/:lotid')
   async gethaversineParkingLot(
-  @Param('lotid') lotid :number, 
-  @Query('lat') lat: any, 
-  @Query('lng') lng: any){
-    
+    @Param('lotid') lotid: number,
+    @Query('lat') lat: any,
+    @Query('lng') lng: any,
+  ) {
     const latitude = parseFloat(lat) || 0;
     const longitude = parseFloat(lng) || 0;
-    return this.parkingLotService.haversineParkingLot(lotid,latitude,longitude)
+    return this.parkingLotService.haversineParkingLot(
+      lotid,
+      latitude,
+      longitude,
+    );
   }
 
   // ─── Route: create parking lot (chỉ dành cho owner) ─────────────────────────
   @Post()
-  async createParkingLot(@Body() createParkingLotDto: CreateParkingLotReqDto) {
-    return this.parkingLotService.createParkingLot(createParkingLotDto);
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('images'))
+  async createParkingLot(
+    @Req() req: any,
+    @Body() createParkingLotDto: CreateParkingLotReqDto,
+    @UploadedFiles() files?: Array<Express.Multer.File>,
+  ) {
+    if (!createParkingLotDto.ownerId) {
+      createParkingLotDto.ownerId = req.user['userId'];
+    }
+    return this.parkingLotService.createParkingLot(createParkingLotDto, files);
+  }
+
+  // ─── Route: update parking lot (chỉ dành cho owner) ─────────────────────────
+  @Patch(':parkingLotId')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('images'))
+  async updateParkingLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() updateParkingLotDto: UpdateParkingLotReqDto,
+    @Req() req: any,
+    @UploadedFiles() files?: Array<Express.Multer.File>,
+  ) {
+    return this.parkingLotService.updateParkingLot(
+      parkingLotId,
+      updateParkingLotDto,
+      req.user,
+      files,
+    );
+  }
+
+  // ─── Route: delete a specific parking lot image (chỉ dành cho owner) ──────
+  @Delete(':parkingLotId/images')
+  @UseGuards(JwtAuthGuard)
+  async deleteParkingLotImage(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: DeleteParkingLotImageDto,
+    @Req() req: any,
+  ) {
+    return this.parkingLotService.deleteParkingLotImage(
+      parkingLotId,
+      req.user,
+      dto.imageUrl,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -107,16 +231,42 @@ export class ParkingLotController {
 
   @Post('ocr')
   @UseInterceptors(FileInterceptor('image'))
-  async extractLicensePlate(@UploadedFile() file: Express.Multer.File) {
-    return await this.parkingLotService.extractLicensePlate(file);
+  async extractLicensePlate(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('language') language?: string,
+  ) {
+    return await this.parkingLotService.extractLicensePlate(file, language);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
   @Post(':parkingLotId/walk-in')
   async handleWalkIn(
     @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
     @Body() dto: WalkInDto,
+    @Req() req: any,
   ) {
-    return await this.parkingLotService.handleWalkIn(parkingLotId, dto);
+    return await this.parkingLotService.handleWalkIn(
+      parkingLotId,
+      dto,
+      req.user,
+    );
+  }
+
+  // ─── Route: Manual Booking (Owner đặt chỗ thủ công) ─────────────────────────
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  @Post(':parkingLotId/manual-booking')
+  async handleManualBooking(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+    @Body() dto: ManualBookingDto,
+    @Req() req: any,
+  ) {
+    return await this.parkingLotService.handleManualBooking(
+      parkingLotId,
+      dto,
+      req.user,
+    );
   }
 
   // ─── Customization Endpoints (Floors & Zones) ─────────────────────────────
@@ -244,7 +394,15 @@ export class ParkingLotController {
 
   //lấy comment
   @Get('comment/:lotid')
-  async getComment(@Param('lotid') lotid : number){
-    return await this.parkingLotService.getCommentUser(lotid)
+  async getComment(@Param('lotid') lotid: number) {
+    return await this.parkingLotService.getCommentUser(lotid);
+  }
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  @Get(':parkingLotId/gates')
+  async getGatesByParkingLot(
+    @Param('parkingLotId', ParseIntPipe) parkingLotId: number,
+  ) {
+    return await this.parkingLotService.getGatesByParkingLot(parkingLotId);
   }
 }

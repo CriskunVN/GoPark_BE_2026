@@ -43,7 +43,7 @@ export class ActivityService {
 
       await this.activityRepository.save(activity);
     } catch (error) {
-      this.logger.error('Không thể lưu activity', error as any);
+      this.logger.error('Không thể lưu activity', error);
     }
   }
 
@@ -144,5 +144,40 @@ export class ActivityService {
       status: item.status,
       meta: item.meta,
     }));
+  }
+
+  async templateforBookingActivity(
+    bookingId: number,
+    userId: string,
+    type: ActivityType,
+    status: ActivityStatus,
+  ) {
+    const userName = await this.UserService.getNameByUserId(userId);
+    let content = '';
+    switch (type) {
+      case ActivityType.BOOKING_NEW:
+        content = `Người dùng ${userName} đã tạo một đặt chỗ mới với mã #${bookingId}`;
+        break;
+      case ActivityType.BOOKING_CANCELED:
+        content = `Người dùng ${userName} đã hủy đặt chỗ với mã #${bookingId}`;
+        break;
+      case ActivityType.BOOKING_EXTENDED:
+        content = `Người dùng ${userName} đã gia hạn đặt chỗ với mã #${bookingId}`;
+        break;
+      default:
+        content = `Hoạt động liên quan đến đặt chỗ #${bookingId} của người dùng ${userName}`; // fallback content
+    }
+    this.logActivity({
+      type,
+      content,
+      status,
+      userId,
+      userName,
+      meta: {
+        bookingId,
+      },
+    }).catch((error) => {
+      this.logger.error('Không thể lưu activity đặt chỗ', error);
+    });
   }
 }

@@ -1,10 +1,8 @@
 ﻿import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { UpdateBalanceDto, PaymentDto } from './dto/wallet.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('wallets')
-@UseGuards(JwtAuthGuard)
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
 
@@ -65,5 +63,41 @@ export class WalletController {
       req.user?.id ||
       '123e4567-e89b-12d3-a456-426614174000';
     return await this.walletService.getWalletByUserId(userId);
+  }
+
+  // ============== ADMIN: GIAO DỊCH RÚT TIỀN ==============
+
+  @Get('withdraw-requests')
+  async getWithdrawRequests() {
+    return await this.walletService.getWithdrawRequests();
+  }
+
+  @Post('withdraw-requests/:id/approve')
+  async approveWithdrawRequest(@Req() req: any) {
+    return await this.walletService.approveWithdrawRequest(req.params.id);
+  }
+
+  @Post('withdraw-requests/:id/reject')
+  async rejectWithdrawRequest(@Req() req: any) {
+    return await this.walletService.rejectWithdrawRequest(req.params.id);
+  }
+
+  @Get('transaction/:id')
+  async getTransactionDetails(@Req() req: any) {
+    return await this.walletService.getTransactionById(req.params.id);
+  }
+
+  @Post('withdraw-requests/:id/complaint')
+  async complainWithdrawRequest(
+    @Req() req: any,
+    @Body() body: { userId?: string; message?: string },
+  ) {
+    const userId =
+      body.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
+    return await this.walletService.complainWithdrawRequest(
+      req.params.id,
+      userId,
+      body.message,
+    );
   }
 }

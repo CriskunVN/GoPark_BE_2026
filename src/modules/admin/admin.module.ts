@@ -8,6 +8,9 @@ import { Request } from '../request/entities/request.entity';
 import { ParkingModule } from '../parking-lot/parking-lot.module';
 import { BookingModule } from '../booking/booking.module';
 import { ActivityModule } from '../activity/activity.module';
+import { NotificationModule } from '../notification/notification.module';
+import { Transaction } from '../payment/entities/transaction.entity';
+import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
 
 @Module({
   imports: [
@@ -16,7 +19,9 @@ import { ActivityModule } from '../activity/activity.module';
     ParkingModule,
     BookingModule,
     ActivityModule,
-    TypeOrmModule.forFeature([Request]),
+
+    NotificationModule,
+    TypeOrmModule.forFeature([Request, Transaction, WalletTransaction]),
   ],
   controllers: [AdminController],
   providers: [AdminService],

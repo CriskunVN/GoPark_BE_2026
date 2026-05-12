@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  Req,
   HttpCode,
   HttpStatus,
   Put,
@@ -55,8 +56,13 @@ export class AdminController {
 
   // Admin duyệt yêu cầu
   @Patch('requests/:id/approve')
-  async approveRequest(@Param('id') id: string) {
-    const result = await this.adminService.approveRequest(id, 'APPROVED');
+  async approveRequest(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Body('reason') reason: string,
+  ) {
+    const adminId = req.user?.userId || req.user?.id; // Tùy thuộc vào payload của JWT
+    const result = await this.adminService.approveRequest(id, adminId, reason);
     return {
       message: 'Yêu cầu đã được phê duyệt',
       data: result,
@@ -65,12 +71,13 @@ export class AdminController {
 
   // Admin từ chối yêu cầu
   @Patch('requests/:id/reject')
-  async rejectRequest(@Param('id') id: string, @Body('reason') reason: string) {
-    const result = await this.adminService.rejectRequest(
-      id,
-      'REJECTED',
-      reason,
-    );
+  async rejectRequest(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Body('reason') reason: string,
+  ) {
+    const adminId = req.user?.userId || req.user?.id;
+    const result = await this.adminService.rejectRequest(id, adminId, reason);
     return {
       message: 'Yêu cầu đã bị từ chối',
       data: result,
@@ -141,6 +148,56 @@ export class AdminController {
     );
     return {
       message: 'Lấy danh sách chủ bãi thành công',
+      data,
+    };
+  }
+
+  // =========== Stats Parking Lot ================
+  @Get('/stats/parking-lots')
+  async getParkingLotStats() {
+    const stats = await this.adminService.getParkingLotStats();
+    return { data: stats };
+  }
+
+  // ========== Get danh sách bãi đỗ xe  ================
+  @Get('/parking-lots/list')
+  async getParkingLotList(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    const data = await this.adminService.getParkingLotList(
+      Number(page),
+      Number(limit),
+      search,
+    );
+    return {
+      message: 'Lấy danh sách bãi đỗ xe thành công',
+      data,
+    };
+  }
+
+  // =========== Thống kê giao dịch ================
+  @Get('/stats/transactions')
+  async getTransactionStats() {
+    const stats = await this.adminService.getTransactionStats();
+    return { data: stats };
+  }
+
+  // =========== Get danh sách giao dịch  ================
+  @Get('/transactions/list')
+  async getTransactionList(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    const data = await this.adminService.getTransactionList(
+      Number(page),
+      Number(limit),
+      search,
+    );
+    return {
+      message: 'Lấy danh sách giao dịch thành công',
       data,
     };
   }

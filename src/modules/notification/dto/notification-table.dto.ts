@@ -8,6 +8,7 @@ import { Type } from 'class-transformer';
 export class NotificationTableItemDto {
   id: string;
   title: string; // THÔNG BÁO
+  content?: string; // NỘI DUNG THÔNG BÁO
   type: string; // LOẠI (SYSTEM, PROMOTIONAL, etc)
   targetRole: string; // ĐỐI TƯỢNG (ALL, ADMIN, USER, etc)
   isRead: boolean; // ĐÃ ĐỌC (true = Đã đọc, false = Chưa đọc)

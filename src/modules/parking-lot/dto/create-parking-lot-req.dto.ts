@@ -41,7 +41,24 @@ export class CreateParkingLotReqDto {
   @IsOptional()
   status?: string;
 
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsOptional()
+  open_time?: string;
+
+  @IsOptional()
+  close_time?: string;
+
+  @IsString()
+  @IsOptional()
+  operating_days?: string;
+
+  @IsOptional()
+  images?: any;
+
   @IsUUID()
-  @IsNotEmpty()
+  @IsOptional()
   ownerId: string;
 }

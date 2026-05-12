@@ -17,6 +17,7 @@ import { Invoice } from '../../payment/entities/invoice.entity';
 import { CheckLog } from './check-log.entity';
 import { Review } from 'src/modules/users/entities/review.entity';
 import { BookingStatus } from 'src/common/enums/status.enum';
+import { Transaction } from 'src/modules/payment/entities/transaction.entity';
 
 @Entity('bookings')
 export class Booking {
@@ -31,9 +32,9 @@ export class Booking {
   end_time: Date;
 
   @Column({
-    type:'enum',
-    enum:BookingStatus,
-    default:BookingStatus.PENDING,
+    type: 'enum',
+    enum: BookingStatus,
+    default: BookingStatus.PENDING,
   })
   status: BookingStatus;
 
@@ -69,4 +70,7 @@ export class Booking {
 
   @OneToMany('Review', (review: Review) => review.booking)
   review: Review;
+
+  @OneToMany('Transaction', (transaction: Transaction) => transaction.booking)
+  transactions: Transaction[];
 }

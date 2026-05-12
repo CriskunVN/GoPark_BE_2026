@@ -9,6 +9,7 @@ import { AdminNotificationController } from './admin-notification.controller';
 import { User } from '../users/entities/user.entity';
 import { NotificationQueueService } from './jobs/notification-queue.service';
 import { NotificationWorker } from './jobs/notification.worker';
+import { NotificationGateway } from './notification.gateway';
 
 @Module({
   imports: [
@@ -27,11 +28,13 @@ import { NotificationWorker } from './jobs/notification.worker';
     NotificationService,
     NotificationQueueService,
     NotificationWorker,
+    NotificationGateway,
   ],
   exports: [
     TypeOrmModule,
     NotificationService,
     NotificationQueueService,
+    NotificationGateway,
     BullModule,
   ],
 })

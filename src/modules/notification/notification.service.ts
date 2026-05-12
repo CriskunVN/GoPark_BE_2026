@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { ResNotificationDto } from './dto/res-notification.dto';
 import { User } from '../users/entities/user.entity';
 import { NotificationQueueService } from './jobs/notification-queue.service';
+import { NotificationGateway } from './notification.gateway';
 import {
   GetNotificationTableDto,
   NotificationTableItemDto,
@@ -27,6 +28,7 @@ export class NotificationService {
     private userRepository: Repository<User>,
 
     private notificationQueueService: NotificationQueueService,
+    private notificationGateway: NotificationGateway,
   ) {}
 
   async create(createNotificationDto: CreateNotificationDto) {
@@ -40,7 +42,19 @@ export class NotificationService {
     await this.notificationRepository.save(notification);
 
     // tạo thông báo cho tất cả người dùng thuộc vai trò mục tiêu
-    // Logic để tạo thông báo cho tất cả người dùng thuộc vai trò mục tiêu
+    const notificationPayload = {
+      ...createNotificationDto,
+      id: notification.id,
+    };
+
+    if (notification.target_role === 'ALL') {
+      await this.broadcastNotification(notificationPayload);
+    } else if (
+      notification.target_role === 'OWNER' ||
+      notification.target_role === 'USER'
+    ) {
+      await this.sendNotificationToRole(notificationPayload);
+    }
 
     return notification;
   }
@@ -69,7 +83,7 @@ export class NotificationService {
     });
 
     return notifications.map((item) =>
-      ResNotificationDto.mapFromEntity(item.notification),
+      ResNotificationDto.mapFromEntity(item.notification, item),
     );
   }
 
@@ -81,7 +95,7 @@ export class NotificationService {
     });
 
     return notifications.map((item) =>
-      ResNotificationDto.mapFromEntity(item.notification),
+      ResNotificationDto.mapFromEntity(item.notification, item),
     );
   }
 
@@ -138,7 +152,39 @@ export class NotificationService {
     notificationDto: CreateNotificationDto,
     userIds: string[],
   ) {
-    return this.notificationQueueService.sendToUsers(notificationDto, userIds);
+    // 1. Lưu vào Database ngay lập tức (không qua hàng đợi để đảm bảo tin cậy cho user đơn lẻ)
+    const notification = this.notificationRepository.create({
+      title: notificationDto.title,
+      content: notificationDto.content,
+      target_role: notificationDto.target_role,
+      type: notificationDto.type,
+    });
+    await this.notificationRepository.save(notification);
+
+    const recipients = userIds.map((userId) =>
+      this.notificationRecipientRepository.create({
+        notification,
+        recipient: { id: userId } as any,
+      }),
+    );
+    await this.notificationRecipientRepository.save(recipients);
+
+    // 2. Gửi Realtime qua Socket
+    userIds.forEach((userId) => {
+      this.notificationGateway.sendNotificationToUser(userId, {
+        id: notification.id,
+        title: notification.title,
+        content: notification.content,
+        type: notification.type,
+        createdAt: new Date().toISOString(),
+        isRead: false,
+      });
+    });
+
+    return {
+      message: 'Đã gửi thông báo thành công',
+      notificationId: notification.id,
+    };
   }
 
   // ---------- Gửi thông báo đến tất cả người dùng ----------
@@ -225,6 +271,7 @@ export class NotificationService {
       return {
         id: n.id,
         title: n.title,
+        content: n.content,
         type: n.type,
         targetRole: n.target_role,
         isRead:

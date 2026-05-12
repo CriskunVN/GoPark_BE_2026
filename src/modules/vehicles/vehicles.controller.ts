@@ -33,6 +33,8 @@ export class VehiclesController {
     return this.vehiclesService.findOne(+id, req.user['userId']);
   }
 
+  
+
   @Patch(':id')
   update(
     @Req() req: any,

@@ -18,7 +18,10 @@ export class QRCode {
   @Column()
   status: string;
 
-  @OneToOne('Booking', (booking: Booking) => booking.qrCode,{cascade: true, onDelete: 'CASCADE' })
+  @OneToOne('Booking', (booking: Booking) => booking.qrCode, {
+    cascade: true,
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'booking_id' })
   booking: Booking;
 }

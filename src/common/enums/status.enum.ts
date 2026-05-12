@@ -22,8 +22,8 @@ export enum TransactionStatus {
 export enum ParkingLotStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
+  PENDING = 'PENDING',
   MAINTENANCE = 'MAINTENANCE',
-   PENDING = 'PENDING',
 }
 
 export enum RequestStatus {
@@ -51,4 +51,5 @@ export enum BookingStatus {
   ONGOING = 'ONGOING',
   PENDING = 'PENDING',
   COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
 }
