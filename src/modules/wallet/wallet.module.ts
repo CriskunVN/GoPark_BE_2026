@@ -7,6 +7,7 @@ import { WalletController } from './wallet.controller';
 import { Booking } from '../booking/entities/booking.entity';
 import { BookingModule } from '../booking/booking.module';
 import { ActivityModule } from '../activity/activity.module';
+import { WalletAdminController } from './walletAdmin.controller';
 
 @Module({
   imports: [
@@ -14,7 +15,7 @@ import { ActivityModule } from '../activity/activity.module';
     ActivityModule,
     forwardRef(() => BookingModule),
   ],
-  controllers: [WalletController],
+  controllers: [WalletController, WalletAdminController],
   providers: [WalletService],
   exports: [TypeOrmModule, WalletService],
 })

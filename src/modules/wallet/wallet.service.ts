@@ -669,7 +669,9 @@ export class WalletService {
     await queryRunner.startTransaction();
 
     try {
-      console.log(`[TransferMoney] Khởi tạo giao dịch: From(${fromUserId}) To(${toUserId}) Amount(${amount})`);
+      console.log(
+        `[TransferMoney] Khởi tạo giao dịch: From(${fromUserId}) To(${toUserId}) Amount(${amount})`,
+      );
 
       // 1. Khóa ví người gửi
       const fromWallet = await queryRunner.manager
@@ -678,11 +680,14 @@ export class WalletService {
         .setLock('pessimistic_write')
         .getOne();
 
-      if (!fromWallet) throw new BadRequestException('Không tìm thấy ví người gửi');
-      
+      if (!fromWallet)
+        throw new BadRequestException('Không tìm thấy ví người gửi');
+
       const fromBalanceBefore = Number(fromWallet.balance);
       if (fromBalanceBefore < amount) {
-        throw new BadRequestException('Số dư ví không đủ để thực hiện giao dịch');
+        throw new BadRequestException(
+          'Số dư ví không đủ để thực hiện giao dịch',
+        );
       }
 
       // 2. Khóa ví người nhận
@@ -692,7 +697,8 @@ export class WalletService {
         .setLock('pessimistic_write')
         .getOne();
 
-      if (!toWallet) throw new BadRequestException('Không tìm thấy ví người nhận');
+      if (!toWallet)
+        throw new BadRequestException('Không tìm thấy ví người nhận');
 
       // 3. Thực hiện chuyển tiền
       fromWallet.balance = fromBalanceBefore - amount;
@@ -702,7 +708,9 @@ export class WalletService {
       toWallet.balance = toBalanceBefore + amount;
       await queryRunner.manager.save(toWallet);
 
-      console.log(`[TransferMoney] Thành công: FromBalance(${fromBalanceBefore}->${fromWallet.balance}), ToBalance(${toBalanceBefore}->${toWallet.balance})`);
+      console.log(
+        `[TransferMoney] Thành công: FromBalance(${fromBalanceBefore}->${fromWallet.balance}), ToBalance(${toBalanceBefore}->${toWallet.balance})`,
+      );
 
       // 4. Ghi log giao dịch người gửi
       const fromTx = queryRunner.manager.create(WalletTransaction, {
@@ -741,12 +749,47 @@ export class WalletService {
 
       await queryRunner.commitTransaction();
       return true;
-    } catch (error) {
+    } catch (error: any) {
       await queryRunner.rollbackTransaction();
       console.error('[TransferMoney] LỖI GIAO DỊCH:', error.message);
       throw error;
     } finally {
       await queryRunner.release();
     }
+  }
+
+  async getAllTransactions(page: number, limit: number, search?: string) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
+    const queryBuilder = this.transactionRepository
+      .createQueryBuilder('tx')
+      .leftJoinAndSelect('tx.wallet', 'wallet')
+      .leftJoinAndSelect('wallet.user', 'user')
+      .leftJoinAndSelect('user.profile', 'profile');
+
+    if (search) {
+      queryBuilder.where(
+        'user.email ILIKE :search OR profile.name ILIKE :search OR tx.ref_id ILIKE :search',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [items, totalItems] = await queryBuilder
+      .orderBy('tx.created_at', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      items: items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
   }
 }
