@@ -52,9 +52,9 @@ const INTENT_KEYWORDS: Record<ChatbotIntent, string[]> = {
   'gần tôi', 'bãi gần tôi', 'tìm bãi gần', 'bãi đỗ gần', 'gần đây', 'gần nhất',
   'xung quanh', 'khu vực tôi', 'cạnh tôi', 'nearby', 'gần chỗ tôi',
   'bãi nào gần', 'chỗ đỗ gần', 'bãi đỗ xe gần', 'tìm chỗ đỗ', 'chỗ đỗ xe gần',
-  'bãi gần đây nhất', 'bãi đỗ gần đây', 'tìm bãi đỗ', 'tìm bãi', 'chỗ đỗ', 'bãi đỗ',
+  'bãi gần đây nhất', 'bãi đỗ gần đây', 'tìm bãi đỗ', 'tìm bãi', 'chỗ đỗ',
   // không dấu
-  'tim bai', 'bai gan', 'gan toi', 'gan day', 'bai do', 'cho do', 'tim cho do',
+  'tim bai', 'bai gan', 'gan toi', 'gan day', 'cho do', 'tim cho do',
   'bai do xe', 'bai gan nhat', 'tim bai do', 'cho do xe', 'bai o dau',
 ],
 [ChatbotIntent.FIND_BEST]: [
@@ -198,15 +198,23 @@ export function classifyIntent(message: string): ChatbotIntent {
     lower.includes('lịch sử đặt') || lower.includes('lich su dat') ||
     lower.includes('đặt của tôi') || lower.includes('dat cua toi') ||
     lower.includes('booking của tôi') || lower.includes('xem booking') ||
-    lower.includes('đặt chỗ của tôi') || lower.includes('đã đặt bãi')
+    lower.includes('đặt chỗ của tôi') || lower.includes('đã đặt bãi') ||
+    lower.includes('hủy đặt') || lower.includes('huy dat') ||
+    lower.includes('có thể hủy') || lower.includes('co the huy')
   ) {
     return ChatbotIntent.CHECK_BOOKING;
   }
 
-  // BOOK_PARKING chỉ khi có ý định đặt thật (không phải hỏi cách)
+  // Câu hỏi dạng "bãi đỗ có X không?" → FREE_FORM (không phải tìm bãi)
+  if ((lower.includes('bãi đỗ có') || lower.includes('bai do co')) && lower.includes('không')) {
+    return ChatbotIntent.FREE_FORM;
+  }
+
+  // BOOK_PARKING chỉ khi có ý định đặt thật (không phải hỏi cách, không phải hủy)
   if (
     (lower.includes('đặt bãi') || lower.includes('book bãi') || lower.includes('dat bai') || lower.includes('book bai')) &&
-    !lower.includes('cách') && !lower.includes('như thế nào') && !lower.includes('hướng dẫn') && !lower.includes('làm sao')
+    !lower.includes('cách') && !lower.includes('như thế nào') && !lower.includes('hướng dẫn') &&
+    !lower.includes('làm sao') && !lower.includes('hủy') && !lower.includes('huy')
   ) {
     return ChatbotIntent.BOOK_PARKING;
   }
