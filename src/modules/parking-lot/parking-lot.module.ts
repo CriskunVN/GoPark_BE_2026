@@ -14,6 +14,8 @@ import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { Gate } from './entities/gate.entity';
 import { PricingRule } from '../payment/entities/pricingrule.entity';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationModule } from '../notification/notification.module';
+
 
 @Module({
   imports: [
@@ -30,7 +32,9 @@ import { AuthModule } from '../auth/auth.module';
     RequestModule,
     UsersModule,
     AuthModule,
+    NotificationModule,
   ],
+
   controllers: [ParkingLotController],
   providers: [ParkingLotService],
   exports: [TypeOrmModule, ParkingLotService],

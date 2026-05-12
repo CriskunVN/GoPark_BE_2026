@@ -652,4 +652,101 @@ export class WalletService {
       message: 'Đã gửi khiếu nại đến admin thành công',
     };
   }
+
+  /**
+   * Chuyển tiền giữa người dùng (Dùng cho phí phạt, phí phát sinh...)
+   */
+  async transferMoney(
+    fromUserId: string,
+    toUserId: string,
+    amount: number,
+    refType: string,
+    refId: string,
+    description?: string,
+  ): Promise<boolean> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      console.log(`[TransferMoney] Khởi tạo giao dịch: From(${fromUserId}) To(${toUserId}) Amount(${amount})`);
+
+      // 1. Khóa ví người gửi
+      const fromWallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId: fromUserId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!fromWallet) throw new BadRequestException('Không tìm thấy ví người gửi');
+      
+      const fromBalanceBefore = Number(fromWallet.balance);
+      if (fromBalanceBefore < amount) {
+        throw new BadRequestException('Số dư ví không đủ để thực hiện giao dịch');
+      }
+
+      // 2. Khóa ví người nhận
+      const toWallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId: toUserId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!toWallet) throw new BadRequestException('Không tìm thấy ví người nhận');
+
+      // 3. Thực hiện chuyển tiền
+      fromWallet.balance = fromBalanceBefore - amount;
+      await queryRunner.manager.save(fromWallet);
+
+      const toBalanceBefore = Number(toWallet.balance);
+      toWallet.balance = toBalanceBefore + amount;
+      await queryRunner.manager.save(toWallet);
+
+      console.log(`[TransferMoney] Thành công: FromBalance(${fromBalanceBefore}->${fromWallet.balance}), ToBalance(${toBalanceBefore}->${toWallet.balance})`);
+
+      // 4. Ghi log giao dịch người gửi
+      const fromTx = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: fromWallet.id,
+        amount: -amount,
+        balance_before: fromBalanceBefore,
+        balance_after: fromWallet.balance,
+        type: TransactionType.PAYMENT,
+        status: TransactionStatus.SUCCESS,
+        ref_type: refType,
+        ref_id: refId,
+      });
+      await queryRunner.manager.save(fromTx);
+
+      // 5. Ghi log giao dịch người nhận
+      const toTx = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: toWallet.id,
+        amount: amount,
+        balance_before: toBalanceBefore,
+        balance_after: toWallet.balance,
+        type: TransactionType.EARN_PARKING_FEE,
+        status: TransactionStatus.SUCCESS,
+        ref_type: refType,
+        ref_id: refId,
+      });
+      await queryRunner.manager.save(toTx);
+
+      // 6. Log Activity
+      await this.activityService.logActivity({
+        type: ActivityType.PAYMENT_SUCCESS,
+        content: description || `Giao dịch chuyển tiền thành công: ${amount}đ`,
+        status: ActivityStatus.SUCCESS,
+        userId: fromUserId,
+        meta: { fromUserId, toUserId, amount, refType, refId },
+      });
+
+      await queryRunner.commitTransaction();
+      return true;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      console.error('[TransferMoney] LỖI GIAO DỊCH:', error.message);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
 }

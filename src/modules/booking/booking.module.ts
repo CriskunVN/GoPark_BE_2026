@@ -15,6 +15,7 @@ import { ActivityModule } from '../activity/activity.module';
 import { ParkingModule } from '../parking-lot/parking-lot.module';
 import { UsersModule } from '../users/users.module';
 import { VoucherModule } from '../voucher/voucher.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { VoucherModule } from '../voucher/voucher.module';
     forwardRef(() => WalletModule),
     forwardRef(() => ParkingModule),
     VoucherModule,
+    NotificationModule,
   ],
   controllers: [BookingController],
   providers: [BookingService],
