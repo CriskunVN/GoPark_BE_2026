@@ -54,27 +54,37 @@ export class ChatbotService {
 
       switch (intent) {
         case ChatbotIntent.FIND_NEARBY: {
-          const result = await this.searchParking({ criteria: 'nearest', limit: 3 }, userId);
+          const result = await this.searchParking(
+            { criteria: 'nearest', limit: 5,
+              userLat: context?.userLat, userLng: context?.userLng },
+            userId,
+          );
           if (result.lots?.length) {
             return {
-              text: `🔍 Đây là những bãi gần bạn nhất hiện có.`,
+              text: result.lots[0]?.distance_km
+                ? `📍 Tìm thấy ${result.lots.length} bãi gần bạn nhất (có khoảng cách).`
+                : `📍 Đây là ${result.lots.length} bãi đỗ còn nhiều chỗ trống nhất hiện tại.`,
               action: 'list_parking',
-              data: { lots: result.lots, action: 'list_parking' },
+              data: { lots: result.lots, action: 'list_parking', criteria: 'nearest' },
             };
           }
-          return { text: 'Không tìm thấy bãi gần bạn. Vui lòng thử lại với khu vực khác.' };
+          return { text: 'Không tìm thấy bãi nào. Vui lòng thử lại.' };
         }
 
         case ChatbotIntent.FIND_BEST: {
-          const result = await this.searchParking({ criteria: 'best_rating', limit: 3 }, userId);
+          const result = await this.searchParking(
+            { criteria: 'best_rating', limit: 1 },
+            userId,
+          );
           if (result.lots?.length) {
+            const top = result.lots[0];
             return {
-              text: `⭐ Đây là bãi phù hợp nhất dành cho bạn, dựa trên giá, đánh giá và chỗ trống.`,
+              text: `⭐ Bãi phù hợp nhất với bạn là **${top.name}**.\n\n📊 Tiêu chí chấm điểm:\n• Đánh giá: ${top.avgRating?.toFixed(1) || 'N/A'} ⭐ (trọng số 40%)\n• Chỗ trống: ${top.available_slots}/${top.total_slots} (trọng số 30%)\n• Giá: ${(top.hourly_rate || 20000).toLocaleString('vi-VN')}đ/giờ (trọng số 30%)`,
               action: 'list_parking',
-              data: { lots: result.lots, action: 'list_parking' },
+              data: { lots: result.lots, action: 'list_parking', criteria: 'best' },
             };
           }
-          return { text: 'Không tìm thấy bãi phù hợp. Vui lòng thử lại hoặc mở rộng phạm vi tìm kiếm.' };
+          return { text: 'Không tìm thấy bãi phù hợp.' };
         }
 
         case ChatbotIntent.CHECK_BOOKING: {
@@ -349,56 +359,81 @@ QUAN TRỌNG:
   }
 
   private async searchParking(
-    args: { criteria: string; area?: string; limit?: number; name?: string },
+    args: { criteria: string; area?: string; limit?: number; name?: string; userLat?: number; userLng?: number },
     userId?: string,
   ): Promise<any> {
     let lots = await this.getParkingLotsRaw();
-    const { criteria, area, limit = 5, name } = args;
+    const { criteria, area, limit = 5, name, userLat, userLng } = args;
+
+    // Tính khoảng cách Haversine (km)
+    const calcDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+      const R = 6371;
+      const dLat = ((lat2 - lat1) * Math.PI) / 180;
+      const dLng = ((lng2 - lng1) * Math.PI) / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+
+    // Gắn distance vào mỗi lot nếu có tọa độ user
+    if (userLat && userLng) {
+      lots = lots.map((lot: any) => ({
+        ...lot,
+        distance_km: lot.lat && lot.lng ? parseFloat(calcDistance(userLat, userLng, Number(lot.lat), Number(lot.lng)).toFixed(1)) : null,
+      }));
+    }
 
     if (criteria === 'by_name' && name) {
-      lots = lots.filter((lot) =>
-        lot.name.toLowerCase().includes(name.toLowerCase()),
-      );
+      lots = lots.filter((lot) => lot.name.toLowerCase().includes(name.toLowerCase()));
       if (lots.length === 0) {
-        // ✅ Gợi ý fallback khu vực: tự động trả về message hướng dẫn AI gọi lại tool
         return {
-          message: `❌ Không tìm thấy bãi đỗ nào có tên "${name}". Bạn có muốn tìm bãi ở khu vực ${name} không? (hãy gọi search_parking với criteria='area', area='${name}')`,
+          message: `❌ Không tìm thấy bãi đỗ nào có tên "${name}". Bạn có muốn tìm bãi ở khu vực ${name} không?`,
           lots: [],
           suggestedArea: name,
         };
       }
       lots.sort((a, b) => b.avgRating - a.avgRating);
+
     } else if (criteria === 'area' && area) {
       let normalizedArea = area.toLowerCase();
       if (normalizedArea.includes('sài gòn')) normalizedArea = 'hồ chí minh';
-      if (normalizedArea.includes('đà nẵng')) normalizedArea = 'đà nẵng';
-      lots = lots.filter((lot) =>
-        lot.address.toLowerCase().includes(normalizedArea),
-      );
+      lots = lots.filter((lot) => lot.address.toLowerCase().includes(normalizedArea));
       if (lots.length === 0) {
-        return {
-          message: `📍 Hiện tại GoPark chưa có bãi đỗ tại "${area}". Bạn có thể thử tìm ở Đà Nẵng hoặc TP.HCM.`,
-          lots: [],
-        };
+        return { message: `📍 GoPark chưa có bãi tại "${area}". Thử tìm ở Đà Nẵng hoặc TP.HCM.`, lots: [] };
       }
       lots.sort((a, b) => a.hourly_rate - b.hourly_rate);
+
     } else if (criteria === 'price_cheapest') {
-      lots.sort((a, b) => a.hourly_rate - b.hourly_rate);
+      // Sắp xếp theo giá tăng dần, ưu tiên còn chỗ
+      lots = lots.filter(l => l.available_slots > 0);
+      lots.sort((a, b) => a.hourly_rate - b.hourly_rate || b.available_slots - a.available_slots);
+
     } else if (criteria === 'nearest') {
-      lots.sort((a, b) => b.available_slots - a.available_slots);
+      // Sắp xếp theo khoảng cách nếu có GPS, fallback theo available_slots
+      if (userLat && userLng) {
+        lots = lots.filter((l: any) => l.distance_km !== null);
+        lots.sort((a: any, b: any) => a.distance_km - b.distance_km);
+      } else {
+        lots.sort((a, b) => b.available_slots - a.available_slots);
+      }
+
     } else if (criteria === 'best_rating') {
-      // ✅ Gợi ý 1 bãi phù hợp nhất kết hợp rating, giá, chỗ trống
+      // Điểm tổng hợp: rating (40%) + chỗ trống (30%) + giá rẻ (30%)
+      const maxRate = Math.max(...lots.map(l => l.hourly_rate)) || 1;
+      const maxSlots = Math.max(...lots.map(l => l.available_slots)) || 1;
+      lots = lots.filter(l => l.available_slots > 0);
       lots.sort((a, b) => {
-        const scoreA = a.avgRating * 10 + a.available_slots / 10 - a.hourly_rate / 1000;
-        const scoreB = b.avgRating * 10 + b.available_slots / 10 - b.hourly_rate / 1000;
+        const scoreA = (a.avgRating / 5) * 40 + (a.available_slots / maxSlots) * 30 + (1 - a.hourly_rate / maxRate) * 30;
+        const scoreB = (b.avgRating / 5) * 40 + (b.available_slots / maxSlots) * 30 + (1 - b.hourly_rate / maxRate) * 30;
         return scoreB - scoreA;
       });
+
     } else {
       lots.sort((a, b) => a.hourly_rate - b.hourly_rate);
     }
 
     const results = lots.slice(0, limit);
-    return { lots: results, action: 'list_parking' };
+    return { lots: results, action: 'list_parking', criteria };
   }
 
   private async getUserBookings(userId?: string): Promise<any> {
