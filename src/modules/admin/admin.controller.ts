@@ -99,8 +99,16 @@ export class AdminController {
 
   // =========== Hoạt động gần đây nhất (recent activities) cho dashboard admin ================
   @Get('/stats/activities-recent')
-  async getRecentActivities() {
-    const activities = await this.adminService.getRecentActivities();
+  async getRecentActivities(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    const activities = await this.adminService.getRecentActivities(
+      Number(page),
+      Number(limit),
+      search,
+    );
     return { data: activities };
   }
 
@@ -182,23 +190,5 @@ export class AdminController {
   async getTransactionStats() {
     const stats = await this.adminService.getTransactionStats();
     return { data: stats };
-  }
-
-  // =========== Get danh sách giao dịch  ================
-  @Get('/transactions/list')
-  async getTransactionList(
-    @Query('page') page = '1',
-    @Query('limit') limit = '10',
-    @Query('search') search?: string,
-  ) {
-    const data = await this.adminService.getTransactionList(
-      Number(page),
-      Number(limit),
-      search,
-    );
-    return {
-      message: 'Lấy danh sách giao dịch thành công',
-      data,
-    };
   }
 }

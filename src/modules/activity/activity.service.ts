@@ -47,13 +47,27 @@ export class ActivityService {
     }
   }
 
-  async getRecentActivities(limit = 5) {
-    const rows = await this.activityRepository.find({
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
+  async getRecentActivities(page = 1, limit = 5, search?: string) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 5));
 
-    return rows.map((item) => ({
+    const queryBuilder = this.activityRepository
+      .createQueryBuilder('activity')
+      .orderBy('activity.createdAt', 'DESC');
+
+    if (search) {
+      queryBuilder.andWhere(
+        'activity.content ILIKE :search OR activity.user_name ILIKE :search',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [rows, totalItems] = await queryBuilder
+      .skip((currentPage - 1) * itemsPerPage)
+      .take(itemsPerPage)
+      .getManyAndCount();
+
+    const items = rows.map((item) => ({
       id: item.id,
       type: item.type,
       content: item.content,
@@ -61,6 +75,17 @@ export class ActivityService {
       time: this.toRelativeTime(item.createdAt),
       status: item.status,
     }));
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage) || 1,
+        currentPage,
+      },
+    };
   }
 
   private toRelativeTime(date: Date): string {

@@ -1,4 +1,12 @@
-﻿import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
+﻿import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Req,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { UpdateBalanceDto, PaymentDto } from './dto/wallet.dto';
 

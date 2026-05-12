@@ -278,8 +278,8 @@ export class AdminService {
   }
 
   // =========== Lấy 5 hoạt động gần đây nhất (recent activities) cho dashboard admin ================
-  async getRecentActivities() {
-    return this.activityService.getRecentActivities(5);
+  async getRecentActivities(page = 1, limit = 5, search?: string) {
+    return this.activityService.getRecentActivities(page, limit, search);
   }
 
   async getUserStats() {
@@ -313,10 +313,13 @@ export class AdminService {
   }
 
   async getUserList(page = 1, limit = 10, search?: string) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
     // Tên khách hàng , Liên hệ , total Booking , total Chi tiêu , trạng thái , hoạt động
     const { items, meta } = await this.userService.findAllPaginatedWithSearch(
-      page,
-      limit,
+      currentPage,
+      itemsPerPage,
       search,
       UserRoleEnum.USER,
     );
@@ -349,14 +352,19 @@ export class AdminService {
       meta: {
         ...meta,
         itemCount: data.length, // Cập nhật lại itemCount dựa trên số lượng phần tử thực tế trong data
+        itemsPerPage,
+        currentPage,
       },
     };
   }
 
   async getOwnerList(page = 1, limit = 10, search?: string) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
     const { items, meta } = await this.userService.findAllPaginatedWithSearch(
-      page,
-      limit,
+      currentPage,
+      itemsPerPage,
       search,
       UserRoleEnum.OWNER,
     );
@@ -393,6 +401,8 @@ export class AdminService {
       meta: {
         ...meta,
         itemCount: data.length, // Cập nhật lại itemCount dựa trên số lượng phần tử thực tế trong data
+        itemsPerPage,
+        currentPage,
       },
     };
   }
@@ -441,11 +451,14 @@ export class AdminService {
   // =========== Lấy danh sách bãi đỗ xe  ================
   // Data : Thông tin bãi đỗ xe, Tên chủ bãi , số lượng chỗ trống / tổng chỗ, giá giờ , đánh giá trung bình, trạng thái hoạt động
   async getParkingLotList(page = 1, limit = 10, search?: string) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+
     // Lấy danh sách bãi đỗ xe có phân trang và tìm kiếm
     const { items, meta } =
       await this.parkingLotService.findAllPaginatedWithSearch(
-        page,
-        limit,
+        currentPage,
+        itemsPerPage,
         search,
       );
 
@@ -565,6 +578,8 @@ export class AdminService {
       meta: {
         ...meta,
         itemCount: data.length, // Cập nhật lại itemCount dựa trên số lượng phần tử thực tế trong data
+        itemsPerPage,
+        currentPage,
       },
     };
   }
@@ -713,6 +728,4 @@ export class AdminService {
       totalRefund: formatVnd(totalRefund),
     };
   }
-
-  async getTransactionList(page = 1, limit = 10, search?: string) {}
 }
