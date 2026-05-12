@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, Not, Repository } from 'typeorm';
 import { Voucher } from './entities/voucher.entity';
 import { UserVoucherUsage } from './entities/user-voucher-usage.entity';
 import { Booking } from '../booking/entities/booking.entity';
@@ -352,6 +352,70 @@ export class VoucherService {
     return vouchers.filter((voucher) =>
       this.isVoucherEligibleForBookingCount(voucher, bookingCount),
     );
+  }
+
+  async getAllVouchersWithEligibility(userId: string) {
+    const bookingCount = await this.getUserBookingCount(userId);
+    const now = new Date();
+
+    // Lấy tất cả voucher đang trong thời gian hiệu lực và đang ACTIVE (bao gồm cả cái đã hết lượt dùng)
+    const vouchers = await this.voucherRepository
+      .createQueryBuilder('voucher')
+      .where('voucher.status = :status', { status: VoucherStatus.ACTIVE })
+      .andWhere('voucher.start_time <= :now', { now })
+      .andWhere('voucher.end_time >= :now', { now })
+      .orderBy('voucher.createdAt', 'DESC')
+      .getMany();
+
+    // Lấy danh sách các voucher mà người dùng đã sử dụng (chỉ tính các booking đã CONFIRMED, ONGOING hoặc COMPLETED)
+    // Voucher đang ở trạng thái PENDING thì vẫn coi là chưa dùng xong để người dùng có thể chọn lại nếu muốn
+    const usedUsages = await this.usageRepository.find({
+      where: {
+        user_id: userId,
+        booking: { status: Not(BookingStatus.PENDING) },
+      },
+      relations: ['booking'],
+      select: ['voucher_id'],
+    });
+    const usedVoucherIds = usedUsages.map((u) => u.voucher_id);
+
+    return vouchers
+      .map((voucher) => {
+        const isUsed = usedVoucherIds.includes(voucher.id);
+        const isExhausted = Number(voucher.used_count) >= Number(voucher.usage_limit);
+        const isBookingCountEligible = this.isVoucherEligibleForBookingCount(
+          voucher,
+          bookingCount,
+        );
+
+        const isEligible = isBookingCountEligible && !isUsed && !isExhausted;
+
+        let ineligibleReason: string | null = null;
+        if (isUsed) {
+          ineligibleReason = 'Bạn đã sử dụng voucher này rồi';
+        } else if (isExhausted) {
+          ineligibleReason = 'Voucher đã hết lượt sử dụng';
+        } else if (!isBookingCountEligible) {
+          if (voucher.first_booking_only) {
+            ineligibleReason = 'Chỉ dành cho lượt đặt chỗ đầu tiên';
+          } else if (
+            voucher.min_booking_count !== null &&
+            voucher.min_booking_count > bookingCount
+          ) {
+            ineligibleReason = `Cần ít nhất ${voucher.min_booking_count} lượt đặt chỗ để sử dụng`;
+          }
+        }
+
+        return {
+          ...voucher,
+          is_user_eligible: isEligible,
+          ineligible_reason: ineligibleReason,
+          user_booking_count: bookingCount,
+          is_exhausted: isExhausted,
+          is_used: isUsed,
+        };
+      })
+      .filter((v) => !v.is_used); // Lọc bỏ những voucher người dùng đã sử dụng
   }
 
   // ========= Hàm này sẽ tính toán tổng tiền sau khi áp dụng mã giảm giá,

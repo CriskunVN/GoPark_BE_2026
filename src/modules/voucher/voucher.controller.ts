@@ -18,6 +18,12 @@ export class VoucherController {
     return this.voucherService.getEligibleVouchers(req.user.userId);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('all-with-eligibility')
+  getAllWithEligibility(@Req() req: any) {
+    return this.voucherService.getAllVouchersWithEligibility(req.user.userId);
+  }
+
   @Post('calculate')
   calculate(@Body() dto: CalculateVoucherDto) {
     return this.voucherService.calculateVoucher(dto);
