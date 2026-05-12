@@ -72,14 +72,23 @@ export class ChatbotService {
         }
 
         case ChatbotIntent.FIND_BEST: {
-          const result = await this.searchParking(
-            { criteria: 'best_rating', limit: 1 },
-            userId,
-          );
+          // Phân biệt: rẻ nhất → price_cheapest, phù hợp nhất → best_rating
+          const msg = lastUserMessage.toLowerCase();
+          const isCheapest = msg.includes('rẻ') || msg.includes('re ') || msg.includes('re nhat') || msg.includes('gia re') || msg.includes('giá rẻ') || msg.includes('cheapest');
+          const criteria = isCheapest ? 'price_cheapest' : 'best_rating';
+          const limit = isCheapest ? 5 : 1;
+          const result = await this.searchParking({ criteria, limit }, userId);
           if (result.lots?.length) {
+            if (isCheapest) {
+              return {
+                text: `💰 Top ${result.lots.length} bãi giá rẻ nhất hiện có (sắp xếp theo giá/giờ tăng dần):`,
+                action: 'list_parking',
+                data: { lots: result.lots, action: 'list_parking', criteria: 'price_cheapest' },
+              };
+            }
             const top = result.lots[0];
             return {
-              text: `⭐ Bãi phù hợp nhất với bạn là **${top.name}**.\n\n📊 Tiêu chí chấm điểm:\n• Đánh giá: ${top.avgRating?.toFixed(1) || 'N/A'} ⭐ (trọng số 40%)\n• Chỗ trống: ${top.available_slots}/${top.total_slots} (trọng số 30%)\n• Giá: ${(top.hourly_rate || 20000).toLocaleString('vi-VN')}đ/giờ (trọng số 30%)`,
+              text: `⭐ Bãi phù hợp nhất: **${top.name}**\n\n📊 Tiêu chí:\n• Đánh giá: ${Number(top.avgRating || 0).toFixed(1)} ⭐ (40%)\n• Chỗ trống: ${top.available_slots}/${top.total_slots} (30%)\n• Giá: ${(top.hourly_rate || 20000).toLocaleString('vi-VN')}đ/giờ (30%)`,
               action: 'list_parking',
               data: { lots: result.lots, action: 'list_parking', criteria: 'best' },
             };
@@ -133,74 +142,135 @@ export class ChatbotService {
     // ----- XỬ LÝ ĐẶT BÃI (BOOK_PARKING / BOOK_WITH_DETAILS) -----
     if (intent === ChatbotIntent.BOOK_PARKING || intent === ChatbotIntent.BOOK_WITH_DETAILS) {
       if (!userId) {
-        return {
-          text: '⚠️ Bạn cần đăng nhập để đặt bãi. Vui lòng đăng nhập để tiếp tục đặt chỗ.',
-        };
+        return { text: '⚠️ Bạn cần đăng nhập để đặt bãi. Vui lòng đăng nhập để tiếp tục đặt chỗ.' };
       }
 
-      const bookingContext = {
-        ...sessionPendingBooking,
-        ...(context?.pendingBooking || {}),
-      };
+      // Nếu là câu hỏi hướng dẫn → dùng Groq
+      const msgLower = lastUserMessage.toLowerCase();
+      if (
+        msgLower.includes('cách') || msgLower.includes('như thế nào') ||
+        msgLower.includes('hướng dẫn') || msgLower.includes('làm sao') ||
+        msgLower.includes('bước') || msgLower.includes('quy trình')
+      ) {
+        if (this.groq) {
+          const resp = await this.groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'system', content: this.getSystemPrompt() }, ...messages.slice(-4)] as any,
+            temperature: 0.7,
+          });
+          return { text: resp.choices[0].message.content || 'Vui lòng chọn bãi đỗ, sau đó nhấn "Đặt ngay" để tiến hành đặt chỗ.' };
+        }
+        return { text: '📋 Để đặt bãi:\n1. Tìm bãi phù hợp\n2. Nhấn "Đặt ngay"\n3. Chọn thời gian, xe, phương thức thanh toán\n4. Xác nhận đặt chỗ' };
+      }
 
-      const parkingName = extractParkingName(lastUserMessage);
-      if (parkingName && !bookingContext.parkingLotId) {
-        const lots = await this.getParkingLotsRaw();
-        const matched = lots.filter((l) =>
-          l.name.toLowerCase().includes(parkingName.toLowerCase()),
-        );
-        if (matched.length === 1) {
-          bookingContext.parkingLotId = matched[0].id.toString();
+      // Lấy danh sách xe của user để map "xe 1", "xe 2" → vehicleId thực
+      const userVehicles = userId ? (await this.getUserVehicles(userId)).vehicles || [] : [];
+
+      // Parse "xe 1", "xe 2", "xe 3" → vehicleId
+      let vehicleId: string | undefined;
+      const xeMatch = msgLower.match(/xe\s*(\d+)/);
+      if (xeMatch) {
+        const idx = parseInt(xeMatch[1], 10) - 1;
+        if (userVehicles[idx]) vehicleId = userVehicles[idx].id.toString();
+      }
+      // Parse biển số trực tiếp
+      if (!vehicleId) {
+        const plateMatch = lastUserMessage.match(/\b([0-9]{2}[A-Z]-[0-9]{3,4}\.[0-9]{2}|[0-9]{2}[A-Z][0-9]-[0-9]{5})\b/i);
+        if (plateMatch) {
+          const found = userVehicles.find((v: any) =>
+            v.plate_number?.replace(/\s/g, '').toLowerCase() === plateMatch[1].replace(/\s/g, '').toLowerCase()
+          );
+          if (found) vehicleId = found.id.toString();
         }
       }
 
-      const bookingResult = await this.createBooking(bookingContext, userId, context);
-      if (bookingResult.error === 'missing_fields') {
-        const missingText = bookingResult.fields.join(', ');
-        this.stateService.updateStep(userId, 'awaiting_booking_details', {
-          pendingBooking: bookingResult.partialData,
-        });
-        return {
-          text: `📝 Cần bổ sung: ${missingText}. Ví dụ: "Từ 2026-05-05T17:00, đến 2026-05-05T19:00, xe tôi là 43A-12345, thanh toán bằng VNPAY".`,
-        };
+      // Parse tên bãi từ message
+      const parkingName = extractParkingName(lastUserMessage);
+      let parkingLotId: string | undefined;
+      if (parkingName) {
+        const lots = await this.getParkingLotsRaw();
+        const matched = lots.filter((l) => l.name.toLowerCase().includes(parkingName.toLowerCase()));
+        if (matched.length >= 1) parkingLotId = matched[0].id.toString();
       }
-      if (bookingResult.error) {
-        return { text: `❌ ${bookingResult.error}` };
+
+      // Gộp với context session nếu có
+      const pending = context?.pendingBooking || sessionPendingBooking || {};
+      parkingLotId = parkingLotId || pending.parkingLotId;
+      vehicleId = vehicleId || pending.vehicleId;
+      const startTime = pending.startTime;
+      const endTime = pending.endTime;
+      const paymentMethod = pending.paymentMethod;
+
+      // Redirect ngay với những gì có, thiếu gì user tự điền trên trang
+      const params = new URLSearchParams();
+      if (startTime) params.set('start', startTime);
+      if (endTime) params.set('end', endTime);
+      if (vehicleId) params.set('vehicle', vehicleId);
+      if (paymentMethod) params.set('payment', paymentMethod);
+
+      // Tạo message mô tả xe nếu có
+      let vehicleDesc = '';
+      if (vehicleId) {
+        const v = userVehicles.find((x: any) => x.id.toString() === vehicleId);
+        if (v) vehicleDesc = ` với xe ${v.plate_number}`;
       }
-      if (bookingResult.redirectUrl) {
-        if (userId) this.stateService.deleteSession(userId);
-        return {
-          text:
-            bookingResult.message ||
-            '✅ Đặt chỗ thành công. Đang chuyển sang trang thanh toán...',
-          action: 'redirect',
-          redirectUrl: bookingResult.redirectUrl,
-        };
-      }
-      return { text: bookingResult.message || 'Đã có lỗi xảy ra, vui lòng thử lại.' };
+
+      // Nếu có lotId → redirect thẳng đến trang đặt bãi đó
+      // Nếu không → redirect đến trang tìm kiếm
+      const redirectUrl = parkingLotId
+        ? `/users/myBooking/${parkingLotId}?${params.toString()}`
+        : `/users/parking?${params.toString()}`;
+
+      if (userId) this.stateService.deleteSession(userId);
+      return {
+        text: parkingLotId
+          ? `✅ Đang chuyển đến trang đặt bãi${vehicleDesc}. Bạn có thể điền thêm thông tin còn thiếu trực tiếp trên trang.`
+          : `🔍 Bạn muốn đặt bãi nào? Hãy tìm bãi trước hoặc tôi sẽ chuyển bạn đến trang tìm kiếm.`,
+        action: 'redirect',
+        redirectUrl,
+      };
     }
 
     // ----- FALLBACK: GỌI GROQ CHO CÁC CÂU HỎI THƯỜNG (FREE_FORM) -----
-    // (Chỉ dùng Groq khi không thuộc các intent đã xử lý ở trên)
-    if (intent === ChatbotIntent.FREE_FORM || intent === ChatbotIntent.PAYMENT_GUIDE || intent === ChatbotIntent.CONTACT || intent === ChatbotIntent.OPENING_HOURS) {
+    if (
+      intent === ChatbotIntent.FREE_FORM ||
+      intent === ChatbotIntent.PAYMENT_GUIDE ||
+      intent === ChatbotIntent.CONTACT ||
+      intent === ChatbotIntent.OPENING_HOURS ||
+      intent === ChatbotIntent.PROMOTION ||
+      intent === ChatbotIntent.OWNER_FEATURE ||
+      intent === ChatbotIntent.VIEW_PARKING_DETAIL ||
+      intent === ChatbotIntent.ASK_CRITERIA
+    ) {
       if (!this.groq) {
         return await this.fallbackProcess(messages, userId);
       }
       const systemPrompt = this.getSystemPrompt();
       const recentMessages = messages.slice(-6);
       const response = await this.groq.chat.completions.create({
-  model: 'llama-3.3-70b-versatile',
-  messages: [
-    { role: 'system', content: systemPrompt },
-    ...recentMessages,
-  ] as any, 
-  temperature: 0.7,
-});
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...recentMessages,
+        ] as any,
+        temperature: 0.7,
+      });
       const text = response.choices[0].message.content || 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn.';
       return { text };
     }
 
-    // Nếu intent không được xử lý ở trên, trả lời mặc định
+    // Mọi intent còn lại → Groq xử lý thay vì fallback cứng
+    if (this.groq) {
+      const response = await this.groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: this.getSystemPrompt() },
+          ...messages.slice(-6),
+        ] as any,
+        temperature: 0.7,
+      });
+      return { text: response.choices[0].message.content || 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn.' };
+    }
     return {
       text: 'Xin chào! Tôi là trợ lý GoPark. Tôi có thể giúp bạn tìm bãi đỗ, đặt chỗ, xem lịch sử, số dư ví. Bạn cần gì ạ? 😊',
     };

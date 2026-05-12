@@ -96,9 +96,9 @@ const INTENT_KEYWORDS: Record<ChatbotIntent, string[]> = {
   ],
   [ChatbotIntent.CHECK_WALLET]: [
     'số dư của tôi', 'ví của tôi', 'wallet', 'balance', 'nạp tiền', 'top up',
-    'xem ví', 'số dư ví',
+    'xem ví', 'số dư ví', 'ví còn', 'còn bao nhiêu tiền', 'tiền trong ví',
     // không dấu
-    'so du', 'vi cua toi', 'xem vi', 'so du vi', 'nap tien',
+    'so du', 'vi cua toi', 'xem vi', 'so du vi', 'nap tien', 'vi con', 'con bao nhieu tien',
   ],
   [ChatbotIntent.CHECK_VEHICLES]: [
     'xe của tôi', 'xe đã đăng ký', 'danh sách xe', 'xe tôi', 'phương tiện của tôi',
@@ -191,9 +191,41 @@ const PRIORITY_ORDER: ChatbotIntent[] = [
 // ─── Classifier chính ─────────────────────────────────────────────────────
 export function classifyIntent(message: string): ChatbotIntent {
   const lower = message.toLowerCase().normalize('NFC');
-  if (lower.includes('đặt bãi') || lower.includes('book bãi') || lower.includes('đặt chỗ')) {
-  return ChatbotIntent.BOOK_PARKING;
-}
+
+  // CHECK_BOOKING ưu tiên cao hơn BOOK_PARKING khi có từ "đã đặt", "lịch sử"
+  if (
+    lower.includes('tôi đã đặt') || lower.includes('toi da dat') ||
+    lower.includes('lịch sử đặt') || lower.includes('lich su dat') ||
+    lower.includes('đặt của tôi') || lower.includes('dat cua toi') ||
+    lower.includes('booking của tôi') || lower.includes('xem booking') ||
+    lower.includes('đặt chỗ của tôi') || lower.includes('đã đặt bãi')
+  ) {
+    return ChatbotIntent.CHECK_BOOKING;
+  }
+
+  // BOOK_PARKING chỉ khi có ý định đặt thật (không phải hỏi cách)
+  if (
+    (lower.includes('đặt bãi') || lower.includes('book bãi') || lower.includes('dat bai') || lower.includes('book bai')) &&
+    !lower.includes('cách') && !lower.includes('như thế nào') && !lower.includes('hướng dẫn') && !lower.includes('làm sao')
+  ) {
+    return ChatbotIntent.BOOK_PARKING;
+  }
+
+  // CHECK_WALLET - thêm các biến thể
+  if (
+    lower.includes('số dư') || lower.includes('so du') ||
+    lower.includes('ví của') || lower.includes('vi cua') ||
+    lower.includes('ví còn') || lower.includes('vi con') ||
+    lower.includes('còn bao nhiêu tiền') || lower.includes('tiền trong ví') ||
+    lower.includes('xem ví') || lower.includes('nạp tiền') ||
+    lower.includes('wallet') || lower.includes('balance') ||
+    lower.includes('ví gopark') || lower.includes('vi gopark') ||
+    lower.includes('tiền ví') || lower.includes('tien vi') ||
+    (lower.includes('còn') && lower.includes('ví')) ||
+    (lower.includes('con') && lower.includes('vi'))
+  ) {
+    return ChatbotIntent.CHECK_WALLET;
+  }
 
   for (const intent of PRIORITY_ORDER) {
     const keywords = INTENT_KEYWORDS[intent];
@@ -217,12 +249,19 @@ export function requiresLogin(intent: ChatbotIntent): boolean {
 
 // ─── Extract tên bãi từ câu đặt ──────────────────────────────────────────
 export function extractParkingName(message: string): string | null {
+  // Loại bỏ phần "với xe X", "xe 1", "xe 2" trước khi parse
+  const cleaned = message
+    .replace(/với\s+xe\s*\d+/gi, '')
+    .replace(/\bxe\s*\d+\b/gi, '')
+    .replace(/biển số\s+[\w-]+/gi, '')
+    .trim();
+
   const patterns = [
     /(?:đặt bãi|đặt tại|thuê bãi|book bãi|đặt chỗ tại|đặt xe tại)\s+(.+)/i,
     /(?:tôi muốn đặt)\s+(.+)/i,
   ];
   for (const p of patterns) {
-    const m = message.match(p);
+    const m = cleaned.match(p);
     if (m?.[1]) return m[1].trim();
   }
   return null;
