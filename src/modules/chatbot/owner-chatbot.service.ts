@@ -54,15 +54,17 @@ export class OwnerChatbotService {
   }
 
   private classifyOwnerIntent(message: string): string {
-    const lower = message.toLowerCase();
-    if (lower.includes('tuần') && (lower.includes('doanh thu') || lower.includes('revenue'))) return 'REVENUE_WEEK';
-    if (lower.includes('tháng') && (lower.includes('doanh thu') || lower.includes('revenue'))) return 'REVENUE_MONTH';
-    if (lower.includes('quý') && (lower.includes('doanh thu') || lower.includes('revenue'))) return 'REVENUE_QUARTER';
-    if (lower.includes('so sánh') && lower.includes('tháng')) return 'COMPARE_MONTH';
-    if (lower.includes('so sánh') && lower.includes('tuần')) return 'COMPARE_WEEK';
-    if (lower.includes('cao nhất') || lower.includes('top') || lower.includes('tốt nhất')) return 'TOP_PARKING';
-    if (lower.includes('gợi ý') || lower.includes('tăng doanh thu') || lower.includes('cải thiện')) return 'SUGGEST_IMPROVE';
-    if (lower.includes('kém') || lower.includes('thấp') || lower.includes('yếu')) return 'LOW_PERFORMANCE';
+    const lower = message.toLowerCase().normalize('NFC');
+    // Có dấu và không dấu
+    if ((lower.includes('tuần') || lower.includes('tuan')) && (lower.includes('doanh thu') || lower.includes('doanh') || lower.includes('revenue'))) return 'REVENUE_WEEK';
+    if ((lower.includes('tháng') || lower.includes('thang')) && (lower.includes('doanh thu') || lower.includes('doanh') || lower.includes('revenue')) && !lower.includes('so sánh') && !lower.includes('so sanh')) return 'REVENUE_MONTH';
+    if ((lower.includes('quý') || lower.includes('quy')) && (lower.includes('doanh thu') || lower.includes('doanh'))) return 'REVENUE_QUARTER';
+    if ((lower.includes('so sánh') || lower.includes('so sanh')) && (lower.includes('tháng') || lower.includes('thang'))) return 'COMPARE_MONTH';
+    if ((lower.includes('so sánh') || lower.includes('so sanh')) && (lower.includes('tuần') || lower.includes('tuan'))) return 'COMPARE_WEEK';
+    if (lower.includes('cao nhất') || lower.includes('cao nhat') || lower.includes('top') || lower.includes('tốt nhất') || lower.includes('tot nhat')) return 'TOP_PARKING';
+    if (lower.includes('gợi ý') || lower.includes('goi y') || lower.includes('tăng doanh thu') || lower.includes('tang doanh thu') || lower.includes('cải thiện') || lower.includes('cai thien')) return 'SUGGEST_IMPROVE';
+    if (lower.includes('kém') || lower.includes('kem') || lower.includes('thấp') || lower.includes('thap') || lower.includes('yếu') || lower.includes('yeu')) return 'LOW_PERFORMANCE';
+    if (lower.includes('doanh thu') || lower.includes('doanh') || lower.includes('revenue') || lower.includes('bao cao') || lower.includes('báo cáo')) return 'REVENUE_MONTH';
     return 'FREE_FORM';
   }
 
@@ -100,19 +102,17 @@ export class OwnerChatbotService {
     );
 
     if (!result.length) {
-      return { text: `📊 Chưa có dữ liệu doanh thu cho ${period === 'week' ? 'tuần' : period === 'month' ? 'tháng' : 'quý'} này.` };
+      return { text: `📊 Chưa có dữ liệu doanh thu cho ${period === 'week' ? 'tuần' : period === 'month' ? 'tháng' : 'quý'} này. Hãy đảm bảo bãi đỗ của bạn đã có booking được xác nhận.` };
     }
 
     const total = result.reduce((sum: number, r: any) => sum + parseFloat(r.revenue || 0), 0);
     return {
-      text: `📊 ${title}\n💰 Tổng doanh thu: ${total.toLocaleString('vi-VN')}đ`,
-      data: {
+      text: `📊 ${title}\n💰 Tổng doanh thu: ${total.toLocaleString('vi-VN')}đ\n📋 Chi tiết theo bãi:`,
+      chartData: {
         action: 'revenue_chart',
         title,
-        chartData: {
-          headers: ['Bãi đỗ', 'Số booking', 'Doanh thu'],
-          rows: result.map((r: any) => [r.name, r.bookings, `${parseFloat(r.revenue).toLocaleString('vi-VN')}đ`]),
-        },
+        headers: ['Bãi đỗ', 'Số booking', 'Doanh thu'],
+        rows: result.map((r: any) => [r.name, r.bookings, `${parseFloat(r.revenue).toLocaleString('vi-VN')}đ`]),
       },
     };
   }
@@ -148,16 +148,14 @@ export class OwnerChatbotService {
 
     return {
       text: `📊 So sánh doanh thu ${periodLabel} này vs kỳ trước:\n\n${periodLabel} này: ${currentRev.toLocaleString('vi-VN')}đ\n${periodLabel} trước: ${previousRev.toLocaleString('vi-VN')}đ\n\n${trend} ${Math.abs(change).toFixed(1)}%`,
-      data: {
+      chartData: {
         action: 'revenue_chart',
         title: `So sánh ${periodLabel}`,
-        chartData: {
-          headers: ['Kỳ', 'Doanh thu', 'Thay đổi'],
-          rows: [
-            [`${periodLabel} trước`, `${previousRev.toLocaleString('vi-VN')}đ`, '-'],
-            [`${periodLabel} này`, `${currentRev.toLocaleString('vi-VN')}đ`, `${change > 0 ? '+' : ''}${change.toFixed(1)}%`],
-          ],
-        },
+        headers: ['Kỳ', 'Doanh thu', 'Thay đổi'],
+        rows: [
+          [`${periodLabel} trước`, `${previousRev.toLocaleString('vi-VN')}đ`, '-'],
+          [`${periodLabel} này`, `${currentRev.toLocaleString('vi-VN')}đ`, `${change > 0 ? '+' : ''}${change.toFixed(1)}%`],
+        ],
         suggestion: change < 0
           ? 'Doanh thu giảm. Hãy xem xét chạy khuyến mãi hoặc cải thiện dịch vụ.'
           : 'Doanh thu tăng tốt! Tiếp tục duy trì chất lượng.',
@@ -189,13 +187,11 @@ export class OwnerChatbotService {
 
     return {
       text: '🏆 Top 5 bãi doanh thu cao nhất (30 ngày qua):',
-      data: {
+      chartData: {
         action: 'revenue_chart',
         title: 'Top 5 bãi doanh thu cao nhất',
-        chartData: {
-          headers: ['Bãi đỗ', 'Số booking', 'Doanh thu'],
-          rows: result.map((r: any) => [r.name, r.bookings, `${parseFloat(r.revenue).toLocaleString('vi-VN')}đ`]),
-        },
+        headers: ['Bãi đỗ', 'Số booking', 'Doanh thu'],
+        rows: result.map((r: any) => [r.name, r.bookings, `${parseFloat(r.revenue).toLocaleString('vi-VN')}đ`]),
       },
     };
   }
@@ -231,13 +227,11 @@ export class OwnerChatbotService {
 
     return {
       text: '⚠️ Các bãi hoạt động kém (dưới 5 booking/tháng):',
-      data: {
+      chartData: {
         action: 'revenue_chart',
         title: 'Bãi hoạt động kém',
-        chartData: {
-          headers: ['Bãi đỗ', 'Số booking', 'Doanh thu'],
-          rows: result.map((r: any) => [r.name, r.bookings || 0, `${parseFloat(r.revenue || 0).toLocaleString('vi-VN')}đ`]),
-        },
+        headers: ['Bãi đỗ', 'Số booking', 'Doanh thu'],
+        rows: result.map((r: any) => [r.name, r.bookings || 0, `${parseFloat(r.revenue || 0).toLocaleString('vi-VN')}đ`]),
         suggestion: 'Hãy xem xét giảm giá, cải thiện vị trí hoặc tăng cường quảng cáo cho các bãi này.',
       },
     };
@@ -248,11 +242,15 @@ export class OwnerChatbotService {
       return { text: 'Xin chào! Tôi là trợ lý phân tích GoPark. Bạn có thể hỏi về doanh thu, so sánh, hoặc gợi ý cải thiện.' };
     }
 
-    const systemPrompt = `Bạn là trợ lý phân tích doanh thu cho chủ bãi đỗ xe GoPark. Nhiệm vụ: phân tích doanh thu, so sánh hiệu suất, gợi ý cải thiện. Trả lời ngắn gọn, chuyên nghiệp, có số liệu cụ thể.`;
+    const systemPrompt = `Bạn là trợ lý phân tích doanh thu cho chủ bãi đỗ xe GoPark.
+QUAN TRỌNG: KHÔNG được tự bịa số liệu doanh thu, booking, hay bất kỳ con số cụ thể nào.
+Nếu được hỏi về số liệu cụ thể (doanh thu, booking...), hãy trả lời rằng bạn cần truy vấn dữ liệu và hướng dẫn user dùng các câu hỏi như "doanh thu tuần này", "so sánh tháng này".
+Chỉ trả lời các câu hỏi chung về chiến lược, gợi ý cải thiện mà không cần số liệu thực.`;
+
     const response = await this.groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'system', content: systemPrompt }, ...messages.slice(-4)] as any,
-      temperature: 0.7,
+      temperature: 0.5,
     });
 
     return { text: response.choices[0].message.content || 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn.' };
