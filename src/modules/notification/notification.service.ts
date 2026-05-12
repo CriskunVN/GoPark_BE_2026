@@ -213,7 +213,9 @@ export class NotificationService {
       sortOrder = 'DESC',
     } = query;
 
-    const skip = (page - 1) * limit;
+    const currentPage = Math.max(1, Number(page) || 1);
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit) || 10));
+    const skip = (currentPage - 1) * itemsPerPage;
 
     let queryBuilder = this.notificationRepository.createQueryBuilder('n');
 
@@ -234,7 +236,10 @@ export class NotificationService {
 
     const total = await queryBuilder.getCount();
 
-    const notifications = await queryBuilder.skip(skip).take(limit).getMany();
+    const notifications = await queryBuilder
+      .skip(skip)
+      .take(itemsPerPage)
+      .getMany();
 
     const notificationIds = notifications.map((item) => item.id);
 
@@ -285,16 +290,15 @@ export class NotificationService {
       };
     });
 
-    const totalPages = Math.ceil(total / limit);
-
     return {
       items,
-      total,
-      page,
-      limit,
-      totalPages,
-      hasNextPage: page < totalPages,
-      hasPreviousPage: page > 1,
+      meta: {
+        totalItems: total,
+        itemCount: items.length,
+        itemsPerPage,
+        totalPages: Math.ceil(total / itemsPerPage) || 1,
+        currentPage,
+      },
     };
   }
 }

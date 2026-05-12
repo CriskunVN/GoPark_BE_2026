@@ -6,17 +6,17 @@ import { Type } from 'class-transformer';
  * DTO cho bảng hiển thị thông báo
  */
 export class NotificationTableItemDto {
-  id: string;
-  title: string; // THÔNG BÁO
+  id!: string;
+  title!: string; // THÔNG BÁO
   content?: string; // NỘI DUNG THÔNG BÁO
-  type: string; // LOẠI (SYSTEM, PROMOTIONAL, etc)
-  targetRole: string; // ĐỐI TƯỢNG (ALL, ADMIN, USER, etc)
-  isRead: boolean; // ĐÃ ĐỌC (true = Đã đọc, false = Chưa đọc)
+  type!: string; // LOẠI (SYSTEM, PROMOTIONAL, etc)
+  targetRole!: string; // ĐỐI TƯỢNG (ALL, ADMIN, USER, etc)
+  isRead!: boolean; // ĐÃ ĐỌC (true = Đã đọc, false = Chưa đọc)
   readSummary?: string; // Số đã đọc / tổng số người nhận
   recipientCount?: number; // Tổng số người nhận
   readCount?: number; // Số người đã đọc
-  status: string; // TRẠNG THÁI (SENT, FAILED, PENDING)
-  createdAt: Date; // THỜI GIAN
+  status!: string; // TRẠNG THÁI (SENT, FAILED, PENDING)
+  createdAt!: Date; // THỜI GIAN
   readAt?: Date | null; // Thời gian đọc
 }
 
@@ -61,11 +61,17 @@ export class GetNotificationTableDto {
  * Response DTO cho danh sách thông báo (pagination)
  */
 export class NotificationTableResponseDto {
-  items: NotificationTableItemDto[];
-  total: number; // Tổng số thông báo
-  page: number; // Trang hiện tại
-  limit: number; // Số phần tử mỗi trang
-  totalPages: number; // Tổng số trang
-  hasNextPage: boolean; // Có trang tiếp theo không
-  hasPreviousPage: boolean; // Có trang trước không
+  items!: NotificationTableItemDto[];
+  meta!: NotificationTableMetaDto;
+}
+
+/**
+ * Metadata cho pagination
+ */
+export class NotificationTableMetaDto {
+  totalItems!: number; // Tổng số thông báo
+  itemCount!: number; // Số phần tử trong trang hiện tại
+  itemsPerPage!: number; // Số phần tử mỗi trang
+  totalPages!: number; // Tổng số trang
+  currentPage!: number; // Trang hiện tại
 }
