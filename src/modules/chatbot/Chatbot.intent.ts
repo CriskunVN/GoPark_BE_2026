@@ -7,6 +7,7 @@ export enum ChatbotIntent {
   CANCEL_BOOKING = 'CANCEL_BOOKING', // hủy đặt → query + mutation
   CHECK_INVOICE = 'CHECK_INVOICE', // hóa đơn → query invoices
   CHECK_WALLET = 'CHECK_WALLET', // ví / số dư → query wallet
+  CHECK_VEHICLES = 'CHECK_VEHICLES', // xe đã đăng ký → query vehicles
 
   // === Nhóm không cần data — AI trả lời trực tiếp ===
   BOOK_PARKING = 'BOOK_PARKING', // hướng dẫn đặt bãi (kèm tên)
@@ -33,6 +34,7 @@ export const DATA_REQUIRED_INTENTS = new Set<ChatbotIntent>([
   ChatbotIntent.CANCEL_BOOKING,
   ChatbotIntent.CHECK_INVOICE,
   ChatbotIntent.CHECK_WALLET,
+  ChatbotIntent.CHECK_VEHICLES,   // ✅ THÊM
 ]);
 
 // ─── Intents yêu cầu đăng nhập (cần userId) ──────────────────────────────
@@ -41,6 +43,7 @@ export const LOGIN_REQUIRED_INTENTS = new Set<ChatbotIntent>([
   ChatbotIntent.CANCEL_BOOKING,
   ChatbotIntent.CHECK_INVOICE,
   ChatbotIntent.CHECK_WALLET,
+  ChatbotIntent.CHECK_VEHICLES,
 ]);
 
 // ─── Keyword map (ưu tiên từ dài → ngắn để tránh false positive) ─────────
@@ -116,6 +119,17 @@ const INTENT_KEYWORDS: Record<ChatbotIntent, string[]> = {
     'xem ví',
     'số dư ví',
   ],
+  [ChatbotIntent.CHECK_VEHICLES]: [
+    'xe của tôi',
+    'xe đã đăng ký',
+    'danh sách xe',
+    'xe tôi',
+    'phương tiện của tôi',
+    'xe đăng ký',
+    'biển số xe',
+    'xe nào',
+    'xem xe',
+  ],
   [ChatbotIntent.PAYMENT_GUIDE]: [
     'cách thanh toán',
     'thanh toán như thế nào',
@@ -187,7 +201,8 @@ const PRIORITY_ORDER: ChatbotIntent[] = [
   ChatbotIntent.CANCEL_BOOKING,
   ChatbotIntent.CHECK_BOOKING,
   ChatbotIntent.CHECK_INVOICE,
-  ChatbotIntent.CHECK_WALLET, 
+  ChatbotIntent.CHECK_WALLET,
+  ChatbotIntent.CHECK_VEHICLES,
   ChatbotIntent.FIND_BEST,
   ChatbotIntent.FIND_NEARBY,
   ChatbotIntent.PAYMENT_GUIDE,
