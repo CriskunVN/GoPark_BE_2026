@@ -115,12 +115,12 @@ export class AuthService {
       refreshToken: tokens.refresh_token,
       user: {
         ...UserResDto.fromEntity(user),
-        role: roles.includes('ADMIN') 
-          ? 'ADMIN' 
-          : roles.includes('OWNER') 
-            ? 'OWNER' 
-            : roles.includes('STAFF') 
-              ? 'STAFF' 
+        role: roles.includes('ADMIN')
+          ? 'ADMIN'
+          : roles.includes('OWNER')
+            ? 'OWNER'
+            : roles.includes('STAFF')
+              ? 'STAFF'
               : roles[0] || 'USER',
       },
     };
