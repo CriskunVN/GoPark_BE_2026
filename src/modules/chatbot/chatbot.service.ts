@@ -403,15 +403,30 @@ QUAN TRỌNG:
 
   private async getUserBookings(userId?: string): Promise<any> {
     if (!userId) return { error: 'Cần đăng nhập' };
-    const bookings = await this.dataSource.query(
-      `SELECT b.id, b.start_time, b.end_time, b.total_amount, b.status, pl.name as lot_name
-   FROM bookings b
-   JOIN parking_slots ps ON b.slot_id = ps.id
-   JOIN parking_lots pl ON ps.parking_lot_id = pl.id
-   WHERE b.user_id = $1 ORDER BY b.created_at DESC LIMIT 5`,
-      [userId],
-    );
-    return { bookings };
+    try {
+      const bookings = await this.dataSource.query(
+        `SELECT b.id, b.start_time, b.end_time, b.status,
+                pl.name as lot_name
+         FROM bookings b
+         JOIN parking_slots ps ON b.slot_id = ps.id
+         JOIN parking_zones pz ON ps.parking_zone_id = pz.id
+         JOIN parking_floors pf ON pz.parking_floor_id = pf.id
+         JOIN parking_lots pl ON pf.parking_lot_id = pl.id
+         WHERE b.user_id = $1
+         ORDER BY b.created_at DESC LIMIT 5`,
+        [userId],
+      );
+      return { bookings };
+    } catch {
+      const bookings = await this.dataSource.query(
+        `SELECT id, start_time, end_time, status
+         FROM bookings
+         WHERE user_id = $1
+         ORDER BY created_at DESC LIMIT 5`,
+        [userId],
+      );
+      return { bookings };
+    }
   }
 
   private async getWalletBalance(userId?: string): Promise<any> {
