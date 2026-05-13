@@ -358,7 +358,7 @@ export class ParkingLotService {
 
   // ─── Get all parking lots (for all users) ─────────────────────────────────
   async getAllParkingLots() {
-    return await this.parkingLotRepository.find({
+    const lots = await this.parkingLotRepository.find({
       where: { status: ParkingLotStatus.ACTIVE },
       relations: [
         'owner',
@@ -366,7 +366,37 @@ export class ParkingLotService {
         'parkingFloor',
         'parkingFloor.parkingZones',
         'parkingFloor.parkingZones.slot',
+        'parkingFloor.parkingZones.pricingRule',
       ],
+    });
+
+    return lots.map((lot) => {
+      let minprice = Infinity;
+      if (lot.parkingFloor) {
+        for (const floor of lot.parkingFloor) {
+          if (floor.parkingZones) {
+            for (const zone of floor.parkingZones) {
+              if (zone.pricingRule && zone.pricingRule.length > 0) {
+                for (const rule of zone.pricingRule) {
+                  // Usually price_per_hour is the smallest unit of price
+                  if (rule.price_per_hour && rule.price_per_hour < minprice) {
+                    minprice = rule.price_per_hour;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      const parsedLot = lot as any;
+      if (minprice !== Infinity) {
+        parsedLot.minprice = minprice;
+      } else {
+        parsedLot.minprice = 0;
+      }
+
+      return parsedLot;
     });
   }
 
