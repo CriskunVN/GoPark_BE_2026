@@ -23,6 +23,7 @@ import { SupabaseModule } from './common/supabase/supabase.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { VoucherModule } from './modules/voucher/voucher.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
+import { ChatbotModule } from './modules/chatbot/chatbot.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { ReviewsModule } from './modules/reviews/reviews.module';
     VoucherModule,
     ScheduleModule.forRoot(),
     ReviewsModule,
+    ChatbotModule,
   ],
   controllers: [AppController],
   providers: [AppService],
