@@ -228,6 +228,15 @@ export class BookingController {
     );
   }
 
+  @Post('confirm-payment')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.OWNER, UserRoleEnum.STAFF)
+  async confirmPayment(
+    @Body() data: { bookingId: number; gateId: number; imageUrl?: string; content: string; penaltyFee?: number },
+  ) {
+    return await this.bookingService.confirmPaymentAndCheckout(data);
+  }
+
   // gia hạn booking
   @Patch(':id/extend')
   async extendBooking(
