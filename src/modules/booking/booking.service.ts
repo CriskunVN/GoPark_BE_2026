@@ -352,30 +352,44 @@ export class BookingService {
 
       // 3.5. Kiểm tra giờ hoạt động của bãi xe
       const parkingLot = booking.slot.parkingZone.parkingFloor.parkingLot;
+      
       const lotOpenTime = parkingLot.open_time;
       const lotCloseTime = parkingLot.close_time;
 
+      let validationError: string | null = null;
+      let openStr = '00:00';
+      let closeStr = '23:59';
+
       if (lotOpenTime && lotCloseTime) {
-        const openStr = dayjs(lotOpenTime).format('HH:mm');
-        const closeStr = dayjs(lotCloseTime).format('HH:mm');
+        openStr = dayjs(lotOpenTime).format('HH:mm');
+        closeStr = dayjs(lotCloseTime).format('HH:mm');
         const extendTimeStr = newEndTime.format('HH:mm');
 
-        // Nếu giờ mở < giờ đóng (bình thường trong ngày)
+        // 1. Kiểm tra trong khoảng giờ hoạt động
         if (openStr < closeStr) {
           if (extendTimeStr < openStr || extendTimeStr > closeStr) {
-            throw new BadRequestException(
-              `Bãi xe chỉ hoạt động từ ${openStr} đến ${closeStr}. Vui lòng chọn giờ gia hạn trong khoảng này.`,
-            );
+            validationError = `Bãi xe chỉ hoạt động từ ${openStr} đến ${closeStr}. Vui lòng chọn giờ gia hạn trong khoảng này.`;
           }
-        }
-        // Nếu giờ mở > giờ đóng (qua đêm, ví dụ 22:00 - 05:00)
-        else if (openStr > closeStr) {
+        } else if (openStr > closeStr) {
           if (extendTimeStr < openStr && extendTimeStr > closeStr) {
-            throw new BadRequestException(
-              `Bãi xe chỉ hoạt động từ ${openStr} đến ${closeStr}. Vui lòng chọn giờ gia hạn trong khoảng này.`,
-            );
+            validationError = `Bãi xe chỉ hoạt động từ ${openStr} đến ${closeStr}. Vui lòng chọn giờ gia hạn trong khoảng này.`;
           }
         }
+
+        // 2. Kiểm tra gia hạn qua đêm (nếu không phải 24/7)
+        const isOpen247 = openStr === '00:00' && closeStr === '23:59';
+        if (!validationError && !isOpen247) {
+          const oldDateStr = dayjs(booking.start_time).format('YYYY-MM-DD');
+          const newEndDateStr = newEndTime.format('YYYY-MM-DD');
+          if (oldDateStr !== newEndDateStr) {
+            validationError = 'Bãi xe không hỗ trợ gia hạn qua đêm. Vui lòng chọn giờ kết thúc trong cùng ngày.';
+          }
+        }
+      }
+
+      // Nếu thực hiện gia hạn thật và có lỗi -> Chặn lại
+      if (!extendDto.isPreview && validationError) {
+        throw new BadRequestException(validationError);
       }
 
       // 4. ÁP DỤNG CÔNG THỨC ĐỒNG NHẤT VỚI FRONTEND
@@ -391,7 +405,7 @@ export class BookingService {
         days * priceDay + remainingMinutes * pricePerMin,
       );
 
-      // Trả về Preview cho Dũng hiển thị trên UI
+      // Trả về Preview hiển thị trên UI
       if (extendDto.isPreview) {
         return {
           data: {
@@ -402,33 +416,19 @@ export class BookingService {
             totalMinutesExtend,
             days,
             remainingMinutes,
+            isValid: !validationError,
+            message: validationError,
             operatingHours: {
-              open: parkingLot.open_time ? dayjs(parkingLot.open_time).format('HH:mm') : null,
-              close: parkingLot.close_time ? dayjs(parkingLot.close_time).format('HH:mm') : null,
+              open: openStr,
+              close: closeStr,
             }
           },
         };
       }
 
 
-      // 5. Thanh toán thực tế
+      // 5. Tạo hóa đơn gia hạn (Trạng thái PENDING để thu tiền mặt tại quầy khi check-out)
       if (extraAmount > 0) {
-        // SỬA LỖI: Chuyển tiền từ Khách sang Chủ (không dùng withdraw)
-        const ownerId =
-          booking.slot.parkingZone.parkingFloor.parkingLot.owner?.id;
-        if (!ownerId)
-          throw new BadRequestException(
-            'Không tìm thấy thông tin chủ bãi để thanh toán',
-          );
-
-        await this.walletService.processPayment(
-          booking.user.id,
-          ownerId,
-          extraAmount,
-          id.toString(),
-        );
-
-        // Tạo hóa đơn gia hạn
         const invoiceData: any = {
           booking: booking,
           sub_total: extraAmount,
@@ -436,7 +436,7 @@ export class BookingService {
           total: extraAmount,
           tax: 0,
           description: `Gia hạn thêm ${days > 0 ? days + ' ngày ' : ''}${remainingMinutes} phút tại ${zoneName}`,
-          status: InvoiceStatus.PAID,
+          status: InvoiceStatus.PENDING,
         };
 
         const newInvoice = manager.create(Invoice, invoiceData);
@@ -498,6 +498,7 @@ export class BookingService {
         'booking.slot.parkingZone.parkingFloor',
         'booking.slot.parkingZone.parkingFloor.parkingLot',
         'booking.slot.parkingZone.parkingFloor.parkingLot.owner',
+        'booking.invoice',
       ],
     });
 
@@ -565,7 +566,7 @@ export class BookingService {
         );
       }
 
-      // Kiểm tra đến sớm (Check-in sớm)
+      // Kiểm tra đến sớm (Check-in sớm).Cho phép check-in sớm 10p
       const now = new Date();
       if (now < booking.start_time) {
         const diffMs = booking.start_time.getTime() - now.getTime();
@@ -654,33 +655,39 @@ export class BookingService {
         pricing?.price_per_hour || 0,
       );
 
-      let penaltyPaymentStatus = 'none'; // none, success, failed
+      // 4. KIỂM TRA PHÍ PHẠT (QUÁ HẠN)
       if (penaltyInfo.isLate && penaltyInfo.penaltyFee > 0) {
-        try {
-          const bookingOwnerId = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.owner?.id;
-          const gateOwnerId = gate.parkingLot?.owner?.id;
+        return {
+          requirePayment: true,
+          type: 'out',
+          message: `Khách đã quá thời gian đỗ xe: ${penaltyInfo.penaltyFee.toLocaleString()}đ`,
+          penalty: {
+            ...penaltyInfo,
+            bookingId: booking.id,
+            plate: booking.vehicle?.plate_number || detectedPlate || "???",
+          },
+          imageUrl: imageUrl,
+          content: content // Trả về content QR để confirmPayment dùng
+        };
+      }
 
-          console.log(`[ScanQRCode] DEBUG OWNER: BookingOwner(${bookingOwnerId}) vs GateOwner(${gateOwnerId})`);
+      // 5. TÍNH PHÍ GIA HẠN CHƯA THANH TOÁN
+      const pendingExtensionInvoices = booking.invoice?.filter(
+        (inv) => inv.status === InvoiceStatus.PENDING && Number(inv.total) > 0
+      ) || [];
+      const extensionFee = pendingExtensionInvoices.reduce((sum, inv) => sum + Number(inv.total), 0);
 
-          const ownerId = bookingOwnerId || gateOwnerId;
-
-          if (!ownerId) {
-            throw new Error('Không tìm thấy thông tin chủ bãi để thanh toán phạt');
-          }
-
-          await this.walletService.transferMoney(
-            booking.user.id,
-            ownerId,
-            penaltyInfo.penaltyFee,
-            'PENALTY',
-            booking.id.toString(),
-            `Phí phạt quá hạn ${penaltyInfo.lateMinutes} phút cho đơn đặt chỗ #${booking.id}`,
-          );
-          penaltyPaymentStatus = 'success';
-        } catch (error) {
-          console.error('Lỗi trừ tiền phạt tự động:', error.message);
-          penaltyPaymentStatus = 'failed';
-        }
+      if (extensionFee > 0) {
+        return {
+          requirePayment: true,
+          extensionFee,
+          bookingId: booking.id,
+          plate: booking.vehicle?.plate_number || detectedPlate || "???",
+          message: `Khách có phí gia hạn chưa thanh toán: ${extensionFee.toLocaleString()}đ`,
+          type: 'out',
+          imageUrl: imageUrl,
+          content: content
+        };
       }
 
       booking.status = BookingStatus.COMPLETED;
@@ -703,27 +710,82 @@ export class BookingService {
       await this.qrcodeRepository.save(qrCode);
       await this.bookingRepository.save(booking);
 
-      let finalMessage = 'Checkout thành công!';
-      if (penaltyInfo.isLate) {
-        if (penaltyPaymentStatus === 'success') {
-          finalMessage = `Checkout thành công. Quá hạn ${penaltyInfo.lateMinutes} phút. Đã tự động trừ ${penaltyInfo.penaltyFee.toLocaleString()}đ phí phạt vào ví.`;
-        } else {
-          finalMessage = `Bạn đã quá thời gian đặt xe (${penaltyInfo.lateMinutes} phút). Tài khoản trong ví không đủ trả (${penaltyInfo.penaltyFee.toLocaleString()}đ), vui lòng thanh toán bằng tiền mặt.`;
-        }
-      }
-
       return {
-        message: finalMessage,
+        message: 'Checkout thành công!',
         type: 'out',
-        penalty: {
-          ...penaltyInfo,
-          paymentStatus: penaltyPaymentStatus,
-        },
+        imageUrl: imageUrl,
       };
     }
     throw new BadRequestException(
       'trạng thái booking không hợp lệ để thực hiện',
     );
+  }
+
+  async confirmPaymentAndCheckout(data: { bookingId: number, gateId: number, imageUrl?: string, content: string, penaltyFee?: number }) {
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Lấy thông tin booking
+      const booking = await manager.findOne(Booking, {
+        where: { id: data.bookingId },
+        relations: ['slot', 'invoice', 'vehicle'],
+      });
+
+      if (!booking) throw new NotFoundException('Không tìm thấy đơn đặt chỗ');
+
+      // 2. Lấy QR Code
+      const qrCode = await manager.findOne(QRCode, {
+        where: { content: data.content },
+      });
+
+      // 3. Cập nhật các hóa đơn PENDING thành PAID (Xác nhận đã nhận tiền mặt)
+      const pendingInvoices = booking.invoice?.filter(
+        (inv) => inv.status === InvoiceStatus.PENDING
+      );
+      if (pendingInvoices) {
+        for (const inv of pendingInvoices) {
+          inv.status = InvoiceStatus.PAID;
+          await manager.save(inv);
+        }
+      }
+
+      // 4. Nếu có phí phạt (truyền từ frontend), tạo hóa đơn PAID
+      if (data.penaltyFee && data.penaltyFee > 0) {
+        const penaltyInvoice = manager.create(Invoice, {
+          booking,
+          sub_total: data.penaltyFee,
+          total: data.penaltyFee,
+          tax: 0,
+          status: InvoiceStatus.PAID,
+        });
+        await manager.save(penaltyInvoice);
+      }
+
+      // 4. Cập nhật trạng thái
+      booking.status = BookingStatus.COMPLETED;
+      if (booking.slot) {
+        booking.slot.status = SlotStatus.AVAILABLE;
+        await manager.save(booking.slot);
+      }
+      if (qrCode) {
+        qrCode.status = 'used';
+        await manager.save(qrCode);
+      }
+      await manager.save(booking);
+
+      // 5. Tạo CheckLog (Ra)
+      const newLog = manager.create(CheckLog, {
+        booking: booking,
+        gate: { id: data.gateId } as any,
+        check_status: 'out',
+        time: new Date(),
+        image_url: data.imageUrl,
+      });
+      await manager.save(newLog);
+
+      return {
+        message: 'Xác nhận thanh toán và hoàn tất check-out thành công!',
+        bookingId: booking.id
+      };
+    });
   }
 
   // ================= GET ALL BOOKING =================
@@ -1576,7 +1638,7 @@ export class BookingService {
     actualExitTime: Date,
     pricePerHour: number,
   ) {
-    const gracePeriodMinutes = 15;//thời gian ân hận 15p. nếu ra trước 15p thì không tính phí
+    const gracePeriodMinutes = 1;//thời gian ân hận 15p. nếu ra trước 15p thì không tính phí
     const pricePerMinute = pricePerHour / 60;
 
     const end = dayjs(endTime);
