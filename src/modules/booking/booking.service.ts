@@ -393,17 +393,22 @@ export class BookingService {
       }
 
       // 4. ÁP DỤNG CÔNG THỨC ĐỒNG NHẤT VỚI FRONTEND
-      const totalMinutesExtend = newEndTime.diff(oldEndTime, 'minute');
+      const isSameDay = oldEndTime.isSame(newEndTime, 'day');
+      const totalHoursExtend = newEndTime.diff(oldEndTime, 'hour', true);
 
-      // Tính số ngày và số phút lẻ
-      const days = Math.floor(totalMinutesExtend / 1440);
-      const remainingMinutes = totalMinutesExtend % 1440;
+      let extraAmount = 0;
+      if (isSameDay) {
+        // 1. Trong cùng 1 ngày: Tính theo giờ, làm tròn lên
+        extraAmount = Math.ceil(totalHoursExtend) * pricePerHour;
+      } else {
+        // 2. Qua đêm hoặc nhiều ngày: Tính theo ngày
+        const numberOfDays = Math.ceil(totalHoursExtend / 24);
+        extraAmount = numberOfDays * priceDay;
+      }
 
-      // Công thức: (Ngày * Giá ngày) + (Phút lẻ * Giá giờ/60)
-      const pricePerMin = pricePerHour / 60;
-      const extraAmount = Math.round(
-        days * priceDay + remainingMinutes * pricePerMin,
-      );
+      const days = Math.floor(totalHoursExtend / 24);
+      const remainingMinutes = Math.round((totalHoursExtend % 24) * 60);
+      const totalMinutesExtend = Math.round(totalHoursExtend * 60);
 
       // Trả về Preview hiển thị trên UI
       if (extendDto.isPreview) {
@@ -653,6 +658,7 @@ export class BookingService {
         booking.end_time,
         actualExitTime,
         pricing?.price_per_hour || 0,
+        pricing?.price_per_day || 0,
       );
 
       // 4. KIỂM TRA PHÍ PHẠT (QUÁ HẠN)
@@ -1637,17 +1643,16 @@ export class BookingService {
     endTime: Date,
     actualExitTime: Date,
     pricePerHour: number,
+    priceDay: number,
   ) {
-    const gracePeriodMinutes = 1;//thời gian ân hận 15p. nếu ra trước 15p thì không tính phí
-    const pricePerMinute = pricePerHour / 60;
-
+    const gracePeriodMinutes = 1; // thời gian ân hạn 1 phút (ví dụ)
     const end = dayjs(endTime);
     const actual = dayjs(actualExitTime);
 
     // Tính tổng số phút chênh lệch
     const diffMinutes = actual.diff(end, 'minute');
 
-    // Nếu ra trước hoặc trong thời gian ân hạn 15 phút
+    // Nếu ra trước hoặc trong thời gian ân hạn
     if (diffMinutes <= gracePeriodMinutes) {
       return {
         isLate: false,
@@ -1656,14 +1661,25 @@ export class BookingService {
       };
     }
 
-    // Nếu ra muộn hơn 15 phút, tính phí cho số phút vượt quá mốc 15p đó
-    const lateMinutes = diffMinutes - gracePeriodMinutes;
-    const penaltyFee = Math.round(lateMinutes * pricePerMinute);
+    // Nếu ra muộn hơn thời gian ân hạn
+    const lateTime = actual.subtract(gracePeriodMinutes, 'minute');
+    const totalHoursLate = lateTime.diff(end, 'hour', true);
+    const isSameDay = end.isSame(lateTime, 'day');
+
+    let penaltyFee = 0;
+    if (isSameDay) {
+      // 1. Trong cùng 1 ngày: Tính theo giờ, làm tròn lên
+      penaltyFee = Math.ceil(totalHoursLate) * pricePerHour;
+    } else {
+      // 2. Qua đêm hoặc nhiều ngày: Tính theo ngày
+      const numberOfDays = Math.ceil(totalHoursLate / 24);
+      penaltyFee = numberOfDays * priceDay;
+    }
 
     return {
       isLate: true,
-      lateMinutes,
-      penaltyFee,
+      lateMinutes: Math.round(totalHoursLate * 60),
+      penaltyFee: Math.max(0, Math.round(penaltyFee)),
     };
   }
 }
