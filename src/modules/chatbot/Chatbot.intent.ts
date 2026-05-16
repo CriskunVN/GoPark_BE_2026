@@ -61,19 +61,19 @@ const INTENT_KEYWORDS: Record<ChatbotIntent, string[]> = {
   'tốt nhất', 'rẻ nhất', 'giá tốt nhất', 'giá rẻ nhất', 'gợi ý bãi', 'bãi nào tốt',
   'bãi trống', 'recommend', 'bãi phù hợp', 'bãi đỗ tốt nhất', 'bãi nào ngon',
   'chỗ đỗ tốt nhất', 'bãi đỗ rẻ nhất', 'bãi đỗ phù hợp', 'bãi uy tín', 'bãi chất lượng',
-  'nên đỗ ở đâu', 'gợi ý chỗ đỗ', 'bãi tốt nhất',
+  'nên đỗ ở đâu', 'gợi ý chỗ đỗ', 'bãi tốt nhất', 'đánh giá cao', 'đánh giá cao nhất',
   // không dấu
   'tot nhat', 're nhat', 'gia re', 'goi y bai', 'bai nao tot', 'bai trong',
-  'bai phu hop', 'bai uy tin', 'nen do o dau', 'bai nao ngon',
+  'bai phu hop', 'bai uy tin', 'nen do o dau', 'bai nao ngon', 'danh gia cao',
 ],
    [ChatbotIntent.VIEW_PARKING_DETAIL]: [
     'chi tiết', 'xem bãi', 'thông tin bãi', 'xem thử', 'detail'
   ],
   [ChatbotIntent.BOOK_PARKING]: [
     'đặt bãi', 'book bãi', 'tôi muốn đặt', 'đặt ngay', 'thuê bãi',
-    'book chỗ', 'đặt xe tại', 'đặt tại', 'đặt chỗ',
+    'book chỗ', 'đặt xe tại', 'đặt tại', 'đặt chỗ', 'hướng dẫn đặt chỗ', 'hướng dẫn đặt bãi',
     // không dấu
-    'dat bai', 'book bai', 'dat cho', 'dat ngay', 'thue bai', 'dat xe tai',
+    'dat bai', 'book bai', 'dat cho', 'dat ngay', 'thue bai', 'dat xe tai', 'huong dan dat cho',
   ],
   [ChatbotIntent.CHECK_BOOKING]: [
     'đặt của tôi', 'booking của tôi', 'lịch sử đặt', 'xem đặt chỗ', 'check booking',
@@ -189,8 +189,44 @@ const PRIORITY_ORDER: ChatbotIntent[] = [
 ];
 
 // ─── Classifier chính ─────────────────────────────────────────────────────
+function normalizeIntentText(message: string): string {
+  return (message || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u0111/g, 'd')
+    .replace(/\u00c4\u2018/g, 'd')
+    .replace(/[^a-z0-9:\-\.\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isParkingQuestion(lower: string): boolean {
+  return /\b(bai|bai xe|bai do|do xe|cho do|parking)\b/.test(lower);
+}
+
+function isAvailabilityQuestion(lower: string): boolean {
+  return /\b(trong|con trong|dang trong|cho trong|nhieu cho|available|empty|vacant)\b/.test(lower);
+}
+
 export function classifyIntent(message: string): ChatbotIntent {
-  const lower = message.toLowerCase().normalize('NFC');
+  const lower = normalizeIntentText(message);
+
+  if (/\b(lam duoc gi|giup duoc gi|cong viec|chuc nang|ban co the lam|co the lam gi)\b/.test(lower)) {
+    return ChatbotIntent.FREE_FORM;
+  }
+
+  if (isParkingQuestion(lower) && isAvailabilityQuestion(lower)) {
+    return ChatbotIntent.FIND_BEST;
+  }
+
+  if (isParkingQuestion(lower) && /\b(xe nao|nao|o dau|tim|show|liet ke|danh sach)\b/.test(lower)) {
+    return ChatbotIntent.FIND_NEARBY;
+  }
+
+  if (!isParkingQuestion(lower) && /\b(xe cua toi|xe nao|nhung xe|danh sach xe|bien so xe|phuong tien)\b/.test(lower)) {
+    return ChatbotIntent.CHECK_VEHICLES;
+  }
 
   // CHECK_BOOKING ưu tiên cao hơn BOOK_PARKING khi có từ "đã đặt", "lịch sử"
   if (
@@ -230,7 +266,7 @@ export function classifyIntent(message: string): ChatbotIntent {
     lower.includes('ví gopark') || lower.includes('vi gopark') ||
     lower.includes('tiền ví') || lower.includes('tien vi') ||
     (lower.includes('còn') && lower.includes('ví')) ||
-    (lower.includes('con') && lower.includes('vi'))
+    (/\bvi\b/.test(lower) && /\b(so du|con|tien|nap|wallet)\b/.test(lower))
   ) {
     return ChatbotIntent.CHECK_WALLET;
   }

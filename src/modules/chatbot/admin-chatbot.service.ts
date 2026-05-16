@@ -10,6 +10,8 @@ type AdminChatResult = {
 
 @Injectable()
 export class AdminChatbotService {
+  private readonly maxSessionsPerAdmin = 20;
+
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(ChatbotSession)
@@ -31,6 +33,9 @@ export class AdminChatbotService {
     }
 
     if (this.includesAny(text, ['tim bai', 'bai do', 'parking', 'bai xe'])) {
+      if (this.includesAny(text, ['top', 'cao nhat', 'mac nhat', 'dat nhat', 're nhat', 'danh gia', 'nhieu cho'])) {
+        return this.getParkingRanking(message);
+      }
       return this.searchParkingLots(message);
     }
 
@@ -94,6 +99,74 @@ export class AdminChatbotService {
 
   private money(value: number): string {
     return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
+  }
+
+  private extractLimit(message: string, fallback = 10): number {
+    const match = this.normalizeText(message).match(/\btop\s*(\d{1,2})\b|\b(\d{1,2})\s*(bai|ket qua|parking)\b/);
+    const value = Number(match?.[1] || match?.[2] || fallback);
+    return Math.min(Math.max(value || fallback, 1), 20);
+  }
+
+  private async getParkingRanking(message: string): Promise<AdminChatResult> {
+    const text = this.normalizeText(message);
+    const limit = this.extractLimit(message);
+    const orderBy =
+      this.includesAny(text, ['mac nhat', 'dat nhat', 'gia cao'])
+        ? 'hourly_rate DESC NULLS LAST'
+        : this.includesAny(text, ['re nhat', 'gia re'])
+          ? 'hourly_rate ASC NULLS LAST'
+          : this.includesAny(text, ['nhieu cho', 'cho trong'])
+            ? 'pl.available_slots DESC NULLS LAST'
+            : 'avg_rating DESC NULLS LAST';
+    const title =
+      orderBy.includes('hourly_rate DESC')
+        ? `Top ${limit} bãi có giá cao nhất`
+        : orderBy.includes('hourly_rate ASC')
+          ? `Top ${limit} bãi giá rẻ nhất`
+          : orderBy.includes('available_slots')
+            ? `Top ${limit} bãi còn nhiều chỗ trống nhất`
+            : `Top ${limit} bãi được đánh giá cao nhất`;
+
+    const rows = await this.dataSource.query(
+      `SELECT pl.id,
+              pl.name,
+              pl.address,
+              pl.status,
+              pl.available_slots,
+              pl.total_slots,
+              COALESCE(ROUND(AVG(r.rating)::numeric, 1), 0) as avg_rating,
+              COUNT(r.id)::int as reviews,
+              MIN(pr.price_per_hour) as hourly_rate,
+              u.email as owner_email
+       FROM parking_lots pl
+       LEFT JOIN users u ON u.id = pl.user_id
+       LEFT JOIN reviews r ON r.parking_lot_id = pl.id
+       LEFT JOIN parking_floors pf ON pf.parking_lot_id = pl.id
+       LEFT JOIN parking_zones pz ON pz.parking_floor_id = pf.id
+       LEFT JOIN pricing_rules pr ON pr.parking_zone_id = pz.id
+       GROUP BY pl.id, pl.name, pl.address, pl.status, pl.available_slots, pl.total_slots, u.email
+       ORDER BY ${orderBy}
+       LIMIT $1`,
+      [limit],
+    );
+
+    return {
+      text:
+        `## ${title}\n\n` +
+        this.markdownTable(
+          ['ID', 'Bãi đỗ', 'Chỗ trống', 'Giá/giờ', 'Đánh giá', 'Review', 'Owner'],
+          rows.map((row: any) => [
+            row.id,
+            row.name,
+            `${row.available_slots ?? '-'}/${row.total_slots ?? '-'}`,
+            this.money(Number(row.hourly_rate || 0)),
+            row.avg_rating || 0,
+            row.reviews || 0,
+            row.owner_email || '-',
+          ]),
+        ),
+      data: { action: 'admin_parking_ranking', rows },
+    };
   }
 
   private async getOverview(): Promise<AdminChatResult> {
@@ -282,6 +355,7 @@ export class AdminChatbotService {
       isActive: true,
     });
     const saved = await this.sessionRepo.save(session);
+    await this.pruneAdminSessions(userId);
     return { ...saved, title: saved.title.replace(/^\[ADMIN\]\s*/, '') };
   }
 
@@ -296,6 +370,17 @@ export class AdminChatbotService {
   async deleteAdminSession(sessionId: string, userId: string): Promise<any> {
     await this.sessionRepo.delete({ id: sessionId, userId, title: Like('[ADMIN]%') as any });
     return { success: true };
+  }
+
+  private async pruneAdminSessions(userId: string): Promise<void> {
+    const sessions = await this.sessionRepo.find({
+      where: { userId, title: Like('[ADMIN]%') },
+      order: { updatedAt: 'DESC' },
+      select: ['id', 'updatedAt'],
+    });
+    const oldSessions = sessions.slice(this.maxSessionsPerAdmin);
+    if (!oldSessions.length) return;
+    await Promise.all(oldSessions.map((session) => this.sessionRepo.delete({ id: session.id, userId })));
   }
 
   async processAdminMessageWithSession(
