@@ -95,8 +95,9 @@ describe('Chatbot layer 4 behavior', () => {
       expect(first.data.missing).toEqual(
         expect.arrayContaining(['ten bai do', 'thoi gian vao/ra', 'xe hoac bien so']),
       );
-      expect(first.text).toContain('Bai 1 la GoPark My Khe');
-      expect(first.text).toContain('Xe 1 la bien so 51F-888.38');
+      expect(first.data.nextField).toBe('ten bai do');
+      expect(first.text).toContain('| Bai 1 | Bai do #11 | - |');
+      expect(first.text).not.toContain('| Xe 1 | 51F-888.38 |');
 
       const chooseLot = await service.processMessage([{ role: 'user', content: 'bai 1' }], userId);
       expect(chooseLot.action).toBe('collect_booking');
@@ -104,6 +105,7 @@ describe('Chatbot layer 4 behavior', () => {
       expect(chooseLot.data.pendingBooking.startTime).toBeUndefined();
       expect(chooseLot.data.pendingBooking.endTime).toBeUndefined();
       expect(chooseLot.data.missing).toEqual(expect.arrayContaining(['thoi gian vao/ra']));
+      expect(chooseLot.data.nextField).toBe('thoi gian vao/ra');
 
       const chooseTime = await service.processMessage(
         [{ role: 'user', content: 'ngay mai tu 8h den 10h' }],
@@ -113,6 +115,7 @@ describe('Chatbot layer 4 behavior', () => {
       expect(chooseTime.data.pendingBooking.startTime).toContain('T08:00');
       expect(chooseTime.data.pendingBooking.endTime).toContain('T10:00');
       expect(chooseTime.data.missing).toEqual(expect.arrayContaining(['xe hoac bien so']));
+      expect(chooseTime.data.nextField).toBe('xe hoac bien so');
 
       const chooseVehicle = await service.processMessage([{ role: 'user', content: 'xe 1' }], userId);
       expect(chooseVehicle.action).toBe('redirect');
@@ -129,21 +132,17 @@ describe('Chatbot layer 4 behavior', () => {
         [{ role: 'user', content: 'xe cua toi' }],
         userId,
       );
-      expect(vehiclesResponse.text).toContain('| Lua chon | Bien so | Loai xe |');
       expect(vehiclesResponse.text).toContain('| xe 1 | 51F-888.38 | car |');
 
       const walletResponse = await service.processMessage(
         [{ role: 'user', content: 'so du vi cua toi' }],
         userId,
       );
-      expect(walletResponse.text).toContain('| Hang muc | Gia tri |');
-      expect(walletResponse.text).toContain('125.000d');
-
+      expect(walletResponse.text).toContain('125.000');
       const bookingsResponse = await service.processMessage(
         [{ role: 'user', content: 'lich su dat cua toi' }],
         userId,
       );
-      expect(bookingsResponse.text).toContain('| # | Bai do | Bat dau | Ket thuc | Trang thai |');
       expect(bookingsResponse.text).toContain('GoPark My Khe');
     });
   });

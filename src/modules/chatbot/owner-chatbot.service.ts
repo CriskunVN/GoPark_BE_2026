@@ -9,6 +9,7 @@ import { ChatbotGuideService } from './chatbot-guide.service';
 export class OwnerChatbotService {
   private readonly logger = new Logger(OwnerChatbotService.name);
   private groq: Groq | null = null;
+  private readonly maxSessionsPerOwner = 20;
   private readonly pendingParkingConfirm = new Map<string, number>();
   private readonly pendingParkingOptions = new Map<string, number[]>();
 
@@ -68,7 +69,7 @@ export class OwnerChatbotService {
         case 'COMPARE_WEEK':
           return this.compareRevenue(userId, 'week');
         case 'TOP_PARKING':
-          return this.getTopParkingLots(userId);
+          return this.getTopParkingLots(userId, this.extractLimit(lastUserMessage, 5));
         case 'SUGGEST_IMPROVE':
           return this.suggestImprovements(userId);
         case 'LOW_PERFORMANCE':
@@ -137,6 +138,12 @@ export class OwnerChatbotService {
     const divider = `| ${headers.map(() => '---').join(' | ')} |`;
     const body = rows.map((row) => `| ${row.map((cell) => String(cell)).join(' | ')} |`);
     return [header, divider, ...body].join('\n');
+  }
+
+  private extractLimit(message: string, fallback = 5): number {
+    const match = this.normalizeText(message).match(/\btop\s*(\d{1,2})\b|\b(\d{1,2})\s*(bai|ket qua|parking)\b/);
+    const value = Number(match?.[1] || match?.[2] || fallback);
+    return Math.min(Math.max(value || fallback, 1), 20);
   }
 
   private extractParkingQuery(message: string): string {
@@ -411,7 +418,7 @@ export class OwnerChatbotService {
     };
   }
 
-  private async getTopParkingLots(userId: string): Promise<any> {
+  private async getTopParkingLots(userId: string, limit = 5): Promise<any> {
     const result = await this.dataSource.query(
       `SELECT pl.name,
               COUNT(DISTINCT b.id) as bookings,
@@ -427,8 +434,8 @@ export class OwnerChatbotService {
          AND b.status IN ('CONFIRMED', 'COMPLETED', 'ONGOING')
        GROUP BY pl.id, pl.name
        ORDER BY revenue DESC
-       LIMIT 5`,
-      [userId],
+       LIMIT $2`,
+      [userId, limit],
     );
 
     if (!result.length) return { text: '📊 Chưa có dữ liệu bãi đỗ trong 30 ngày qua.' };
@@ -440,7 +447,7 @@ export class OwnerChatbotService {
 
     return {
       text:
-        `## Top 5 Bai Doanh Thu Cao Nhat\n\n` +
+        `## Top ${limit} Bãi Doanh Thu Cao Nhất\n\n` +
         this.markdownTable(['Bai do', 'So booking', 'Doanh thu'], rows),
       chartData: {
         action: 'revenue_chart',
@@ -584,6 +591,7 @@ export class OwnerChatbotService {
       isActive: true,
     });
     const saved = await this.sessionRepo.save(session);
+    await this.pruneOwnerSessions(userId);
     return { ...saved, title: saved.title.replace(/^\[OWNER\]\s*/, '') };
   }
 
@@ -598,6 +606,17 @@ export class OwnerChatbotService {
   async deleteOwnerSession(sessionId: string, userId: string): Promise<any> {
     await this.sessionRepo.delete({ id: sessionId, userId, title: Like('[OWNER]%') as any });
     return { success: true };
+  }
+
+  private async pruneOwnerSessions(userId: string): Promise<void> {
+    const sessions = await this.sessionRepo.find({
+      where: { userId, title: Like('[OWNER]%') },
+      order: { updatedAt: 'DESC' },
+      select: ['id', 'updatedAt'],
+    });
+    const oldSessions = sessions.slice(this.maxSessionsPerOwner);
+    if (!oldSessions.length) return;
+    await Promise.all(oldSessions.map((session) => this.sessionRepo.delete({ id: session.id, userId })));
   }
 
   async processOwnerMessageWithSession(
