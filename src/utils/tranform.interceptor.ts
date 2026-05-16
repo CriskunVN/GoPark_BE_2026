@@ -7,23 +7,6 @@ import {
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
-function repairMojibake(value: string): string {
-  if (!/[ÃÄÂâðáºá»Æ°Æ¡]/.test(value)) return value;
-  try {
-    return Buffer.from(value, 'latin1').toString('utf8');
-  } catch {
-    return value;
-  }
-}
-
-function cleanTextFields(value: any): any {
-  if (typeof value === 'string') return repairMojibake(value);
-  if (Array.isArray(value)) return value.map((item) => cleanTextFields(item));
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, cleanTextFields(item)]),
-  );
-}
 
 // Định nghĩa cấu trúc Response mong muốn
 export interface Response<T> {
@@ -92,14 +75,14 @@ export class TransformInterceptor<T> implements NestInterceptor<
             : undefined) ??
           (Array.isArray(payload) ? payload.length : undefined);
 
-        return cleanTextFields({
+        return {
           statusCode: response.statusCode,
           message:
             (isWrappedResponse ? rawData.message : rawData?.message) ||
             'Thành công',
           data: payload,
           ...(typeof count === 'number' ? { count } : {}),
-        });
+        };
       }),
     );
   }
