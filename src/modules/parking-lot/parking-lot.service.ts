@@ -986,6 +986,13 @@ export class ParkingLotService {
       }
     }
 
+    // Lọc bỏ các tầng đang bị khóa [LOCKED] để không hiển thị cho user
+    if (lot.parkingFloor) {
+      lot.parkingFloor = lot.parkingFloor.filter(
+        (floor) => !floor.description?.includes('[LOCKED]'),
+      );
+    }
+
     return {
       ...lot,
       userVehicles: vehicleUser,
@@ -1025,6 +1032,13 @@ export class ParkingLotService {
         where: { user: { id: userId } },
         relations: ['user'],
       });
+    }
+
+    // Lọc bỏ các tầng đang bị khóa [LOCKED] để không hiển thị cho user
+    if (lot.parkingFloor) {
+      lot.parkingFloor = lot.parkingFloor.filter(
+        (floor) => !floor.description?.includes('[LOCKED]'),
+      );
     }
 
     return {
@@ -1069,7 +1083,12 @@ export class ParkingLotService {
     );
 
     // 4. Duyệt qua cấu trúc phân cấp và cập nhật trạng thái slot dựa trên logic rạp phim
+    // Lọc bỏ các tầng đang bị khóa [LOCKED] để không hiển thị cho user
     if (lotData.parkingFloor) {
+      lotData.parkingFloor = lotData.parkingFloor.filter(
+        (floor: any) => !floor.description?.includes('[LOCKED]'),
+      );
+
       lotData.parkingFloor.forEach((floor: any) => {
         if (floor.parkingZones) {
           floor.parkingZones.forEach((zone: any) => {
@@ -1189,6 +1208,7 @@ export class ParkingLotService {
   async updateFloor(lotId: number, floorId: number, dto: any) {
     const floor = await this.parkingFloorRepository.findOne({
       where: { id: floorId, parkingLot: { id: lotId } },
+      relations: ['parkingZones'],
     });
     if (!floor) {
       throw new NotFoundException(
@@ -1196,8 +1216,43 @@ export class ParkingLotService {
       );
     }
 
+    const oldDesc = floor.description || '';
+    const newDesc = dto.description || '';
+
+    // Detect lock/unlock transition via [LOCKED] marker in description
+    const wasLocked = oldDesc.includes('[LOCKED]');
+    const isLocked = newDesc.includes('[LOCKED]');
+
+    if (wasLocked !== isLocked && floor.parkingZones?.length > 0) {
+      const zoneIds = floor.parkingZones.map((z) => z.id);
+      if (isLocked) {
+        // Lock: Set all AVAILABLE slots to DISABLED
+        await this.parkingSlotRepository.update(
+          {
+            parkingZone: { id: In(zoneIds) },
+            status: SlotStatus.AVAILABLE,
+          },
+          { status: SlotStatus.DISABLED },
+        );
+      } else {
+        // Unlock: Set all DISABLED slots back to AVAILABLE
+        await this.parkingSlotRepository.update(
+          {
+            parkingZone: { id: In(zoneIds) },
+            status: SlotStatus.DISABLED,
+          },
+          { status: SlotStatus.AVAILABLE },
+        );
+      }
+    }
+
     Object.assign(floor, dto);
-    return await this.parkingFloorRepository.save(floor);
+    const saved = await this.parkingFloorRepository.save(floor);
+
+    // Sync hierarchical totals to reflect changes in available_slots
+    await this.syncHierarchyTotals(floorId);
+
+    return saved;
   }
 
   async createZone(floorId: number, dto: CreateZoneDto) {
