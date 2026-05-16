@@ -4,8 +4,9 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import * as path from 'path';
+import WebSocket from 'ws';
 
 @Injectable()
 export class SupabaseService {
@@ -28,6 +29,9 @@ export class SupabaseService {
         autoRefreshToken: false,
         persistSession: false,
       },
+      realtime: {
+        transport: WebSocket as any,
+      },
     });
   }
 
@@ -44,7 +48,7 @@ export class SupabaseService {
 
     try {
       const fileExt = path.extname(file.originalname);
-      const fileName = `${uuidv4()}${fileExt}`;
+      const fileName = `${randomUUID()}${fileExt}`;
       const filePath = `${folder}/${fileName}`;
 
       const { data, error } = await this.supabase.storage
@@ -137,7 +141,9 @@ export class SupabaseService {
 
     if (error) {
       this.logger.error(`Error deleting files from Supabase: ${error.message}`);
-      throw new InternalServerErrorException('Failed to delete chat attachments');
+      throw new InternalServerErrorException(
+        'Failed to delete chat attachments',
+      );
     }
   }
 }

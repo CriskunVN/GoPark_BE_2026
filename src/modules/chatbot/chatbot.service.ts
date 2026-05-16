@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import Groq from 'groq-sdk';
@@ -6,6 +6,7 @@ import { ParkingLot } from '../parking-lot/entities/parking-lot.entity';
 import { ChatbotStateService } from './chatbot-state.service';
 import { classifyIntent, requiresData, INTENT_DB_CONFIG, extractParkingName, ChatbotIntent } from './Chatbot.intent';
 import { ChatbotSession } from './entities/chatbot-session.entity';
+import { ChatbotGuideService } from './chatbot-guide.service';
 
 @Injectable()
 export class ChatbotService {
@@ -15,12 +16,13 @@ export class ChatbotService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly stateService: ChatbotStateService,
+    private readonly guideService: ChatbotGuideService,
     @InjectRepository(ChatbotSession)
     private readonly sessionRepo: Repository<ChatbotSession>,
   ) {
     const apiKey = process.env.GROQ_API_KEY || process.env.GORQ_API_KEY;
     if (!apiKey) {
-      this.logger.warn('GROQ_API_KEY missing, chatbot chạy chế độ fallback');
+      this.logger.warn('GROQ_API_KEY missing, chatbot cháº¡y cháº¿ Ä‘á»™ fallback');
     } else {
       this.groq = new Groq({ apiKey });
       this.logger.log('Groq initialized successfully');
@@ -38,7 +40,7 @@ export class ChatbotService {
     redirectUrl?: string;
   }> {
   try {
-    // Lấy câu cuối của người dùng
+    // Láº¥y cÃ¢u cuá»‘i cá»§a ngÆ°á»i dÃ¹ng
     const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
     const intent = classifyIntent(lastUserMessage);
     this.logger.log(`Intent: ${intent} | Message: ${lastUserMessage}`);
@@ -46,12 +48,12 @@ export class ChatbotService {
     const sessionContext = session?.context ?? {};
     const sessionPendingBooking = sessionContext.pendingBooking ?? {};
 
-    // ----- XỬ LÝ CÁC INTENT CẦN DATA -----
+    // ----- Xá»¬ LÃ CÃC INTENT Cáº¦N DATA -----
     if (requiresData(intent) && INTENT_DB_CONFIG[intent]) {
       const config = INTENT_DB_CONFIG[intent];
-      // Kiểm tra đăng nhập nếu cần
+      // Kiá»ƒm tra Ä‘Äƒng nháº­p náº¿u cáº§n
       if (config.requiresUserId && !userId) {
-        return { text: '⚠️ Vui lòng đăng nhập để sử dụng tính năng này.' };
+        return { text: 'âš ï¸ Vui lÃ²ng Ä‘Äƒng nháº­p Ä‘á»ƒ sá»­ dá»¥ng tÃ­nh nÄƒng nÃ y.' };
       }
 
       switch (intent) {
@@ -64,95 +66,122 @@ export class ChatbotService {
           if (result.lots?.length) {
             return {
               text: result.lots[0]?.distance_km
-                ? `📍 Tìm thấy ${result.lots.length} bãi gần bạn nhất (có khoảng cách).`
-                : `📍 Đây là ${result.lots.length} bãi đỗ còn nhiều chỗ trống nhất hiện tại.`,
+                ? `ðŸ“ TÃ¬m tháº¥y ${result.lots.length} bÃ£i gáº§n báº¡n nháº¥t (cÃ³ khoáº£ng cÃ¡ch).`
+                : `ðŸ“ ÄÃ¢y lÃ  ${result.lots.length} bÃ£i Ä‘á»— cÃ²n nhiá»u chá»— trá»‘ng nháº¥t hiá»‡n táº¡i.`,
               action: 'list_parking',
               data: { lots: result.lots, action: 'list_parking', criteria: 'nearest' },
             };
           }
-          return { text: 'Không tìm thấy bãi nào. Vui lòng thử lại.' };
+          return { text: 'KhÃ´ng tÃ¬m tháº¥y bÃ£i nÃ o. Vui lÃ²ng thá»­ láº¡i.' };
         }
 
         case ChatbotIntent.FIND_BEST: {
-          // Phân biệt: rẻ nhất → price_cheapest, phù hợp nhất → best_rating
+          // PhÃ¢n biá»‡t: ráº» nháº¥t â†’ price_cheapest, phÃ¹ há»£p nháº¥t â†’ best_rating
           const msg = lastUserMessage.toLowerCase();
-          const isCheapest = msg.includes('rẻ') || msg.includes('re ') || msg.includes('re nhat') || msg.includes('gia re') || msg.includes('giá rẻ') || msg.includes('cheapest');
+          const isCheapest = msg.includes('ráº»') || msg.includes('re ') || msg.includes('re nhat') || msg.includes('gia re') || msg.includes('giÃ¡ ráº»') || msg.includes('cheapest');
           const criteria = isCheapest ? 'price_cheapest' : 'best_rating';
           const limit = isCheapest ? 5 : 1;
           const result = await this.searchParking({ criteria, limit }, userId);
           if (result.lots?.length) {
             if (isCheapest) {
               return {
-                text: `💰 Top ${result.lots.length} bãi giá rẻ nhất hiện có (sắp xếp theo giá/giờ tăng dần):`,
+                text: `ðŸ’° Top ${result.lots.length} bÃ£i giÃ¡ ráº» nháº¥t hiá»‡n cÃ³ (sáº¯p xáº¿p theo giÃ¡/giá» tÄƒng dáº§n):`,
                 action: 'list_parking',
                 data: { lots: result.lots, action: 'list_parking', criteria: 'price_cheapest' },
               };
             }
             const top = result.lots[0];
             return {
-              text: `⭐ Bãi phù hợp nhất: **${top.name}**\n\n📊 Tiêu chí:\n• Đánh giá: ${Number(top.avgRating || 0).toFixed(1)} ⭐ (40%)\n• Chỗ trống: ${top.available_slots}/${top.total_slots} (30%)\n• Giá: ${(top.hourly_rate || 20000).toLocaleString('vi-VN')}đ/giờ (30%)`,
+              text: `â­ BÃ£i phÃ¹ há»£p nháº¥t: **${top.name}**\n\nðŸ“Š TiÃªu chÃ­:\nâ€¢ ÄÃ¡nh giÃ¡: ${Number(top.avgRating || 0).toFixed(1)} â­ (40%)\nâ€¢ Chá»— trá»‘ng: ${top.available_slots}/${top.total_slots} (30%)\nâ€¢ GiÃ¡: ${(top.hourly_rate || 20000).toLocaleString('vi-VN')}Ä‘/giá» (30%)`,
               action: 'list_parking',
               data: { lots: result.lots, action: 'list_parking', criteria: 'best' },
             };
           }
-          return { text: 'Không tìm thấy bãi phù hợp.' };
+          return { text: 'KhÃ´ng tÃ¬m tháº¥y bÃ£i phÃ¹ há»£p.' };
         }
 
         case ChatbotIntent.CHECK_BOOKING: {
           const data = await this.getUserBookings(userId);
           if (data.error) return { text: data.error };
           const bookings = data.bookings || [];
-          if (bookings.length === 0) return { text: '📋 Bạn chưa có đặt chỗ nào.' };
-          let text = `📋 Lịch sử đặt chỗ của bạn:\n`;
-          bookings.forEach((b: any, i: number) => {
-            text += `${i+1}. ${b.lot_name} | ${new Date(b.start_time).toLocaleString()} → ${new Date(b.end_time).toLocaleString()} | ${b.status}\n`;
-          });
-          return { text };
+          if (bookings.length === 0) return { text: 'ðŸ“‹ Báº¡n chÆ°a cÃ³ Ä‘áº·t chá»— nÃ o.' };
+          return {
+            text:
+              `## Lich Su Dat Cho\n\n` +
+              this.markdownTable(
+                ['#', 'Bai do', 'Bat dau', 'Ket thuc', 'Trang thai'],
+                bookings.map((b: any, i: number) => [
+                  i + 1,
+                  b.lot_name || '-',
+                  new Date(b.start_time).toLocaleString('vi-VN'),
+                  new Date(b.end_time).toLocaleString('vi-VN'),
+                  b.status || '-',
+                ]),
+              ),
+          };
         }
 
         case ChatbotIntent.CHECK_WALLET: {
           const data = await this.getWalletBalance(userId);
           if (data.error) return { text: data.error };
           const balance = data.balance || 0;
-          return { text: `💰 Số dư ví GoPark của bạn: ${balance.toLocaleString('vi-VN')}đ.` };
+          return {
+            text:
+              `## Vi GoPark\n\n` +
+              this.markdownTable(['Hang muc', 'Gia tri'], [
+                ['So du hien tai', `${Number(balance).toLocaleString('vi-VN')}d`],
+              ]),
+          };
         }
 
         case ChatbotIntent.CHECK_VEHICLES: {
           const data = await this.getUserVehicles(userId);
           if (data.error) return { text: data.error };
           const vehicles = data.vehicles || [];
-          if (vehicles.length === 0) return { text: '🚗 Bạn chưa đăng ký xe nào. Vào mục "Xe của tôi" để thêm xe.' };
-          let text = `🚗 Danh sách xe đã đăng ký:\n`;
-          vehicles.forEach((v: any, i: number) => {
-            text += `${i+1}. ${v.plate_number} (${v.type || 'Xe hơi'})\n`;
-          });
-          return { text };
+          if (vehicles.length === 0) return { text: 'ðŸš— Báº¡n chÆ°a Ä‘Äƒng kÃ½ xe nÃ o. VÃ o má»¥c "Xe cá»§a tÃ´i" Ä‘á»ƒ thÃªm xe.' };
+          return {
+            text:
+              `## Xe Da Dang Ky\n\n` +
+              this.markdownTable(
+                ['Lua chon', 'Bien so', 'Loai xe'],
+                vehicles.map((v: any, i: number) => [
+                  `xe ${i + 1}`,
+                  v.plate_number || '-',
+                  v.type || 'Xe hoi',
+                ]),
+              ) +
+              `\n\nKhi dat cho, ban chi can tra loi \`xe 1\` hoac \`xe 2\`.`,
+          };
         }
 
         case ChatbotIntent.CHECK_INVOICE:
-          return { text: '📄 Tính năng xem hóa đơn đang được phát triển. Bạn có thể xem trong trang Cá nhân.' };
+          return { text: 'ðŸ“„ TÃ­nh nÄƒng xem hÃ³a Ä‘Æ¡n Ä‘ang Ä‘Æ°á»£c phÃ¡t triá»ƒn. Báº¡n cÃ³ thá»ƒ xem trong trang CÃ¡ nhÃ¢n.' };
 
         case ChatbotIntent.CANCEL_BOOKING:
-          return { text: '❓ Vui lòng cung cấp mã đặt chỗ (ID) bạn muốn hủy.' };
+          return { text: 'â“ Vui lÃ²ng cung cáº¥p mÃ£ Ä‘áº·t chá»— (ID) báº¡n muá»‘n há»§y.' };
 
         default:
-          // Các intent khác (nếu có) sẽ rơi vào đây
+          // CÃ¡c intent khÃ¡c (náº¿u cÃ³) sáº½ rÆ¡i vÃ o Ä‘Ã¢y
           break;
       }
     }
 
-    // ----- XỬ LÝ ĐẶT BÃI (BOOK_PARKING / BOOK_WITH_DETAILS) -----
-    if (intent === ChatbotIntent.BOOK_PARKING || intent === ChatbotIntent.BOOK_WITH_DETAILS) {
+    // ----- Xá»¬ LÃ Äáº¶T BÃƒI (BOOK_PARKING / BOOK_WITH_DETAILS) -----
+    if (
+      intent === ChatbotIntent.BOOK_PARKING ||
+      intent === ChatbotIntent.BOOK_WITH_DETAILS ||
+      session?.step === 'awaiting_booking_details'
+    ) {
       if (!userId) {
-        return { text: '⚠️ Bạn cần đăng nhập để đặt bãi. Vui lòng đăng nhập để tiếp tục đặt chỗ.' };
+        return { text: 'âš ï¸ Báº¡n cáº§n Ä‘Äƒng nháº­p Ä‘á»ƒ Ä‘áº·t bÃ£i. Vui lÃ²ng Ä‘Äƒng nháº­p Ä‘á»ƒ tiáº¿p tá»¥c Ä‘áº·t chá»—.' };
       }
 
-      // Nếu là câu hỏi hướng dẫn → dùng Groq
+      // Náº¿u lÃ  cÃ¢u há»i hÆ°á»›ng dáº«n â†’ dÃ¹ng Groq
       const msgLower = lastUserMessage.toLowerCase();
       if (
-        msgLower.includes('cách') || msgLower.includes('như thế nào') ||
-        msgLower.includes('hướng dẫn') || msgLower.includes('làm sao') ||
-        msgLower.includes('bước') || msgLower.includes('quy trình')
+        msgLower.includes('cÃ¡ch') || msgLower.includes('nhÆ° tháº¿ nÃ o') ||
+        msgLower.includes('hÆ°á»›ng dáº«n') || msgLower.includes('lÃ m sao') ||
+        msgLower.includes('bÆ°á»›c') || msgLower.includes('quy trÃ¬nh')
       ) {
         if (this.groq) {
           const resp = await this.groq.chat.completions.create({
@@ -160,80 +189,15 @@ export class ChatbotService {
             messages: [{ role: 'system', content: this.getSystemPrompt() }, ...messages.slice(-4)] as any,
             temperature: 0.7,
           });
-          return { text: resp.choices[0].message.content || 'Vui lòng chọn bãi đỗ, sau đó nhấn "Đặt ngay" để tiến hành đặt chỗ.' };
+          return { text: resp.choices[0].message.content || 'Vui long chon bai do, sau do nhan Dat ngay de dat cho.' };
         }
-        return { text: '📋 Để đặt bãi:\n1. Tìm bãi phù hợp\n2. Nhấn "Đặt ngay"\n3. Chọn thời gian, xe, phương thức thanh toán\n4. Xác nhận đặt chỗ' };
+        return { text: 'De dat bai: tim bai phu hop, chon thoi gian, xe, phuong thuc thanh toan, roi xac nhan dat cho.' };
       }
 
-      // Lấy danh sách xe của user để map "xe 1", "xe 2" → vehicleId thực
-      const userVehicles = userId ? (await this.getUserVehicles(userId)).vehicles || [] : [];
-
-      // Parse "xe 1", "xe 2", "xe 3" → vehicleId
-      let vehicleId: string | undefined;
-      const xeMatch = msgLower.match(/xe\s*(\d+)/);
-      if (xeMatch) {
-        const idx = parseInt(xeMatch[1], 10) - 1;
-        if (userVehicles[idx]) vehicleId = userVehicles[idx].id.toString();
-      }
-      // Parse biển số trực tiếp
-      if (!vehicleId) {
-        const plateMatch = lastUserMessage.match(/\b([0-9]{2}[A-Z]-[0-9]{3,4}\.[0-9]{2}|[0-9]{2}[A-Z][0-9]-[0-9]{5})\b/i);
-        if (plateMatch) {
-          const found = userVehicles.find((v: any) =>
-            v.plate_number?.replace(/\s/g, '').toLowerCase() === plateMatch[1].replace(/\s/g, '').toLowerCase()
-          );
-          if (found) vehicleId = found.id.toString();
-        }
-      }
-
-      // Parse tên bãi từ message
-      const parkingName = extractParkingName(lastUserMessage);
-      let parkingLotId: string | undefined;
-      if (parkingName) {
-        const lots = await this.getParkingLotsRaw();
-        const matched = lots.filter((l) => l.name.toLowerCase().includes(parkingName.toLowerCase()));
-        if (matched.length >= 1) parkingLotId = matched[0].id.toString();
-      }
-
-      // Gộp với context session nếu có
-      const pending = context?.pendingBooking || sessionPendingBooking || {};
-      parkingLotId = parkingLotId || pending.parkingLotId;
-      vehicleId = vehicleId || pending.vehicleId;
-      const startTime = pending.startTime;
-      const endTime = pending.endTime;
-      const paymentMethod = pending.paymentMethod;
-
-      // Redirect ngay với những gì có, thiếu gì user tự điền trên trang
-      const params = new URLSearchParams();
-      if (startTime) params.set('start', startTime);
-      if (endTime) params.set('end', endTime);
-      if (vehicleId) params.set('vehicle', vehicleId);
-      if (paymentMethod) params.set('payment', paymentMethod);
-
-      // Tạo message mô tả xe nếu có
-      let vehicleDesc = '';
-      if (vehicleId) {
-        const v = userVehicles.find((x: any) => x.id.toString() === vehicleId);
-        if (v) vehicleDesc = ` với xe ${v.plate_number}`;
-      }
-
-      // Nếu có lotId → redirect thẳng đến trang đặt bãi đó
-      // Nếu không → redirect đến trang tìm kiếm
-      const redirectUrl = parkingLotId
-        ? `/users/myBooking/${parkingLotId}?${params.toString()}`
-        : `/users/parking?${params.toString()}`;
-
-      if (userId) this.stateService.deleteSession(userId);
-      return {
-        text: parkingLotId
-          ? `✅ Đang chuyển đến trang đặt bãi${vehicleDesc}. Bạn có thể điền thêm thông tin còn thiếu trực tiếp trên trang.`
-          : `🔍 Bạn muốn đặt bãi nào? Hãy tìm bãi trước hoặc tôi sẽ chuyển bạn đến trang tìm kiếm.`,
-        action: 'redirect',
-        redirectUrl,
-      };
+      return this.handleSmartBooking(lastUserMessage, userId, context, sessionPendingBooking);
     }
 
-    // ----- FALLBACK: GỌI GROQ CHO CÁC CÂU HỎI THƯỜNG (FREE_FORM) -----
+    // ----- FALLBACK: Gá»ŒI GROQ CHO CÃC CÃ‚U Há»ŽI THÆ¯á»œNG (FREE_FORM) -----
     if (
       intent === ChatbotIntent.FREE_FORM ||
       intent === ChatbotIntent.PAYMENT_GUIDE ||
@@ -257,11 +221,11 @@ export class ChatbotService {
         ] as any,
         temperature: 0.7,
       });
-      const text = response.choices[0].message.content || 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn.';
+      const text = response.choices[0].message.content || 'Xin lá»—i, tÃ´i chÆ°a hiá»ƒu cÃ¢u há»i cá»§a báº¡n.';
       return { text };
     }
 
-    // Mọi intent còn lại → Groq xử lý thay vì fallback cứng
+    // Má»i intent cÃ²n láº¡i â†’ Groq xá»­ lÃ½ thay vÃ¬ fallback cá»©ng
     if (this.groq) {
       const response = await this.groq.chat.completions.create({
         model: 'llama-3.3-70b-versatile',
@@ -271,10 +235,10 @@ export class ChatbotService {
         ] as any,
         temperature: 0.7,
       });
-      return { text: response.choices[0].message.content || 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn.' };
+      return { text: response.choices[0].message.content || 'Xin lá»—i, tÃ´i chÆ°a hiá»ƒu cÃ¢u há»i cá»§a báº¡n.' };
     }
     return {
-      text: 'Xin chào! Tôi là trợ lý GoPark. Tôi có thể giúp bạn tìm bãi đỗ, đặt chỗ, xem lịch sử, số dư ví. Bạn cần gì ạ? 😊',
+      text: 'Xin chÃ o! TÃ´i lÃ  trá»£ lÃ½ GoPark. TÃ´i cÃ³ thá»ƒ giÃºp báº¡n tÃ¬m bÃ£i Ä‘á»—, Ä‘áº·t chá»—, xem lá»‹ch sá»­, sá»‘ dÆ° vÃ­. Báº¡n cáº§n gÃ¬ áº¡? ðŸ˜Š',
     };
   } catch (error) {
     this.logger.error('processMessage error', error);
@@ -282,25 +246,292 @@ export class ChatbotService {
   }
 }
 
+  private normalizeText(value: string): string {
+    return (value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/[^a-z0-9:\-\.\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private markdownTable(
+    headers: string[],
+    rows: Array<Array<string | number>>,
+  ): string {
+    if (!rows.length) return '_Khong co du lieu phu hop._';
+    const header = `| ${headers.join(' | ')} |`;
+    const divider = `| ${headers.map(() => '---').join(' | ')} |`;
+    const body = rows.map((row) => `| ${row.map((cell) => String(cell)).join(' | ')} |`);
+    return [header, divider, ...body].join('\n');
+  }
+
+  private parseBookingTimes(message: string): { startTime?: string; endTime?: string } {
+    const text = this.normalizeText(message);
+    const isOnlyNumberedChoice =
+      /^(bai|xe|thanh toan|payment|tra tien)\s*\d+$/.test(text);
+    if (isOnlyNumberedChoice) return {};
+
+    const now = new Date();
+    const base = new Date(now);
+    if (text.includes('ngay mai') || text.includes('tomorrow')) {
+      base.setDate(base.getDate() + 1);
+    }
+
+    const fromTo = text.match(/(?:tu|luc)?\s*(\d{1,2})(?:h|:)?(\d{2})?\s*(?:den|toi|-)\s*(\d{1,2})(?:h|:)?(\d{2})?/);
+    if (fromTo) {
+      const start = new Date(base);
+      start.setHours(Number(fromTo[1]), Number(fromTo[2] || 0), 0, 0);
+      const end = new Date(base);
+      end.setHours(Number(fromTo[3]), Number(fromTo[4] || 0), 0, 0);
+      if (end <= start) end.setDate(end.getDate() + 1);
+      return {
+        startTime: this.toLocalInputDateTime(start),
+        endTime: this.toLocalInputDateTime(end),
+      };
+    }
+
+    const duration = text.match(/(?:trong|dat)\s*(\d{1,2})\s*(?:gio|tieng|h)/);
+    const singleTime = text.match(/(?:luc|tu)?\s*(\d{1,2})(?:h|:)?(\d{2})?/);
+    if (singleTime) {
+      const start = new Date(base);
+      start.setHours(Number(singleTime[1]), Number(singleTime[2] || 0), 0, 0);
+      if (start < now && !text.includes('ngay mai')) start.setDate(start.getDate() + 1);
+      const end = new Date(start);
+      end.setHours(end.getHours() + Number(duration?.[1] || 1));
+      return {
+        startTime: this.toLocalInputDateTime(start),
+        endTime: this.toLocalInputDateTime(end),
+      };
+    }
+
+    return {};
+  }
+
+  private toLocalInputDateTime(date: Date): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  private parsePaymentMethod(message: string): string | undefined {
+    const text = this.normalizeText(message);
+    const indexed = text.match(/(?:thanh toan|tra tien|payment)\s*(\d+)/);
+    if (indexed) {
+      const methods = ['vnpay', 'wallet', 'cash'];
+      return methods[Number(indexed[1]) - 1];
+    }
+    if (text.includes('vi') || text.includes('wallet')) return 'wallet';
+    if (text.includes('tien mat') || text.includes('cash')) return 'cash';
+    if (text.includes('vnpay') || text.includes('online') || text.includes('the')) return 'vnpay';
+    return undefined;
+  }
+
+  private resolveVehicle(message: string, vehicles: any[], pending: any): any {
+    const text = this.normalizeText(message);
+    const indexed = text.match(/\bxe\s*(\d+)\b/);
+    if (indexed) {
+      const vehicle = vehicles[Number(indexed[1]) - 1];
+      if (vehicle) return vehicle;
+    }
+
+    const compactMessage = text.replace(/\s/g, '');
+    return vehicles.find((vehicle: any) => {
+      const plate = this.normalizeText(vehicle.plate_number || '').replace(/\s/g, '');
+      return plate && compactMessage.includes(plate);
+    }) || vehicles.find((vehicle: any) => String(vehicle.id) === String(pending.vehicleId));
+  }
+
+  private formatVehicleOptions(vehicles: any[]): string {
+    if (!vehicles.length) {
+      return 'Ban chua co xe trong he thong, hay them xe truoc khi dat.';
+    }
+
+    return vehicles
+      .map((vehicle: any, index: number) => {
+        const type = vehicle.type ? ` (${vehicle.type})` : '';
+        return `Xe ${index + 1} la bien so ${vehicle.plate_number}${type}`;
+      })
+      .join('; ');
+  }
+
+  private formatPaymentOptions(): string {
+    return 'Thanh toan 1 la VNPAY; thanh toan 2 la vi GoPark; thanh toan 3 la tien mat';
+  }
+
+  private formatTimeExamples(): string {
+    return 'Ban co the noi ngan gon nhu "hom nay tu 8h den 10h", "ngay mai tu 7h30 den 9h", hoac "luc 14h trong 2 gio"';
+  }
+
+  private formatParkingLotOptions(lots: any[]): string {
+    if (!lots.length) return 'Hien chua co bai do nao de goi y.';
+    return lots
+      .slice(0, 5)
+      .map((lot: any, index: number) => {
+        const address = lot.address ? ` - ${lot.address}` : '';
+        const slots = typeof lot.available_slots === 'number' ? `, con ${lot.available_slots} cho` : '';
+        return `Bai ${index + 1} la ${lot.name}${address}${slots}`;
+      })
+      .join('; ');
+  }
+
+  private async resolveParkingLot(message: string, pending: any): Promise<any> {
+    const text = this.normalizeText(message);
+    const indexed = text.match(/\bbai\s*(\d+)\b/);
+    if (indexed && Array.isArray(pending.parkingLotOptions)) {
+      const lot = pending.parkingLotOptions[Number(indexed[1]) - 1];
+      if (lot?.id) return lot;
+    }
+
+    if (pending.parkingLotId) {
+      const lots = await this.getParkingLotsRaw();
+      const byId = lots.find((lot: any) => String(lot.id) === String(pending.parkingLotId));
+      if (byId) return byId;
+    }
+
+    const lots = await this.getParkingLotsRaw();
+    const explicitName = extractParkingName(message);
+    let query = this.normalizeText(explicitName || message)
+      .replace(/\b(toi|muon|dat|bai|bai do|cho|giup|tai|o|xe|luc|tu|den|ngay mai|hom nay)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!query) return undefined;
+
+    const ranked = lots
+      .map((lot: any) => {
+        const name = this.normalizeText(lot.name);
+        const address = this.normalizeText(lot.address || '');
+        const score =
+          name.includes(query) || query.includes(name)
+            ? 1
+            : query.split(' ').filter((part) => part.length > 1 && (name.includes(part) || address.includes(part))).length / Math.max(query.split(' ').length, 1);
+        return { lot, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return ranked[0]?.score >= 0.35 ? ranked[0].lot : undefined;
+  }
+
+  private async handleSmartBooking(
+    message: string,
+    userId: string,
+    context?: any,
+    sessionPendingBooking?: any,
+  ): Promise<{ text: string; action?: string; data?: any; redirectUrl?: string }> {
+    const pending = {
+      ...(sessionPendingBooking || {}),
+      ...(context?.pendingBooking || {}),
+    };
+    const vehicles = (await this.getUserVehicles(userId)).vehicles || [];
+    const parkingSuggestions = (await this.getParkingLotsRaw())
+      .filter((lot: any) => Number(lot.available_slots || 0) > 0)
+      .slice(0, 5);
+    const pendingWithSuggestions = {
+      ...pending,
+      parkingLotOptions: pending.parkingLotOptions || parkingSuggestions,
+    };
+    const lot = await this.resolveParkingLot(message, pendingWithSuggestions);
+    const vehicle = this.resolveVehicle(message, vehicles, pending);
+    const times = this.parseBookingTimes(message);
+    const paymentMethod = this.parsePaymentMethod(message) || pending.paymentMethod || 'vnpay';
+
+    const nextPending = {
+      ...pending,
+      parkingLotId: lot?.id ? String(lot.id) : pending.parkingLotId,
+      parkingLotName: lot?.name || pending.parkingLotName,
+      vehicleId: vehicle?.id ? String(vehicle.id) : pending.vehicleId,
+      vehiclePlate: vehicle?.plate_number || pending.vehiclePlate,
+      startTime: times.startTime || pending.startTime,
+      endTime: times.endTime || pending.endTime,
+      paymentMethod,
+      parkingLotOptions: parkingSuggestions.map((suggestion: any) => ({
+        id: suggestion.id,
+        name: suggestion.name,
+        address: suggestion.address,
+        available_slots: suggestion.available_slots,
+      })),
+    };
+
+    const missing: string[] = [];
+    if (!nextPending.parkingLotId) missing.push('ten bai do');
+    if (!nextPending.startTime || !nextPending.endTime) missing.push('thoi gian vao/ra');
+    if (!nextPending.vehiclePlate) missing.push('xe hoac bien so');
+
+    if (missing.length) {
+      this.stateService.updateStep(userId, 'awaiting_booking_details', { pendingBooking: nextPending });
+      const parkingHint = missing.includes('ten bai do')
+        ? `\n${this.formatParkingLotOptions(parkingSuggestions)}. Ban chi can tra loi "bai 1" hoac "bai 2".`
+        : '';
+      const timeHint = missing.includes('thoi gian vao/ra')
+        ? `\n${this.formatTimeExamples()}.`
+        : '';
+      const vehicleHint = missing.includes('xe hoac bien so')
+        ? `\n${this.formatVehicleOptions(vehicles)}. Ban chi can tra loi "xe 1" hoac "xe 2".`
+        : '';
+      const paymentHint = `\n${this.formatPaymentOptions()}. Neu ban khong chon, minh se de mac dinh VNPAY.`;
+      return {
+        text: `Minh da ghi nhan ${nextPending.parkingLotName ? `bai ${nextPending.parkingLotName}` : 'yeu cau dat cho'}. Ban cho minh them: ${missing.join(', ')}. Vi du: "bai 1, ngay mai tu 8h den 10h, xe 1, thanh toan 1".${parkingHint}${timeHint}${vehicleHint}${paymentHint}`,
+        action: 'collect_booking',
+        data: {
+          missing,
+          pendingBooking: nextPending,
+          suggestions: {
+            parkingLots: nextPending.parkingLotOptions,
+            vehicles: vehicles.map((vehicle: any, index: number) => ({
+              label: `xe ${index + 1}`,
+              plateNumber: vehicle.plate_number,
+              type: vehicle.type,
+            })),
+            payments: [
+              { label: 'thanh toan 1', value: 'vnpay' },
+              { label: 'thanh toan 2', value: 'wallet' },
+              { label: 'thanh toan 3', value: 'cash' },
+            ],
+            timeExamples: ['hom nay tu 8h den 10h', 'ngay mai tu 7h30 den 9h', 'luc 14h trong 2 gio'],
+          },
+        },
+      };
+    }
+
+    const params = new URLSearchParams();
+    params.set('start', nextPending.startTime);
+    params.set('end', nextPending.endTime);
+    params.set('vehicle', nextPending.vehiclePlate);
+    params.set('payment', nextPending.paymentMethod);
+    this.stateService.deleteSession(userId);
+
+    return {
+      text: `Ok, minh se mo trang dat cho bai ${nextPending.parkingLotName} voi xe ${nextPending.vehiclePlate}, tu ${nextPending.startTime} den ${nextPending.endTime}.`,
+      action: 'redirect',
+      redirectUrl: `/users/myBooking/${nextPending.parkingLotId}?${params.toString()}`,
+      data: { pendingBooking: nextPending },
+    };
+  }
+
   private getSystemPrompt(): string {
-    return `Bạn là GoPark AI – trợ lý thông minh của ứng dụng đặt chỗ giữ xe GoPark. Bạn nói chuyện tự nhiên, thân thiện như một người bạn am hiểu về đỗ xe tại Việt Nam.
+    return `Báº¡n lÃ  GoPark AI â€“ trá»£ lÃ½ thÃ´ng minh cá»§a á»©ng dá»¥ng Ä‘áº·t chá»— giá»¯ xe GoPark. Báº¡n nÃ³i chuyá»‡n tá»± nhiÃªn, thÃ¢n thiá»‡n nhÆ° má»™t ngÆ°á»i báº¡n am hiá»ƒu vá» Ä‘á»— xe táº¡i Viá»‡t Nam.
 
-NGUYÊN TẮC QUAN TRỌNG:
-1. KHÔNG bao giờ bịa số liệu, giá cả, địa chỉ cụ thể – chỉ dùng dữ liệu từ tool/DB.
-2. Trả lời NGẮN GỌN, súc tích. Không lặp lại câu hỏi của user.
-3. Nhớ ngữ cảnh cuộc trò chuyện – nếu user vừa hỏi về bãi A thì câu tiếp theo liên quan đến bãi A.
-4. Dùng emoji phù hợp nhưng không lạm dụng.
-5. Nếu không biết → thành thật nói "Tôi chưa có thông tin về điều này".
-6. Hỗ trợ cả tiếng Việt có dấu và không dấu.
+NGUYÃŠN Táº®C QUAN TRá»ŒNG:
+1. KHÃ”NG bao giá» bá»‹a sá»‘ liá»‡u, giÃ¡ cáº£, Ä‘á»‹a chá»‰ cá»¥ thá»ƒ â€“ chá»‰ dÃ¹ng dá»¯ liá»‡u tá»« tool/DB.
+2. Tráº£ lá»i NGáº®N Gá»ŒN, sÃºc tÃ­ch. KhÃ´ng láº·p láº¡i cÃ¢u há»i cá»§a user.
+3. Nhá»› ngá»¯ cáº£nh cuá»™c trÃ² chuyá»‡n â€“ náº¿u user vá»«a há»i vá» bÃ£i A thÃ¬ cÃ¢u tiáº¿p theo liÃªn quan Ä‘áº¿n bÃ£i A.
+4. DÃ¹ng emoji phÃ¹ há»£p nhÆ°ng khÃ´ng láº¡m dá»¥ng.
+5. Náº¿u khÃ´ng biáº¿t â†’ thÃ nh tháº­t nÃ³i "TÃ´i chÆ°a cÃ³ thÃ´ng tin vá» Ä‘iá»u nÃ y".
+6. Há»— trá»£ cáº£ tiáº¿ng Viá»‡t cÃ³ dáº¥u vÃ  khÃ´ng dáº¥u.
 
-KHẢ NĂNG:
-- Tìm bãi đỗ: gần nhất, rẻ nhất, phù hợp nhất (dựa trên rating + giá + chỗ trống)
-- Đặt chỗ: redirect đến trang đặt với thông tin đã điền sẵn
-- Xem tài khoản: số dư ví, xe đã đăng ký, lịch sử đặt
-- Hỗ trợ: thanh toán, giờ mở cửa, liên hệ, khuyến mãi
-- Trả lời câu hỏi chung về đỗ xe, giao thông, GoPark
+KHáº¢ NÄ‚NG:
+- TÃ¬m bÃ£i Ä‘á»—: gáº§n nháº¥t, ráº» nháº¥t, phÃ¹ há»£p nháº¥t (dá»±a trÃªn rating + giÃ¡ + chá»— trá»‘ng)
+- Äáº·t chá»—: redirect Ä‘áº¿n trang Ä‘áº·t vá»›i thÃ´ng tin Ä‘Ã£ Ä‘iá»n sáºµn
+- Xem tÃ i khoáº£n: sá»‘ dÆ° vÃ­, xe Ä‘Ã£ Ä‘Äƒng kÃ½, lá»‹ch sá»­ Ä‘áº·t
+- Há»— trá»£: thanh toÃ¡n, giá» má»Ÿ cá»­a, liÃªn há»‡, khuyáº¿n mÃ£i
+- Tráº£ lá»i cÃ¢u há»i chung vá» Ä‘á»— xe, giao thÃ´ng, GoPark
 
-GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
+GoPark hoáº¡t Ä‘á»™ng 24/7. Hotline: 1800-GOPARK. Website: gopark.vn
+
+TÃ€I LIá»†U HÆ¯á»šNG DáºªN Tá»ª FILE MARKDOWN:
+${this.guideService.getGuide()}`;
   }
 
   private getToolsDefinition(): any[] {
@@ -310,7 +541,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
         function: {
           name: 'search_parking',
           description:
-            'Tìm bãi đỗ xe theo tiêu chí: giá rẻ nhất, gần nhất, đánh giá cao, khu vực, hoặc theo tên bãi',
+            'TÃ¬m bÃ£i Ä‘á»— xe theo tiÃªu chÃ­: giÃ¡ ráº» nháº¥t, gáº§n nháº¥t, Ä‘Ã¡nh giÃ¡ cao, khu vá»±c, hoáº·c theo tÃªn bÃ£i',
           parameters: {
             type: 'object',
             properties: {
@@ -326,11 +557,11 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
               },
               area: {
                 type: 'string',
-                description: 'Tên quận/huyện (dùng khi criteria=area)',
+                description: 'TÃªn quáº­n/huyá»‡n (dÃ¹ng khi criteria=area)',
               },
               name: {
                 type: 'string',
-                description: 'Tên bãi đỗ cần tìm (dùng khi criteria=by_name)',
+                description: 'TÃªn bÃ£i Ä‘á»— cáº§n tÃ¬m (dÃ¹ng khi criteria=by_name)',
               },
               limit: { type: 'integer', default: 5 },
             },
@@ -342,7 +573,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
         type: 'function',
         function: {
           name: 'get_user_bookings',
-          description: 'Lấy lịch sử đặt chỗ của người dùng',
+          description: 'Láº¥y lá»‹ch sá»­ Ä‘áº·t chá»— cá»§a ngÆ°á»i dÃ¹ng',
           parameters: { type: 'object', properties: {} },
         },
       },
@@ -350,7 +581,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
         type: 'function',
         function: {
           name: 'get_wallet_balance',
-          description: 'Lấy số dư ví GoPark',
+          description: 'Láº¥y sá»‘ dÆ° vÃ­ GoPark',
           parameters: { type: 'object', properties: {} },
         },
       },
@@ -358,7 +589,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
         type: 'function',
         function: {
           name: 'get_user_vehicles',
-          description: 'Lấy danh sách xe của người dùng',
+          description: 'Láº¥y danh sÃ¡ch xe cá»§a ngÆ°á»i dÃ¹ng',
           parameters: { type: 'object', properties: {} },
         },
       },
@@ -367,7 +598,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
         function: {
           name: 'book_parking',
           description:
-            'Tạo booking mới. Nếu thiếu thông tin, trả về missing_fields.',
+            'Táº¡o booking má»›i. Náº¿u thiáº¿u thÃ´ng tin, tráº£ vá» missing_fields.',
           parameters: {
             type: 'object',
             properties: {
@@ -394,7 +625,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
         type: 'function',
         function: {
           name: 'cancel_booking',
-          description: 'Hủy booking theo ID',
+          description: 'Há»§y booking theo ID',
           parameters: {
             type: 'object',
             properties: { bookingId: { type: 'string' } },
@@ -430,7 +661,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
       case 'cancel_booking':
         return this.cancelBooking(parsedArgs.bookingId, userId);
       default:
-        return { error: 'Tool không tồn tại' };
+        return { error: 'Tool khÃ´ng tá»“n táº¡i' };
     }
   }
 
@@ -441,7 +672,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
     let lots = await this.getParkingLotsRaw();
     const { criteria, area, limit = 5, name, userLat, userLng } = args;
 
-    // Tính khoảng cách Haversine (km)
+    // TÃ­nh khoáº£ng cÃ¡ch Haversine (km)
     const calcDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
       const R = 6371;
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -451,7 +682,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     };
 
-    // Gắn distance vào mỗi lot nếu có tọa độ user
+    // Gáº¯n distance vÃ o má»—i lot náº¿u cÃ³ tá»a Ä‘á»™ user
     if (userLat && userLng) {
       lots = lots.map((lot: any) => ({
         ...lot,
@@ -463,7 +694,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
       lots = lots.filter((lot) => lot.name.toLowerCase().includes(name.toLowerCase()));
       if (lots.length === 0) {
         return {
-          message: `❌ Không tìm thấy bãi đỗ nào có tên "${name}". Bạn có muốn tìm bãi ở khu vực ${name} không?`,
+          message: `âŒ KhÃ´ng tÃ¬m tháº¥y bÃ£i Ä‘á»— nÃ o cÃ³ tÃªn "${name}". Báº¡n cÃ³ muá»‘n tÃ¬m bÃ£i á»Ÿ khu vá»±c ${name} khÃ´ng?`,
           lots: [],
           suggestedArea: name,
         };
@@ -472,20 +703,20 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
 
     } else if (criteria === 'area' && area) {
       let normalizedArea = area.toLowerCase();
-      if (normalizedArea.includes('sài gòn')) normalizedArea = 'hồ chí minh';
+      if (normalizedArea.includes('sÃ i gÃ²n')) normalizedArea = 'há»“ chÃ­ minh';
       lots = lots.filter((lot) => lot.address.toLowerCase().includes(normalizedArea));
       if (lots.length === 0) {
-        return { message: `📍 GoPark chưa có bãi tại "${area}". Thử tìm ở Đà Nẵng hoặc TP.HCM.`, lots: [] };
+        return { message: `ðŸ“ GoPark chÆ°a cÃ³ bÃ£i táº¡i "${area}". Thá»­ tÃ¬m á»Ÿ ÄÃ  Náºµng hoáº·c TP.HCM.`, lots: [] };
       }
       lots.sort((a, b) => a.hourly_rate - b.hourly_rate);
 
     } else if (criteria === 'price_cheapest') {
-      // Sắp xếp theo giá tăng dần, ưu tiên còn chỗ
+      // Sáº¯p xáº¿p theo giÃ¡ tÄƒng dáº§n, Æ°u tiÃªn cÃ²n chá»—
       lots = lots.filter(l => l.available_slots > 0);
       lots.sort((a, b) => a.hourly_rate - b.hourly_rate || b.available_slots - a.available_slots);
 
     } else if (criteria === 'nearest') {
-      // Sắp xếp theo khoảng cách nếu có GPS, fallback theo available_slots
+      // Sáº¯p xáº¿p theo khoáº£ng cÃ¡ch náº¿u cÃ³ GPS, fallback theo available_slots
       if (userLat && userLng) {
         lots = lots.filter((l: any) => l.distance_km !== null);
         lots.sort((a: any, b: any) => a.distance_km - b.distance_km);
@@ -494,7 +725,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
       }
 
     } else if (criteria === 'best_rating') {
-      // Điểm tổng hợp: rating (40%) + chỗ trống (30%) + giá rẻ (30%)
+      // Äiá»ƒm tá»•ng há»£p: rating (40%) + chá»— trá»‘ng (30%) + giÃ¡ ráº» (30%)
       const maxRate = Math.max(...lots.map(l => l.hourly_rate)) || 1;
       const maxSlots = Math.max(...lots.map(l => l.available_slots)) || 1;
       lots = lots.filter(l => l.available_slots > 0);
@@ -513,7 +744,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   }
 
   private async getUserBookings(userId?: string): Promise<any> {
-    if (!userId) return { error: 'Cần đăng nhập' };
+    if (!userId) return { error: 'Cáº§n Ä‘Äƒng nháº­p' };
     try {
       const bookings = await this.dataSource.query(
         `SELECT b.id, b.start_time, b.end_time, b.status,
@@ -541,7 +772,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   }
 
   private async getWalletBalance(userId?: string): Promise<any> {
-    if (!userId) return { error: 'Cần đăng nhập' };
+    if (!userId) return { error: 'Cáº§n Ä‘Äƒng nháº­p' };
     const wallet = await this.dataSource.query(
       `SELECT balance FROM wallets WHERE user_id = $1`,
       [userId],
@@ -550,7 +781,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   }
 
   private async getUserVehicles(userId?: string): Promise<any> {
-    if (!userId) return { error: 'Cần đăng nhập' };
+    if (!userId) return { error: 'Cáº§n Ä‘Äƒng nháº­p' };
     const vehicles = await this.dataSource.query(
       `SELECT id, plate_number, type FROM vehicles WHERE user_id = $1`,
       [userId],
@@ -563,11 +794,11 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
     userId?: string,
     context?: any,
   ): Promise<any> {
-    if (!userId) return { error: 'Cần đăng nhập để đặt bãi' };
+    if (!userId) return { error: 'Cáº§n Ä‘Äƒng nháº­p Ä‘á»ƒ Ä‘áº·t bÃ£i' };
 
     let { parkingLotId, startTime, endTime, vehicleId, paymentMethod } = args;
 
-    // Gộp thông tin từ context đang có (nếu có)
+    // Gá»™p thÃ´ng tin tá»« context Ä‘ang cÃ³ (náº¿u cÃ³)
     const pending = context?.pendingBooking || {};
     parkingLotId = parkingLotId || pending.parkingLotId;
     startTime = startTime || pending.startTime;
@@ -576,10 +807,10 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
     paymentMethod = paymentMethod || pending.paymentMethod;
 
     const missing: string[] = [];
-    if (!parkingLotId) missing.push('bãi đỗ');
-    if (!startTime || !endTime) missing.push('thời gian');
+    if (!parkingLotId) missing.push('bÃ£i Ä‘á»—');
+    if (!startTime || !endTime) missing.push('thá»i gian');
     if (!vehicleId) missing.push('xe');
-    if (!paymentMethod) missing.push('phương thức thanh toán');
+    if (!paymentMethod) missing.push('phÆ°Æ¡ng thá»©c thanh toÃ¡n');
 
     if (missing.length) {
       return {
@@ -592,21 +823,21 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
           vehicleId,
           paymentMethod,
         },
-        message: `Thiếu: ${missing.join(', ')}`,
+        message: `Thiáº¿u: ${missing.join(', ')}`,
       };
     }
 
     const start = new Date(startTime);
     const end = new Date(endTime);
     if (isNaN(start.getTime()) || isNaN(end.getTime()))
-      return { error: 'Thời gian không hợp lệ' };
+      return { error: 'Thá»i gian khÃ´ng há»£p lá»‡' };
     if (start >= end)
-      return { error: 'Thời gian kết thúc phải sau thời gian bắt đầu' };
+      return { error: 'Thá»i gian káº¿t thÃºc pháº£i sau thá»i gian báº¯t Ä‘áº§u' };
 
     const lot = await this.dataSource
       .getRepository(ParkingLot)
       .findOne({ where: { id: parseInt(parkingLotId, 10) } });
-    if (!lot) return { error: 'Không tìm thấy bãi đỗ' };
+    if (!lot) return { error: 'KhÃ´ng tÃ¬m tháº¥y bÃ£i Ä‘á»—' };
 
     const params = new URLSearchParams({
       start: startTime,
@@ -620,7 +851,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
       success: true,
       action: 'redirect',
       redirectUrl,
-      message: `✅ Đã ghi nhận thông tin. Vui lòng xác nhận trên trang đặt chỗ.`,
+      message: `âœ… ÄÃ£ ghi nháº­n thÃ´ng tin. Vui lÃ²ng xÃ¡c nháº­n trÃªn trang Ä‘áº·t chá»—.`,
     };
   }
 
@@ -628,20 +859,20 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
     bookingId: string,
     userId?: string,
   ): Promise<any> {
-    if (!userId) return { error: 'Cần đăng nhập' };
+    if (!userId) return { error: 'Cáº§n Ä‘Äƒng nháº­p' };
     const booking = await this.dataSource.query(
       `SELECT id, status FROM bookings WHERE id = $1 AND user_id = $2`,
       [bookingId, userId],
     );
-    if (!booking.length) return { error: 'Không tìm thấy booking' };
+    if (!booking.length) return { error: 'KhÃ´ng tÃ¬m tháº¥y booking' };
     if (booking[0].status !== 'PENDING' && booking[0].status !== 'CONFIRMED') {
-      return { error: `Chỉ hủy được booking ở trạng thái PENDING/CONFIRMED` };
+      return { error: `Chá»‰ há»§y Ä‘Æ°á»£c booking á»Ÿ tráº¡ng thÃ¡i PENDING/CONFIRMED` };
     }
     await this.dataSource.query(
       `UPDATE bookings SET status = 'COMPLETED' WHERE id = $1`,
       [bookingId],
     );
-    return { success: true, message: `Đã hủy booking #${bookingId}` };
+    return { success: true, message: `ÄÃ£ há»§y booking #${bookingId}` };
   }
 
   private async getParkingLotsRaw(): Promise<
@@ -680,15 +911,15 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   }
 
   async createBookingFromForm(bookingData: any, userId: string): Promise<any> {
-    // Giữ nguyên như cũ
+    // Giá»¯ nguyÃªn nhÆ° cÅ©
     const { parkingLotId, startTime, endTime, vehicleId, paymentMethod } =
       bookingData;
     const start = new Date(startTime);
     const end = new Date(endTime);
     if (isNaN(start.getTime()) || isNaN(end.getTime()))
-      throw new Error('Ngày giờ không hợp lệ');
+      throw new Error('NgÃ y giá» khÃ´ng há»£p lá»‡');
     if (start >= end)
-      throw new Error('Thời gian kết thúc phải sau thời gian bắt đầu');
+      throw new Error('Thá»i gian káº¿t thÃºc pháº£i sau thá»i gian báº¯t Ä‘áº§u');
 
     const lot = await this.dataSource.getRepository(ParkingLot).findOne({
       where: { id: parseInt(parkingLotId, 10) },
@@ -724,7 +955,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
    ) AND status = 'AVAILABLE' LIMIT 1`,
         [parkingLotId],
       );
-      if (!availableSlots.length) throw new Error('Hết chỗ trống');
+      if (!availableSlots.length) throw new Error('Háº¿t chá»— trá»‘ng');
       const booking = await manager.query(
         `INSERT INTO bookings (user_id, slot_id, vehicle_id, start_time, end_time, total_amount, payment_method, status, created_at)
    VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', NOW()) RETURNING id`,
@@ -759,17 +990,17 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   ): Promise<any> {
     const lastMsg =
       messages.filter((m) => m.role === 'user').pop()?.content || '';
-    if (lastMsg.includes('tìm bãi') || lastMsg.includes('bãi đỗ')) {
+    if (lastMsg.includes('tÃ¬m bÃ£i') || lastMsg.includes('bÃ£i Ä‘á»—')) {
       const lots = await this.getParkingLotsRaw();
       const top = lots.slice(0, 3);
-      let text = '🔍 Kết quả tìm bãi (chế độ dự phòng):\n';
+      let text = 'ðŸ” Káº¿t quáº£ tÃ¬m bÃ£i (cháº¿ Ä‘á»™ dá»± phÃ²ng):\n';
       top.forEach((l, i) => {
-        text += `${i + 1}. ${l.name} - ${l.hourly_rate}đ/h (⭐${l.avgRating.toFixed(1)})\n`;
+        text += `${i + 1}. ${l.name} - ${l.hourly_rate}Ä‘/h (â­${l.avgRating.toFixed(1)})\n`;
       });
       return { text, data: { lots: top, action: 'list_parking' } };
     }
     return {
-      text: 'Xin chào! Tôi là trợ lý GoPark. Bạn cần tìm bãi đỗ, đặt chỗ hay xem lịch sử?',
+      text: 'Xin chÃ o! TÃ´i lÃ  trá»£ lÃ½ GoPark. Báº¡n cáº§n tÃ¬m bÃ£i Ä‘á»—, Ä‘áº·t chá»— hay xem lá»‹ch sá»­?',
     };
   }
 
@@ -777,7 +1008,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
     return { groq: { ok: this.groq !== null } };
   }
 
-  // ─── SESSION MANAGEMENT ───────────────────────────────────────────────────
+  // â”€â”€â”€ SESSION MANAGEMENT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async getUserSessions(userId: string): Promise<any> {
     const sessions = await this.sessionRepo.find({
@@ -791,7 +1022,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
   async createSession(userId: string, title?: string): Promise<any> {
     const session = this.sessionRepo.create({
       userId,
-      title: title || `Cuộc trò chuyện ${new Date().toLocaleDateString('vi-VN')}`,
+      title: title || `Cuá»™c trÃ² chuyá»‡n ${new Date().toLocaleDateString('vi-VN')}`,
       messages: [],
       isActive: true,
     });
@@ -820,19 +1051,19 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
     sessionId: string,
     context?: any,
   ): Promise<any> {
-    // Lấy session từ DB để có full context
+    // Láº¥y session tá»« DB Ä‘á»ƒ cÃ³ full context
     const session = await this.sessionRepo.findOne({ where: { id: sessionId, userId } });
-    if (!session) return { text: '❌ Không tìm thấy session.' };
+    if (!session) return { text: 'âŒ KhÃ´ng tÃ¬m tháº¥y session.' };
 
-    // Merge lịch sử session với messages mới
+    // Merge lá»‹ch sá»­ session vá»›i messages má»›i
     const fullHistory = [
       ...session.messages.map(m => ({ role: m.role, content: m.content })),
       ...messages,
-    ].slice(-20); // Giữ 20 tin nhắn gần nhất để tránh token overflow
+    ].slice(-20); // Giá»¯ 20 tin nháº¯n gáº§n nháº¥t Ä‘á»ƒ trÃ¡nh token overflow
 
     const result = await this.processMessage(fullHistory, userId, context);
 
-    // Lưu messages mới vào session
+    // LÆ°u messages má»›i vÃ o session
     const lastUser = messages.filter(m => m.role === 'user').pop();
     const newMessages = [...session.messages];
     if (lastUser) {
@@ -846,7 +1077,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
       timestamp: Date.now(),
     });
 
-    // Auto-generate title từ tin nhắn đầu tiên
+    // Auto-generate title tá»« tin nháº¯n Ä‘áº§u tiÃªn
     let title = session.title;
     if (session.messages.length === 0 && lastUser) {
       title = lastUser.content.substring(0, 50) + (lastUser.content.length > 50 ? '...' : '');
@@ -854,7 +1085,7 @@ GoPark hoạt động 24/7. Hotline: 1800-GOPARK. Website: gopark.vn`;
 
     await this.sessionRepo.update(
       { id: sessionId, userId },
-      { messages: newMessages.slice(-50), title }, // Giữ tối đa 50 tin nhắn
+      { messages: newMessages.slice(-50), title }, // Giá»¯ tá»‘i Ä‘a 50 tin nháº¯n
     );
 
     return result;

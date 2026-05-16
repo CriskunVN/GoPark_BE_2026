@@ -221,8 +221,8 @@ export class UsersService {
     // Nếu chưa có thì mới thêm vào (giữ nguyên các quyền cũ như USER)
     if (!existingOwnerRole) {
       const newRole = this.userRoleRepository.create({
-        user: { id: userId } as any,
-        role: { id: ownerRole.id } as any,
+        user: { id: userId },
+        role: { id: ownerRole.id },
       });
       await this.userRoleRepository.save(newRole);
     }
@@ -236,6 +236,11 @@ export class UsersService {
     Object.assign(user, updateUserDto);
     return this.usersRepository.save(user);
   }
+
+  async updateRefreshToken(id: string, refreshToken: string | null) {
+    await this.usersRepository.update(id, { refreshToken });
+  }
+
   // Xóa người dùng theo ID, đảm bảo rằng người dùng tồn tại trước khi xóa
   async remove(id: string): Promise<void> {
     const user = await this.findOne(id);
@@ -478,7 +483,10 @@ export class UsersService {
   // Sử dụng Email Convention: staff.[parkingLotId].[unique_name]@gopark.com
   async createStaff(dto: CreateStaffDto) {
     // Trích xuất phần tên từ email cũ hoặc dùng trực tiếp fullName không dấu
-    const emailPrefix = dto.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const emailPrefix = dto.email
+      .split('@')[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
     const formattedEmail = `staff.${dto.parkingLotId}.${emailPrefix}@gopark.com`;
 
     const existingUser = await this.findByEmail(formattedEmail);
@@ -531,7 +539,8 @@ export class UsersService {
     const isStaff = staff.userRoles.some(
       (ur) => ur.role.name === UserRoleEnum.STAFF,
     );
-    if (!isStaff) throw new BadRequestException('Đây không phải tài khoản nhân viên');
+    if (!isStaff)
+      throw new BadRequestException('Đây không phải tài khoản nhân viên');
 
     // Trích xuất lotId từ email: staff.10.name@gopark.com
     const emailParts = staff.email.split('.');
@@ -547,9 +556,12 @@ export class UsersService {
       relations: ['ownedParkingLots'],
     });
 
-    if (!owner) throw new UnauthorizedException('Không tìm thấy tài khoản Owner');
+    if (!owner)
+      throw new UnauthorizedException('Không tìm thấy tài khoản Owner');
 
-    const isOwnerOfLot = owner.ownedParkingLots?.some((lot) => lot.id === lotId);
+    const isOwnerOfLot = owner.ownedParkingLots?.some(
+      (lot) => lot.id === lotId,
+    );
     if (!isOwnerOfLot) {
       throw new BadRequestException(
         'Bạn không có quyền xóa nhân viên của bãi xe này',
