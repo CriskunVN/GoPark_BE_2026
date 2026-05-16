@@ -9,8 +9,10 @@
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { UpdateBalanceDto, PaymentDto } from './dto/wallet.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('wallets')
+@UseGuards(JwtAuthGuard)
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
 
@@ -25,7 +27,7 @@ export class WalletController {
     @Body() dto: UpdateBalanceDto & { userId?: string },
   ) {
     const userId =
-      dto.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
+      dto.userId || req.user?.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
     return await this.walletService.deposit(userId, dto.amount, dto.refId);
   }
 
@@ -35,7 +37,7 @@ export class WalletController {
     @Body() dto: UpdateBalanceDto & { userId?: string },
   ) {
     const userId =
-      dto.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
+      dto.userId || req.user?.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
     return await this.walletService.withdraw(userId, dto.amount, dto.refId);
   }
 
@@ -45,7 +47,7 @@ export class WalletController {
     @Body() dto: PaymentDto & { customerId?: string },
   ) {
     const customerId =
-      dto.customerId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
+      dto.customerId || req.user?.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
     await this.walletService.processPayment(
       customerId,
       dto.ownerId,
@@ -59,6 +61,7 @@ export class WalletController {
   async getMyTransactions(@Req() req: any) {
     const userId =
       req.query.userId ||
+      req.user?.userId ||
       req.user?.id ||
       '123e4567-e89b-12d3-a456-426614174000';
     return await this.walletService.getTransactions(userId);
@@ -68,6 +71,7 @@ export class WalletController {
   async getMyWallet(@Req() req: any) {
     const userId =
       req.query.userId ||
+      req.user?.userId ||
       req.user?.id ||
       '123e4567-e89b-12d3-a456-426614174000';
     return await this.walletService.getWalletByUserId(userId);
@@ -101,7 +105,7 @@ export class WalletController {
     @Body() body: { userId?: string; message?: string },
   ) {
     const userId =
-      body.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
+      body.userId || req.user?.userId || req.user?.id || '123e4567-e89b-12d3-a456-426614174000';
     return await this.walletService.complainWithdrawRequest(
       req.params.id,
       userId,

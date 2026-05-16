@@ -13,6 +13,8 @@ Doc nay dung de tiep tuc cong viec neu mat phien chat.
 - admin chatbot data search
 - chatbot layer4 jest spec
 - markdown table data answer
+- chatbot knowledge retrieval local vector
+- hybrid router tool data knowledge
 - booking conflict resolved main merge
 
 ## Files quan trong
@@ -22,6 +24,7 @@ Doc nay dung de tiep tuc cong viec neu mat phien chat.
 - `src/modules/chatbot/admin-chatbot.service.ts`
 - `src/modules/chatbot/admin-chatbot.controller.ts`
 - `src/modules/chatbot/chatbot-guide.service.ts`
+- `src/modules/chatbot/chatbot-knowledge.service.ts`
 - `src/modules/chatbot/chatbot-layer4.spec.ts`
 - `src/modules/chatbot/knowledgebase/booking-flow.md`
 - `src/modules/chatbot/knowledgebase/response-style.md`
@@ -35,7 +38,7 @@ Doc nay dung de tiep tuc cong viec neu mat phien chat.
 
 - Da merge code moi tu `origin/main` vao BE va FE.
 - BE conflict trong `booking.service.ts` da resolve theo flow payment hien tai va giu grace period 15 phut.
-- BE `npm test -- --runInBand` pass: 2 suites, 7 tests.
+- BE `npm test -- --runInBand` pass: 2 suites, 9 tests.
 - BE `npm run build` pass.
 - FE `npm run build` pass truoc do, can chay lai neu tiep tuc sua UI.
 
@@ -53,6 +56,13 @@ Doc nay dung de tiep tuc cong viec neu mat phien chat.
 - Owner co the hoi `xem thong tin bai`, chatbot liet ke `Bai 1`, `Bai 2`; owner tra loi `bai 1` de xem dung bai.
 - Owner co the hoi doanh thu, so sanh, top bai, bai hoat dong kem, goi y tang doanh thu.
 - Admin chatbot co endpoint `/api/v1/chatbot/admin`, role ADMIN, dung de tra tong quan, tim user, tim bai, doanh thu, request cho duyet va hoa don chua thanh toan.
+
+## Knowledge retrieval
+
+- `ChatbotKnowledgeService` tao vector noi bo tu README + `knowledgebase/*.md`, chunk theo heading Markdown va tim do lien quan bang cosine similarity.
+- Day la lop retrieval local, khong can API embedding. Sau nay co the thay `toVector/search` bang embedding provider that ma van giu flow hien tai.
+- `ChatbotService` dung retrieval cho FREE_FORM/huong dan khi khong co Groq key, va dua context lien quan vao system prompt khi co Groq.
+- Tool/data/booking van uu tien rule + DB de tranh AI bia so lieu hoac thao tac sai.
 
 ## Voice va UI
 
