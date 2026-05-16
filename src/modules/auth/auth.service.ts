@@ -55,7 +55,7 @@ export class AuthService {
   // Hàm để lưu hash của refresh token vào database, hash này sẽ được so sánh khi client gửi refresh token mới để cấp lại access token
   async updateRefreshTokenHash(userId: string, rt: string) {
     const hash = await bcrypt.hash(rt, 10);
-    await this.usersService.update(userId, { refreshToken: hash }); // Cập nhật hash của refresh token vào database
+    await this.usersService.updateRefreshToken(userId, hash);
   }
 
   // Register
@@ -128,7 +128,7 @@ export class AuthService {
 
   // Logout
   async logout(userId: string) {
-    await this.usersService.update(userId, { refreshToken: null } as any); // Xóa hash của refresh token trong database để vô hiệu hóa refresh token hiện tại
+    await this.usersService.updateRefreshToken(userId, null);
   }
 
   // Refresh Token
@@ -161,7 +161,7 @@ export class AuthService {
     await this.usersService.update(user.id, {
       status: 'ACTIVE',
       verifyToken: null,
-    } as any);
+    });
 
     return { message: 'Xác minh email thành công' };
   }
@@ -192,7 +192,7 @@ export class AuthService {
           // Hết hạn token sau 15p và xóa hash của reset token khỏi database
           await this.usersService.update(user.id, {
             resetPasswordToken: null,
-          } as any);
+          });
         },
         15 * 60 * 1000,
       ); // 15 phút
@@ -241,7 +241,7 @@ export class AuthService {
     await this.usersService.update(user.id, {
       password: hashedPassword,
       resetPasswordToken: null,
-    } as any);
+    });
 
     return { message: 'Đặt lại mật khẩu thành công' };
   }

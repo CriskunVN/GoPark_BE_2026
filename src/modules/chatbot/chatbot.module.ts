@@ -7,11 +7,14 @@ import { ChatbotService } from './chatbot.service';
 import { ChatbotController } from './chatbot.controller';
 import { OwnerChatbotController } from './owner-chatbot.controller';
 import { OwnerChatbotService } from './owner-chatbot.service';
+import { AdminChatbotController } from './admin-chatbot.controller';
+import { AdminChatbotService } from './admin-chatbot.service';
 import { AuthGuard } from './guards/auth.guard';
 import { OptionalAuthGuard } from './guards/optional-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { ChatbotStateService } from './chatbot-state.service';
 import { ChatbotSession } from './entities/chatbot-session.entity';
+import { ChatbotGuideService } from './chatbot-guide.service';
 
 @Module({
   imports: [
@@ -30,10 +33,10 @@ import { ChatbotSession } from './entities/chatbot-session.entity';
     }),
   ],
   providers: [
-    ChatbotService, OwnerChatbotService,
+    ChatbotService, OwnerChatbotService, AdminChatbotService, ChatbotGuideService,
     AuthGuard, OptionalAuthGuard, RolesGuard, Reflector, ChatbotStateService,
   ],
-  controllers: [ChatbotController, OwnerChatbotController],
-  exports: [ChatbotService, OwnerChatbotService],
+  controllers: [ChatbotController, OwnerChatbotController, AdminChatbotController],
+  exports: [ChatbotService, OwnerChatbotService, AdminChatbotService],
 })
 export class ChatbotModule {}

@@ -56,8 +56,14 @@ export class TransformInterceptor<T> implements NestInterceptor<
           return rawData;
         }
 
+        const isChatbotResponse =
+          rawData && typeof rawData === 'object' && 'text' in rawData;
+
         const isWrappedResponse =
-          rawData && typeof rawData === 'object' && 'data' in rawData;
+          rawData &&
+          typeof rawData === 'object' &&
+          'data' in rawData &&
+          !isChatbotResponse;
 
         // Nếu Controller trả về object có thuộc tính data thì lấy nó, không thì lấy toàn bộ
         const payload = isWrappedResponse ? rawData.data : rawData;
