@@ -27,7 +27,6 @@ import { Transaction } from '../payment/entities/transaction.entity';
 import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
 import { TransactionType } from '../wallet/enums/transaction-type.enum';
 import { TransactionStatus as WalletTransactionStatus } from '../wallet/enums/transaction-status.enum';
-import { convertLocalToUTCForRes } from '../../utils/time';
 
 @Injectable()
 export class AdminService {
@@ -545,9 +544,8 @@ export class AdminService {
       // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
       const formatTime = (date?: Date) => {
         if (!date) return '00:00';
-        const utcDate = convertLocalToUTCForRes(date);
-        if (!utcDate) return '00:00';
-        return `${String(utcDate.getUTCHours()).padStart(2, '0')}:${String(utcDate.getUTCMinutes()).padStart(2, '0')}`;
+        const d = new Date(date);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       };
 
       return {

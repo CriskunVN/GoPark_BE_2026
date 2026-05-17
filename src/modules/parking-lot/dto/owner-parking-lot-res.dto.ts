@@ -1,4 +1,3 @@
-import { convertLocalToUTCForRes } from '../../../utils/time';
 import { ParkingLot } from '../entities/parking-lot.entity';
 
 export class OwnerParkingLotResDto {
@@ -27,8 +26,8 @@ export class OwnerParkingLotResDto {
       availableSlots: lot.available_slots,
       status: lot.status,
       description: lot.description,
-      open_time: convertLocalToUTCForRes(lot.open_time),
-      close_time: convertLocalToUTCForRes(lot.close_time),
+      open_time: lot.open_time,
+      close_time: lot.close_time,
       operating_days: lot.operating_days,
       image: lot.image,
     };

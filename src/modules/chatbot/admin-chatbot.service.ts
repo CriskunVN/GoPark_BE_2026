@@ -182,7 +182,7 @@ export class AdminChatbotService {
       this.dataSource.query(
         `SELECT COALESCE(SUM(total), 0) as total
          FROM invoices
-         WHERE status = 'PAID' AND "createdAt" >= CURRENT_DATE`,
+         WHERE status = 'PAID' AND created_at >= CURRENT_DATE`,
       ),
     ]);
 
@@ -256,8 +256,8 @@ export class AdminChatbotService {
   private async getRevenue(period: 'today' | 'month'): Promise<AdminChatResult> {
     const dateFilter =
       period === 'today'
-        ? `i."createdAt" >= CURRENT_DATE`
-        : `i."createdAt" >= date_trunc('month', CURRENT_DATE)`;
+        ? `i.created_at >= CURRENT_DATE`
+        : `i.created_at >= date_trunc('month', CURRENT_DATE)`;
     const rows = await this.dataSource.query(
       `SELECT pl.name,
               COUNT(DISTINCT b.id)::int as bookings,
@@ -289,11 +289,11 @@ export class AdminChatbotService {
 
   private async getPendingRequests(): Promise<AdminChatResult> {
     const rows = await this.dataSource.query(
-      `SELECT r.id, r.type, r.status, u.email, r."createdAt"
-       FROM system_requests r
-       LEFT JOIN users u ON u.id = r."requesterId"
+      `SELECT r.id, r.type, r.status, u.email, r.created_at
+       FROM requests r
+       LEFT JOIN users u ON u.id = r.requester_id
        WHERE r.status IN ('PENDING', 'pending')
-       ORDER BY r."createdAt" DESC
+       ORDER BY r.created_at DESC
        LIMIT 10`,
     );
 
@@ -304,7 +304,7 @@ export class AdminChatbotService {
           row.id,
           row.type || '-',
           row.email || '-',
-          row.createdAt ? new Date(row.createdAt).toLocaleString('vi-VN') : '-',
+          row.created_at ? new Date(row.created_at).toLocaleString('vi-VN') : '-',
         ]),
       )}`,
     };
@@ -317,7 +317,7 @@ export class AdminChatbotService {
        LEFT JOIN bookings b ON b.id = i.booking_id
        LEFT JOIN users u ON u.id = b.user_id
        WHERE i.status <> 'PAID'
-       ORDER BY i."createdAt" DESC
+       ORDER BY i.created_at DESC
        LIMIT 10`,
     );
 
