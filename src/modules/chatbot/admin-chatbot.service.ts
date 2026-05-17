@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { DataSource, Like, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ChatbotSession } from './entities/chatbot-session.entity';
@@ -124,13 +124,13 @@ export class AdminChatbotService {
     if (!text) return false;
     const domainWords = /\b(gopark|admin|user|khach hang|owner|chu bai|bai|parking|booking|doanh thu|revenue|hoa don|invoice|thanh toan|payment|request|yeu cau|duyet|he thong|bao cao)\b/;
     if (domainWords.test(text)) return false;
-    return /\b(nau an|cong thuc|bong da|thoi tiet|xem phim|am nhac|game|giai bai tap|lap trinh|tinh yeu|tu vi|boi bai)\b/.test(text);
+    return /\b(code|coding|lap trinh|html|css|javascript|typescript|python|hello world|viet code|source code|script|react|component|nau an|cong thuc|bong da|thoi tiet|xem phim|am nhac|game|giai bai tap|tinh yeu|tu vi|boi bai)\b/.test(text);
   }
 
   private getOffTopicResponse(): string {
     return [
-      'Xin lỗi, câu hỏi này nằm ngoài phạm vi quản trị GoPark nên tôi không trả lời lan man.',
-      'Tôi có thể hỗ trợ admin tra cứu dữ liệu hệ thống, user, bãi đỗ, doanh thu, thanh toán và yêu cầu chờ duyệt.',
+      'Xin lỗi, tôi chỉ hỗ trợ các câu hỏi liên quan đến quản trị GoPark và bãi đỗ xe.',
+      'Tôi không thể viết code/HTML hoặc trả lời các chủ đề ngoài phạm vi hệ thống bãi đỗ.',
       'Bạn có thể hỏi: `tổng quan hệ thống`, `cảnh báo hệ thống`, `yêu cầu chờ duyệt`, hoặc `tìm user email@example.com`.',
     ].join('\n');
   }

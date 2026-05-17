@@ -9,6 +9,8 @@ import { ChatbotGuideService } from './chatbot-guide.service';
 export class OwnerChatbotService {
   private readonly logger = new Logger(OwnerChatbotService.name);
   private groq: Groq | null = null;
+  private readonly groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  private readonly geminiModel = (process.env.GOOGLE_GEMINI_MODEL || 'gemini-2.0-flash').replace(/^models\//, '');
   private readonly maxSessionsPerOwner = 20;
   private readonly pendingParkingConfirm = new Map<string, number>();
   private readonly pendingParkingOptions = new Map<string, number[]>();
@@ -122,11 +124,11 @@ export class OwnerChatbotService {
   }
 
   private normalizeText(value: string): string {
-    return value
+    return (value || '')
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
-      .replace(/đ/g, 'd')
+      .replace(/\u0111/g, 'd')
       .replace(/[^a-z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
@@ -151,13 +153,13 @@ export class OwnerChatbotService {
     if (!text) return false;
     const domainWords = /\b(gopark|bai|parking|do xe|slot|booking|khach|doanh thu|revenue|bao cao|owner|chu bai|gia|vi|thanh toan|yeu cau|van hanh)\b/;
     if (domainWords.test(text)) return false;
-    return /\b(nau an|cong thuc|bong da|thoi tiet|xem phim|am nhac|game|giai bai tap|lap trinh|tinh yeu|tu vi|boi bai)\b/.test(text);
+    return /\b(code|coding|lap trinh|html|css|javascript|typescript|python|hello world|viet code|source code|script|react|component|nau an|cong thuc|bong da|thoi tiet|xem phim|am nhac|game|giai bai tap|tinh yeu|tu vi|boi bai)\b/.test(text);
   }
 
   private getOffTopicResponse(): string {
     return [
-      'Xin lỗi, câu này nằm ngoài phạm vi vận hành bãi đỗ GoPark nên tôi không trả lời lan man.',
-      'Tôi có thể hỗ trợ chủ bãi bằng dữ liệu doanh thu, booking, hiệu suất bãi và gợi ý cải thiện.',
+      'Xin lỗi, tôi chỉ hỗ trợ các câu hỏi liên quan đến vận hành bãi đỗ GoPark.',
+      'Tôi không thể viết code/HTML hoặc trả lời các chủ đề ngoài phạm vi bãi đỗ.',
       'Bạn có thể hỏi: `dashboard hôm nay`, `doanh thu tháng này`, `phân tích chi tiết doanh thu`, hoặc `gợi ý tăng doanh thu`.',
     ].join('\n');
   }
@@ -901,11 +903,8 @@ export class OwnerChatbotService {
   }
 
   private async fallbackOwnerResponse(messages: any[], userId?: string): Promise<any> {
-    if (!this.groq) {
-      return { text: 'Xin chào! Tôi là trợ lý phân tích GoPark. Bạn có thể hỏi về doanh thu, so sánh, hoặc gợi ý cải thiện.' };
-    }
-
     const systemPrompt = `Bạn là trợ lý phân tích doanh thu cho chủ bãi đỗ xe GoPark.
+PHAM VI BAT BUOC: chi tra loi cau hoi lien quan den GoPark, bai do, booking, doanh thu, thanh toan va van hanh owner. Neu user yeu cau viet code/HTML hoac hoi chu de ngoai bai do, hay xin loi va tu choi ngan gon.
 QUAN TRỌNG: KHÔNG được tự bịa số liệu doanh thu, booking, hay bất kỳ con số cụ thể nào.
 Nếu được hỏi về số liệu cụ thể (doanh thu, booking...), hãy trả lời rằng bạn cần truy vấn dữ liệu và hướng dẫn user dùng các câu hỏi như "doanh thu tuần này", "so sánh tháng này".
 Chỉ trả lời các câu hỏi chung về chiến lược, gợi ý cải thiện mà không cần số liệu thực.
@@ -913,12 +912,91 @@ Chỉ trả lời các câu hỏi chung về chiến lược, gợi ý cải thi
 TÀI LIỆU HƯỚNG DẪN TỪ FILE MARKDOWN:
 ${this.guideService.getGuide()}`;
 
-    const response = await this.groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: systemPrompt }, ...messages.slice(-4)] as any,
-      temperature: 0.5,
-    });
+    const text = await this.completeTextWithGroqThenGemini(
+      [{ role: 'system', content: systemPrompt }, ...messages.slice(-4)],
+      0.5,
+    );
 
-    return { text: response.choices[0].message.content || 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn.' };
+    return { text: text || 'Xin chào! Tôi là trợ lý phân tích GoPark. Bạn có thể hỏi về doanh thu, so sánh, hoặc gợi ý cải thiện.' };
+  }
+
+  private isGroqRateLimitError(error: any): boolean {
+    const status = error?.status || error?.response?.status;
+    const code = error?.error?.error?.code || error?.error?.code || error?.code;
+    const message = String(error?.error?.error?.message || error?.message || '');
+    return status === 429 || code === 'rate_limit_exceeded' || message.toLowerCase().includes('rate limit');
+  }
+
+  private async completeTextWithGroqThenGemini(
+    messages: Array<{ role: string; content: string }>,
+    temperature = 0.5,
+  ): Promise<string | null> {
+    if (this.groq) {
+      try {
+        const response = await this.groq.chat.completions.create({
+          model: this.groqModel,
+          messages: messages as any,
+          temperature,
+        });
+        return response.choices[0]?.message?.content || null;
+      } catch (error) {
+        if (!this.isGroqRateLimitError(error)) throw error;
+        this.logger.warn('Groq rate limit reached, falling back to Gemini for owner chatbot');
+      }
+    }
+
+    return this.completeWithGemini(messages, temperature);
+  }
+
+  private async completeWithGemini(
+    messages: Array<{ role: string; content?: string }>,
+    temperature = 0.5,
+  ): Promise<string | null> {
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
+
+    const systemParts: string[] = [];
+    const contents = messages
+      .map((message) => {
+        const content = message.content || '';
+        if (!content.trim()) return null;
+        if (message.role === 'system') {
+          systemParts.push(content);
+          return null;
+        }
+        return {
+          role: message.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: content }],
+        };
+      })
+      .filter(Boolean);
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.geminiModel}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: systemParts.length
+            ? { parts: [{ text: systemParts.join('\n\n') }] }
+            : undefined,
+          contents,
+          generationConfig: { temperature, maxOutputTokens: 700 },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      this.logger.warn(`Gemini owner fallback failed: ${response.status} ${errorText.slice(0, 180)}`);
+      return null;
+    }
+
+    const data = await response.json();
+    return data?.candidates?.[0]?.content?.parts
+      ?.map((part: any) => part.text || '')
+      .join('')
+      .trim() || null;
   }
 }
+
