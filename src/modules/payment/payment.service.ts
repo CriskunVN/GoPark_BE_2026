@@ -178,7 +178,7 @@ export class PaymentService {
 
       if (booking?.slot) {
         await queryRunner.manager.update(ParkingSlot, booking.slot.id, {
-          status: SlotStatus.OCCUPIED,
+          status: SlotStatus.RESERVED,
         });
       }
 

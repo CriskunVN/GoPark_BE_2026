@@ -141,6 +141,25 @@ export class ParkingLotService {
 
     const savedParkingLot = await this.parkingLotRepository.save(parkingLot);
 
+    // Tự động tạo 2 cổng mặc định: Cổng vào và Cổng ra
+    const gateIn = this.gateRepository.create({
+      name: 'Cổng vào',
+      type: 'IN',
+      status: 'ACTIVE',
+      description: 'Cổng vào tự động',
+      parkingLot: savedParkingLot,
+    });
+
+    const gateOut = this.gateRepository.create({
+      name: 'Cổng ra',
+      type: 'OUT',
+      status: 'ACTIVE',
+      description: 'Cổng ra tự động',
+      parkingLot: savedParkingLot,
+    });
+
+    await this.gateRepository.save([gateIn, gateOut]);
+
     // Tạo request để admin duyệt sau khi tạo bãi đỗ xe mới
     await this.requestService.create({
       type: RequestType.NEW_PARKING_LOT,
@@ -520,6 +539,25 @@ export class ParkingLotService {
     savedParking.total_slots = totalSlots;
     savedParking.available_slots = totalSlots;
     await this.parkingLotRepository.save(savedParking);
+
+    // Tự động tạo 2 cổng mặc định: Cổng vào và Cổng ra
+    const gateIn = this.gateRepository.create({
+      name: 'Cổng vào',
+      type: 'IN',
+      status: 'ACTIVE',
+      description: 'Cổng vào tự động',
+      parkingLot: savedParking,
+    });
+
+    const gateOut = this.gateRepository.create({
+      name: 'Cổng ra',
+      type: 'OUT',
+      status: 'ACTIVE',
+      description: 'Cổng ra tự động',
+      parkingLot: savedParking,
+    });
+
+    await this.gateRepository.save([gateIn, gateOut]);
 
     const businessLicenseFile = files?.find(
       (f) => f.fieldname === 'businessLicense',
