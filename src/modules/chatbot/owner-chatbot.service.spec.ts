@@ -1,4 +1,4 @@
-import { OwnerChatbotService } from './owner-chatbot.service';
+﻿import { OwnerChatbotService } from './owner-chatbot.service';
 
 function createSessionRepoMock() {
   return {
@@ -138,7 +138,21 @@ describe('OwnerChatbotService analysis answers', () => {
       ownerId,
     );
 
-    expect(response.text).toContain('ngoài phạm vi vận hành bãi đỗ GoPark');
+    expect(response.text).toContain('chỉ hỗ trợ');
     expect(response.text).toContain('dashboard hôm nay');
   });
+
+  it('refuses code and HTML generation requests for owner chatbot', async () => {
+    const { service } = createService();
+
+    const response = await service.processOwnerMessage(
+      [{ role: 'user', content: 'viet code html hello world cho toi' }],
+      ownerId,
+    );
+
+    expect(response.text).toContain('chỉ hỗ trợ');
+    expect(response.text).toContain('viết code/HTML');
+    expect(response.text).toContain('doanh thu tháng này');
+  });
 });
+
