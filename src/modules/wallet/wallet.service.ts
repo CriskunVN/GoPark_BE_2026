@@ -157,7 +157,7 @@ export class WalletService {
       });
 
       await queryRunner.manager.update(ParkingSlot, booking?.slot.id, {
-        status: SlotStatus.OCCUPIED,
+        status: SlotStatus.RESERVED,
       });
 
       // Tìm xem đã có invoice nào cho booking này chưa
@@ -428,6 +428,88 @@ export class WalletService {
 
       await queryRunner.commitTransaction();
       return savedTx;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Hoàn tiền booking (Khấu trừ từ ví Chủ bãi và trả về ví Khách hàng)
+   */
+  async refundBooking(
+    customerId: string,
+    ownerId: string,
+    amount: number,
+    bookingId: string,
+  ): Promise<boolean> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Khóa ví Khách hàng
+      const customerWallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId: customerId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!customerWallet) {
+        throw new BadRequestException('Không tìm thấy ví Khách hàng');
+      }
+
+      // 2. Khóa ví Chủ bãi
+      const ownerWallet = await queryRunner.manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.user_id = :userId::uuid', { userId: ownerId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!ownerWallet) {
+        throw new BadRequestException('Không tìm thấy ví Chủ bãi');
+      }
+
+      // 3. Cộng tiền cho Khách hàng
+      const customerBalanceBefore = Number(customerWallet.balance);
+      customerWallet.balance = customerBalanceBefore + amount;
+      await queryRunner.manager.save(customerWallet);
+
+      // Ghi lịch sử giao dịch Khách hàng
+      const customerTx = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: customerWallet.id,
+        amount: amount,
+        balance_before: customerBalanceBefore,
+        balance_after: customerWallet.balance,
+        type: TransactionType.REFUND,
+        status: TransactionStatus.SUCCESS,
+        ref_type: 'BOOKING',
+        ref_id: bookingId,
+      });
+      await queryRunner.manager.save(customerTx);
+
+      // 4. Trừ tiền của Chủ bãi
+      const ownerBalanceBefore = Number(ownerWallet.balance);
+      ownerWallet.balance = ownerBalanceBefore - amount;
+      await queryRunner.manager.save(ownerWallet);
+
+      // Ghi lịch sử giao dịch Chủ bãi
+      const ownerTx = queryRunner.manager.create(WalletTransaction, {
+        wallet_id: ownerWallet.id,
+        amount: -amount,
+        balance_before: ownerBalanceBefore,
+        balance_after: ownerWallet.balance,
+        type: TransactionType.REFUND,
+        status: TransactionStatus.SUCCESS,
+        ref_type: 'BOOKING',
+        ref_id: bookingId,
+      });
+      await queryRunner.manager.save(ownerTx);
+
+      await queryRunner.commitTransaction();
+      return true;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;

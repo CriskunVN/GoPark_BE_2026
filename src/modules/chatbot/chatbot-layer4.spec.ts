@@ -64,8 +64,20 @@ describe('Chatbot layer 4 behavior', () => {
 
   describe('user chatbot booking flow', () => {
     function createUserChatbot() {
+      const query = jest.fn(async (sql: string) => {
+        if (sql.includes('SELECT open_time, close_time FROM parking_lots')) {
+          return [{ open_time: '2026-05-16T06:00:00+07:00', close_time: '2026-05-16T22:00:00+07:00' }];
+        }
+        if (sql.includes('FROM parking_slots ps')) {
+          return [
+            { id: 101, code: 'A1', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1 },
+            { id: 102, code: 'A2', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1 },
+          ];
+        }
+        return [];
+      });
       const service = new ChatbotService(
-        { query: jest.fn() } as any,
+        { query } as any,
         new ChatbotStateService(),
         createGuideMock(),
         createSessionRepoMock(),
@@ -96,7 +108,7 @@ describe('Chatbot layer 4 behavior', () => {
         expect.arrayContaining(['ten bai do', 'thoi gian vao/ra', 'xe hoac bien so']),
       );
       expect(first.data.nextField).toBe('ten bai do');
-      expect(first.text).toContain('| Bai 1 | Bai do #11 | - |');
+      expect(first.text).toContain('| Bai 1 | GoPark My Khe | Vo Nguyen Giap, Da Nang | 18 |');
       expect(first.text).not.toContain('| Xe 1 | 51F-888.38 |');
 
       const chooseLot = await service.processMessage([{ role: 'user', content: 'bai 1' }], userId);
@@ -114,8 +126,14 @@ describe('Chatbot layer 4 behavior', () => {
       expect(chooseTime.action).toBe('collect_booking');
       expect(chooseTime.data.pendingBooking.startTime).toContain('T08:00');
       expect(chooseTime.data.pendingBooking.endTime).toContain('T10:00');
-      expect(chooseTime.data.missing).toEqual(expect.arrayContaining(['xe hoac bien so']));
-      expect(chooseTime.data.nextField).toBe('xe hoac bien so');
+      expect(chooseTime.data.missing).toEqual(expect.arrayContaining(['vi tri do', 'xe hoac bien so']));
+      expect(chooseTime.data.nextField).toBe('vi tri do');
+      expect(chooseTime.text).toContain('| Vi tri 1 | Tang 1 | A | A1 |');
+
+      const chooseSlot = await service.processMessage([{ role: 'user', content: 'vi tri 2' }], userId);
+      expect(chooseSlot.action).toBe('collect_booking');
+      expect(chooseSlot.data.pendingBooking.slotId).toBe('102');
+      expect(chooseSlot.data.nextField).toBe('xe hoac bien so');
 
       const chooseVehicle = await service.processMessage([{ role: 'user', content: 'xe 1' }], userId);
       expect(chooseVehicle.action).toBe('redirect');
@@ -123,6 +141,60 @@ describe('Chatbot layer 4 behavior', () => {
       expect(chooseVehicle.redirectUrl).toContain('vehicle=51F-888.38');
       expect(chooseVehicle.redirectUrl).toContain('start=2026-05-17T08%3A00');
       expect(chooseVehicle.redirectUrl).toContain('end=2026-05-17T10%3A00');
+      expect(chooseVehicle.redirectUrl).toContain('slot=102');
+    });
+
+    it('asks users to reselect time when booking outside parking lot opening hours', async () => {
+      const service = createUserChatbot();
+
+      const response = await service.processMessage(
+        [{ role: 'user', content: 'dat bai 1 ngay mai tu 23h den 23h30 xe 1' }],
+        userId,
+      );
+
+      expect(response.action).toBe('collect_booking');
+      expect(response.data.nextField).toBe('thoi gian vao/ra');
+      expect(response.data.pendingBooking.startTime).toBeUndefined();
+      expect(response.text).toContain('chi hoat dong tu 06:00 den 22:00');
+    });
+
+    it('does not force advice questions into an unfinished booking form', async () => {
+      const service = createUserChatbot();
+
+      await service.processMessage([{ role: 'user', content: 'dat bai' }], userId);
+      const advice = await service.processMessage(
+        [{ role: 'user', content: 'toi dang phan van nen gui xe the nao' }],
+        userId,
+      );
+
+      expect(advice.action).not.toBe('collect_booking');
+    });
+
+    it('answers user account overview from wallet, vehicles, and bookings data', async () => {
+      const service = createUserChatbot();
+
+      const response = await service.processMessage(
+        [{ role: 'user', content: 'tong quan tai khoan cua toi' }],
+        userId,
+      );
+
+      expect(response.text).toContain('Tổng Quan Tài Khoản');
+      expect(response.text).toContain('Số dư ví');
+      expect(response.text).toContain('Xe đã đăng ký');
+      expect(response.data.action).toBe('user_account_overview');
+      expect(response.data.vehicles).toBe(2);
+    });
+
+    it('softly refuses clearly off-topic user questions', async () => {
+      const service = createUserChatbot();
+
+      const response = await service.processMessage(
+        [{ role: 'user', content: 'chi toi cong thuc nau an mon ga' }],
+        userId,
+      );
+
+      expect(response.text).toContain('ngoài phạm vi GoPark');
+      expect(response.text).toContain('đặt bãi');
     });
 
     it('answers user data questions with readable markdown tables', async () => {
@@ -227,7 +299,7 @@ describe('Chatbot layer 4 behavior', () => {
         [{ role: 'user', content: 'doanh thu thang nay' }],
         ownerId,
       );
-      expect(revenue.text).toContain('| Bai do | So booking | Doanh thu |');
+      expect(revenue.text).toContain('| Bãi đỗ | Số booking | Doanh thu |');
       expect(revenue.text).toContain('| GoPark My Khe | 32 | 6.400.000đ |');
       expect(revenue.chartData.action).toBe('revenue_chart');
 

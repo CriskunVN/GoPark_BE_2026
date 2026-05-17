@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { AdminChatbotService } from './admin-chatbot.service';
 import { AuthGuard } from './guards/auth.guard';
@@ -46,12 +55,20 @@ export class AdminChatbotController {
   }
 
   @Post('sessions/:id/chat')
-  async chatWithSession(@Param('id') id: string, @Body() body: any, @Req() req: Request) {
+  async chatWithSession(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: Request,
+  ) {
     const userId = (req as any).user?.sub ?? (req as any).user?.id;
     const messages = Array.isArray(body) ? body : body?.messages;
     if (!Array.isArray(messages) || messages.length === 0) {
       return { text: 'Vui lòng gửi tin nhắn hợp lệ.' };
     }
-    return this.adminChatbotService.processAdminMessageWithSession(messages, userId, id);
+    return this.adminChatbotService.processAdminMessageWithSession(
+      messages,
+      userId,
+      id,
+    );
   }
 }

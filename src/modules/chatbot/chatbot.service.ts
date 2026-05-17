@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { DataSource, Like, Not, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import Groq from 'groq-sdk';
@@ -7,6 +7,7 @@ import { ChatbotStateService } from './chatbot-state.service';
 import { classifyIntent, requiresData, INTENT_DB_CONFIG, extractParkingName, ChatbotIntent } from './Chatbot.intent';
 import { ChatbotSession } from './entities/chatbot-session.entity';
 import { ChatbotGuideService } from './chatbot-guide.service';
+import { ChatbotKnowledgeService } from './chatbot-knowledge.service';
 
 @Injectable()
 export class ChatbotService {
@@ -20,6 +21,8 @@ export class ChatbotService {
     private readonly guideService: ChatbotGuideService,
     @InjectRepository(ChatbotSession)
     private readonly sessionRepo: Repository<ChatbotSession>,
+    @Optional()
+    private readonly knowledgeService?: ChatbotKnowledgeService,
   ) {
     const apiKey = process.env.GROQ_API_KEY || process.env.GORQ_API_KEY;
     if (!apiKey) {
@@ -41,10 +44,14 @@ export class ChatbotService {
     redirectUrl?: string;
   }> {
   try {
+    // Điều phối chính cho USER chatbot: phân intent, query data, đặt bãi hoặc chuyển sang RAG/LLM.
     // Láº¥y cÃ¢u cuá»‘i cá»§a ngÆ°á»i dÃ¹ng
     const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
     const intent = classifyIntent(lastUserMessage);
     this.logger.log(`Intent: ${intent} | Message: ${lastUserMessage}`);
+    if (this.isClearlyOffTopic(lastUserMessage)) {
+      return { text: this.getOffTopicResponse('user') };
+    }
     const session = userId ? this.stateService.getSession(userId) : undefined;
     const sessionContext = session?.context ?? {};
     const sessionPendingBooking = sessionContext.pendingBooking ?? {};
@@ -57,6 +64,11 @@ export class ChatbotService {
       this.isBookingContinuationMessage(lastUserMessage, sessionPendingBooking);
     const dataAnswer = await this.answerPublicParkingDataQuestion(lastUserMessage);
     if (dataAnswer) return dataAnswer;
+
+    if (this.isUserAccountOverviewQuestion(lastUserMessage)) {
+      if (!userId) return { text: 'Vui lòng đăng nhập để mình xem tổng quan tài khoản GoPark của bạn.' };
+      return this.getUserAccountOverview(userId);
+    }
 
     // ----- Xá»¬ LÃ CÃC INTENT Cáº¦N DATA -----
     if (requiresData(intent) && INTENT_DB_CONFIG[intent]) {
@@ -219,21 +231,12 @@ export class ChatbotService {
       intent === ChatbotIntent.VIEW_PARKING_DETAIL ||
       intent === ChatbotIntent.ASK_CRITERIA
     ) {
-      if (!this.groq) {
-        return await this.fallbackProcess(messages, userId);
-      }
-      const systemPrompt = this.getSystemPrompt();
-      const recentMessages = messages.slice(-6);
-      const response = await this.groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...recentMessages,
-        ] as any,
-        temperature: 0.7,
-      });
-      const text = response.choices[0].message.content || 'Xin lá»—i, tÃ´i chÆ°a hiá»ƒu cÃ¢u há» i cá»§a báº¡n.';
-      return { text };
+      const allowTools = [
+        ChatbotIntent.FREE_FORM,
+        ChatbotIntent.VIEW_PARKING_DETAIL,
+        ChatbotIntent.ASK_CRITERIA,
+      ].includes(intent);
+      return this.runLlmToolRagPipeline(messages, userId, context, allowTools);
     }
 
     // Má» i intent cÃ²n láº¡i â†’ Groq xá»­ lÃ½ thay vÃ¬ fallback cá»©ng
@@ -255,9 +258,153 @@ export class ChatbotService {
   }
   }
 
+  private async runLlmToolRagPipeline(
+    messages: { role: string; content: string }[],
+    userId?: string,
+    context?: any,
+    allowTools = true,
+  ): Promise<{ text: string; action?: string; data?: any; redirectUrl?: string }> {
+    // Pipeline câu hỏi tự do: lấy RAG context, gọi LLM, và bật function calling khi cần dữ liệu runtime.
+    const lastUserMessage = messages.filter((message) => message.role === 'user').pop()?.content || '';
+    const knowledgeContext = this.knowledgeService?.buildContext(lastUserMessage, 4) || '';
+
+    if (!this.groq) {
+      const knowledgeAnswer = this.knowledgeService?.answerFromKnowledge(lastUserMessage);
+      if (knowledgeAnswer) return { text: knowledgeAnswer };
+      return this.fallbackProcess(messages, userId);
+    }
+
+    const systemPrompt = this.getLlmToolRagSystemPrompt(knowledgeContext);
+    const recentMessages = messages.slice(-8);
+    const firstPayload: any = {
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...recentMessages,
+      ] as any,
+      temperature: 0.3,
+    };
+    if (allowTools) {
+      firstPayload.tools = this.getToolsDefinition();
+      firstPayload.tool_choice = 'auto';
+    }
+    let firstResponse: any;
+    try {
+      firstResponse = await this.groq.chat.completions.create(firstPayload);
+    } catch (error) {
+      if (allowTools) {
+        this.logger.warn('LLM tool calling failed, retrying without tools');
+        return this.runLlmToolRagPipeline(messages, userId, context, false);
+      }
+      throw error;
+    }
+
+    const assistantMessage = firstResponse.choices[0]?.message;
+    const toolCalls = assistantMessage?.tool_calls || [];
+    if (!toolCalls.length) {
+      return {
+        text: this.cleanChatText(
+          assistantMessage?.content || 'Minh chua co du lieu phu hop de tra loi cau nay.',
+        ),
+      };
+    }
+
+    const toolMessages: any[] = [];
+    const toolResults: any[] = [];
+    for (const toolCall of toolCalls) {
+      const result = await this.executeTool(toolCall, userId, context);
+      toolResults.push({ name: toolCall.function?.name, result });
+      toolMessages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        name: toolCall.function?.name,
+        content: JSON.stringify(this.compactToolResult(result)),
+      });
+    }
+
+    const finalResponse = await this.groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...recentMessages,
+        assistantMessage,
+        ...toolMessages,
+      ] as any,
+      temperature: 0.25,
+    } as any);
+    const finalText = this.cleanChatText(
+      finalResponse.choices[0]?.message?.content ||
+        assistantMessage?.content ||
+        'Minh da lay du lieu he thong nhung chua tong hop duoc cau tra loi.',
+    );
+
+    const redirectResult = toolResults.find((item) => item.result?.action === 'redirect')?.result;
+    if (redirectResult) {
+      return {
+        text: finalText || redirectResult.message,
+        action: 'redirect',
+        redirectUrl: redirectResult.redirectUrl,
+        data: redirectResult,
+      };
+    }
+
+    const listResult = toolResults.find((item) => item.result?.action === 'list_parking')?.result;
+    if (listResult) {
+      return {
+        text: finalText,
+        action: 'list_parking',
+        data: {
+          lots: listResult.lots || [],
+          action: 'list_parking',
+          criteria: listResult.criteria,
+        },
+      };
+    }
+
+    return { text: finalText, data: { toolResults } };
+  }
+
+  private compactToolResult(result: any): any {
+    if (!result || typeof result !== 'object') return result;
+    if (Array.isArray(result.lots)) {
+      return {
+        ...result,
+        lots: result.lots.slice(0, 5).map((lot: any) => ({
+          id: lot.id,
+          name: lot.name,
+          address: lot.address,
+          available_slots: lot.available_slots,
+          total_slots: lot.total_slots,
+          hourly_rate: lot.hourly_rate,
+          avgRating: lot.avgRating,
+          distance_km: lot.distance_km,
+        })),
+      };
+    }
+    if (Array.isArray(result.bookings)) return { bookings: result.bookings.slice(0, 5) };
+    if (Array.isArray(result.vehicles)) return { vehicles: result.vehicles.slice(0, 5) };
+    return result;
+  }
+
+  private getLlmToolRagSystemPrompt(knowledgeContext: string): string {
+    return [
+      this.getSystemPrompt(),
+      '',
+      'PIPELINE BAT BUOC:',
+      '- Neu cau hoi can du lieu thuc te cua he thong, phai goi tool/function truoc khi tra loi.',
+      '- Chi dung RAG context de huong dan chinh sach, cach dung, luong thao tac; khong bien RAG thanh so lieu runtime.',
+      '- Sau khi tool tra ve du lieu, tom tat ngan gon, uu tien bang markdown nho neu co nhieu dong.',
+      '- Khong hien ID noi bo neu nguoi dung khong can thao tac bang ID.',
+      '- Neu thieu dang nhap hoac thieu du lieu, noi ro can bo sung gi.',
+      knowledgeContext ? `\nRAG CONTEXT LIEN QUAN:\n${knowledgeContext}` : '',
+    ].join('\n');
+  }
+
   private normalizeText(value: string): string {
-    return (value || '')
+    const raw = (value || '').replace(/đ/g, 'd');
+    return raw
       .toLowerCase()
+      .replace(/đ/g, 'd')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/đ/g, 'd')
@@ -278,15 +425,18 @@ export class ChatbotService {
     if (this.isBookingMetaQuestion(message)) return false;
 
     const asksDifferentQuestion =
-      /\b(top|danh gia|mac nhat|dat nhat|re nhat|gia cao|gia re|nhieu cho|con trong|lam duoc gi|giup duoc gi|cong viec|chuc nang|ban la ai|cach dung|he thong|ngoai dat bai)\b/.test(text);
+      /\b(top|danh gia|mac nhat|dat nhat|re nhat|gia cao|gia re|nhieu cho|con trong|lam duoc gi|giup duoc gi|cong viec|chuc nang|ban la ai|cach dung|he thong|ngoai dat bai|phan van|nen gui|tu van|loi khuyen|kinh nghiem|the nao|nhu the nao)\b/.test(text);
     if (asksDifferentQuestion) return false;
 
     if (/^(bai|xe|thanh toan|payment|tra tien)\s*\d+$/.test(text)) return true;
+    if (/^(vi tri|cho|slot|o)\s*[\w-]+$/.test(text)) return true;
+    if (/\b(doi|sua|chon lai|chinh lai)\b/.test(text) && /\b(bai|thoi gian|gio|xe|vi tri|cho|slot|thanh toan)\b/.test(text)) return true;
     if (this.parsePaymentMethod(message)) return true;
     if (this.parseBookingTimes(message).startTime) return true;
     if (/\b(ngay mai|hom nay|tu\s*\d{1,2}|luc\s*\d{1,2}|\d{1,2}h|den\s*\d{1,2})\b/.test(text)) return true;
     if (/\b(xe|bien so|oto|o to|car|motor|moto)\b/.test(text)) return true;
     if (!pending?.parkingLotId && /\b(bai|bai do|parking|do xe)\b/.test(text)) return true;
+    if (pending?.parkingLotId && pending?.startTime && pending?.endTime && /\b(vi tri|cho|slot|o|con trong)\b/.test(text)) return true;
 
     return false;
   }
@@ -297,6 +447,49 @@ export class ChatbotService {
       text.includes('ngoai dat bai') ||
       (text.includes('dat bai') && /\b(lam duoc gi|giup duoc gi|cong viec|chuc nang|co the lam|cach dung|he thong)\b/.test(text))
     );
+  }
+
+  private isClearlyOffTopic(message: string): boolean {
+    const text = this.normalizeText(message);
+    if (!text) return false;
+    const domainWords =
+      /\b(gopark|bai|bai do|parking|do xe|cho do|dat cho|dat bai|booking|slot|vi tri|xe|bien so|vi|wallet|thanh toan|vnpay|hoa don|invoice|khuyen mai|support|ho tro|tai khoan|user|owner|admin|doanh thu|request|yeu cau)\b/;
+    if (domainWords.test(text)) return false;
+
+    return /\b(nau an|mon an|cong thuc|bong da|the thao|thoi tiet|xem phim|phim|am nhac|bai hat|game|toan lop|giai bai tap|lap trinh|code giup|tinh yeu|tu vi|boi bai|du lich nuoc ngoai)\b/.test(text);
+  }
+
+  private getOffTopicResponse(role: 'user' | 'owner' | 'admin'): string {
+    const roleHelp = {
+      user: [
+        '`top 5 bãi còn nhiều chỗ trống`',
+        '`đặt bãi`',
+        '`tổng quan tài khoản của tôi`',
+        '`hướng dẫn thanh toán VNPAY`',
+      ],
+      owner: [
+        '`dashboard hôm nay`',
+        '`doanh thu tháng này`',
+        '`phân tích chi tiết doanh thu`',
+        '`gợi ý tăng doanh thu`',
+      ],
+      admin: [
+        '`tổng quan hệ thống`',
+        '`cảnh báo hệ thống`',
+        '`yêu cầu chờ duyệt`',
+        '`tìm user email@example.com`',
+      ],
+    }[role];
+    return [
+      'Xin lỗi, câu hỏi này nằm ngoài phạm vi GoPark nên mình không muốn trả lời lan man hoặc bịa thông tin.',
+      'Mình có thể hỗ trợ nhanh các việc liên quan đến bãi đỗ, đặt chỗ, thanh toán và dữ liệu trong hệ thống.',
+      `Bạn có thể hỏi thử: ${roleHelp.join(', ')}.`,
+    ].join('\n');
+  }
+
+  private isUserAccountOverviewQuestion(message: string): boolean {
+    const text = this.normalizeText(message);
+    return /\b(tong quan tai khoan|tai khoan cua toi|thong tin cua toi|tom tat tai khoan|dashboard cua toi)\b/.test(text);
   }
 
   private markdownTable(
@@ -349,6 +542,7 @@ export class ChatbotService {
   }
 
   private async answerPublicParkingDataQuestion(message: string): Promise<any | null> {
+    // Trả lời ranking bãi bằng DB trực tiếp, không dùng LLM để tránh bịa số liệu.
     const text = this.normalizeText(message);
     const asksParking =
       text.includes('bai') ||
@@ -431,7 +625,7 @@ export class ChatbotService {
   private parseBookingTimes(message: string): { startTime?: string; endTime?: string } {
     const text = this.normalizeText(message);
     const isOnlyNumberedChoice =
-      /^(bai|xe|thanh toan|payment|tra tien)\s*\d+$/.test(text);
+      /^(bai|xe|thanh toan|payment|tra tien|vi tri|cho|slot|o)\s*[\w-]+$/.test(text);
     if (isOnlyNumberedChoice) return {};
 
     const now = new Date();
@@ -501,6 +695,124 @@ export class ChatbotService {
       const plate = this.normalizeText(vehicle.plate_number || '').replace(/\s/g, '');
       return plate && compactMessage.includes(plate);
     }) || vehicles.find((vehicle: any) => String(vehicle.id) === String(pending.vehicleId));
+  }
+
+  private applyBookingCorrections(message: string, pending: any): any {
+    const text = this.normalizeText(message);
+    const next = { ...pending };
+    const wantsChange = /\b(doi|sua|chon lai|chinh lai|khac)\b/.test(text);
+    if (!wantsChange) return next;
+
+    if (/\b(bai|bai do|parking)\b/.test(text)) {
+      delete next.parkingLotId;
+      delete next.parkingLotName;
+      delete next.slotId;
+      delete next.slotLabel;
+      delete next.slotOptions;
+    }
+    if (/\b(thoi gian|gio|ngay|luc|tu|den)\b/.test(text)) {
+      delete next.startTime;
+      delete next.endTime;
+      delete next.slotId;
+      delete next.slotLabel;
+      delete next.slotOptions;
+    }
+    if (/\b(vi tri|cho|slot|o)\b/.test(text)) {
+      delete next.slotId;
+      delete next.slotLabel;
+    }
+    if (/\b(xe|bien so)\b/.test(text)) {
+      delete next.vehicleId;
+      delete next.vehiclePlate;
+    }
+    if (/\b(thanh toan|payment|tra tien)\b/.test(text)) {
+      delete next.paymentMethod;
+    }
+    return next;
+  }
+
+  private resolveSlot(message: string, slotOptions: any[] = [], pending: any = {}): any {
+    const text = this.normalizeText(message);
+    const indexed = text.match(/\b(?:vi tri|cho|slot|o)\s*(\d+)\b/);
+    if (indexed) {
+      const slot = slotOptions[Number(indexed[1]) - 1];
+      if (slot?.id) return slot;
+    }
+
+    const directCode = text.match(/\b(?:slot|cho|vi tri|o)\s*([a-z]{1,4}\s*[-]?\s*\d{1,4})\b/);
+    const compactQuery = (directCode?.[1] || text).replace(/\s|-/g, '');
+    const byCode = slotOptions.find((slot: any) =>
+      this.normalizeText(slot.code || '').replace(/\s|-/g, '') === compactQuery ||
+      this.normalizeText(slot.label || '').replace(/\s|-/g, '').includes(compactQuery),
+    );
+    return byCode || slotOptions.find((slot: any) => String(slot.id) === String(pending.slotId));
+  }
+
+  private formatSlotLabel(slot: any): string {
+    const floor = slot.floor_name || slot.floor_number || '-';
+    const zone = slot.zone_name || '-';
+    return `${floor}-${zone}-${slot.code}`;
+  }
+
+  private formatSlotOptions(slots: any[]): string {
+    if (!slots.length) {
+      return '\n\nHien khong co vi tri trong phu hop voi khung gio nay. Ban co the doi gio hoac chon bai khac.';
+    }
+    return `\n\n| Lua chon | Tang | Khu | Vi tri |\n|---|---|---|---|\n` +
+      slots.slice(0, 8).map((slot: any, index: number) =>
+        `| Vi tri ${index + 1} | ${slot.floor_name || slot.floor_number || '-'} | ${slot.zone_name || '-'} | ${slot.code} |`,
+      ).join('\n') +
+      `\n\nBan co the chon "vi tri 1" hoac nhap ma vi tri, vi du: "slot A1". Muon doi gio/bai thi nhap "doi gio" hoac "doi bai".`;
+  }
+
+  private async getAvailableSlotsForBooking(parkingLotId: string, startTime: string, endTime: string): Promise<any[]> {
+    return this.dataSource.query(
+      `SELECT ps.id, ps.code, ps.status, pz.zone_name, pf.floor_name, pf.floor_number
+       FROM parking_slots ps
+       JOIN parking_zones pz ON pz.id = ps.parking_zone_id
+       JOIN parking_floors pf ON pf.id = pz.parking_floor_id
+       WHERE pf.parking_lot_id = $1
+         AND ps.status = 'AVAILABLE'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM bookings b
+           WHERE b.slot_id = ps.id
+             AND b.status IN ('PENDING', 'CONFIRMED', 'ONGOING')
+             AND b.start_time < $3
+             AND b.end_time > $2
+         )
+       ORDER BY pf.floor_number ASC, pz.zone_name ASC, ps.code ASC
+       LIMIT 8`,
+      [parkingLotId, new Date(startTime), new Date(endTime)],
+    );
+  }
+
+  private async validateParkingLotOperatingTime(parkingLotId: string, startTime: string, endTime: string): Promise<string | null> {
+    const rows = await this.dataSource.query(
+      `SELECT open_time, close_time FROM parking_lots WHERE id = $1 LIMIT 1`,
+      [parkingLotId],
+    );
+    const lot = rows[0];
+    if (!lot?.open_time || !lot?.close_time) return null;
+
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const open = new Date(lot.open_time);
+    const close = new Date(lot.close_time);
+    const openMinutes = open.getHours() * 60 + open.getMinutes();
+    const closeMinutes = close.getHours() * 60 + close.getMinutes();
+    const startMinutes = start.getHours() * 60 + start.getMinutes();
+    const endMinutes = end.getHours() * 60 + end.getMinutes();
+    const format = (mins: number) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+    const inRange = (mins: number) =>
+      openMinutes <= closeMinutes
+        ? mins >= openMinutes && mins <= closeMinutes
+        : mins >= openMinutes || mins <= closeMinutes;
+
+    if (!inRange(startMinutes) || !inRange(endMinutes)) {
+      return `Bai nay chi hoat dong tu ${format(openMinutes)} den ${format(closeMinutes)}. Ban hay chon lai thoi gian nam trong gio mo cua.`;
+    }
+    return null;
   }
 
   private formatVehicleOptions(vehicles: any[]): string {
@@ -588,10 +900,11 @@ export class ChatbotService {
     context?: any,
     sessionPendingBooking?: any,
   ): Promise<{ text: string; action?: string; data?: any; redirectUrl?: string }> {
-    const pending = {
+    // Gom thông tin đặt bãi nhiều bước: bãi, giờ, slot, xe và phương thức thanh toán.
+    const pending = this.applyBookingCorrections(message, {
       ...(sessionPendingBooking || {}),
       ...(context?.pendingBooking || {}),
-    };
+    });
     const vehicles = (await this.getUserVehicles(userId)).vehicles || [];
     const parkingSuggestions = (await this.getParkingLotsRaw())
       .filter((lot: any) => Number(lot.available_slots || 0) > 0)
@@ -604,15 +917,35 @@ export class ChatbotService {
     const vehicle = this.resolveVehicle(message, vehicles, pending);
     const times = this.parseBookingTimes(message);
     const paymentMethod = this.parsePaymentMethod(message) || pending.paymentMethod || 'vnpay';
+    const parkingLotId = lot?.id ? String(lot.id) : pending.parkingLotId;
+    const startTime = times.startTime || pending.startTime;
+    const endTime = times.endTime || pending.endTime;
+    const timeError = parkingLotId && startTime && endTime
+      ? await this.validateParkingLotOperatingTime(parkingLotId, startTime, endTime)
+      : null;
+    const slotOptions = parkingLotId && startTime && endTime && !timeError
+      ? await this.getAvailableSlotsForBooking(parkingLotId, startTime, endTime)
+      : [];
+    const selectedSlot = this.resolveSlot(message, slotOptions, pending);
+    const keepPendingSlot = pending.slotId && slotOptions.some((slot: any) => String(slot.id) === String(pending.slotId));
 
     const nextPending = {
       ...pending,
-      parkingLotId: lot?.id ? String(lot.id) : pending.parkingLotId,
+      parkingLotId,
       parkingLotName: lot?.name || pending.parkingLotName || 'Bãi đỗ',
       vehicleId: vehicle?.id ? String(vehicle.id) : pending.vehicleId,
       vehiclePlate: vehicle?.plate_number || pending.vehiclePlate,
-      startTime: times.startTime || pending.startTime,
-      endTime: times.endTime || pending.endTime,
+      startTime: timeError ? undefined : startTime,
+      endTime: timeError ? undefined : endTime,
+      slotId: selectedSlot?.id ? String(selectedSlot.id) : keepPendingSlot ? String(pending.slotId) : undefined,
+      slotLabel: selectedSlot ? this.formatSlotLabel(selectedSlot) : keepPendingSlot ? pending.slotLabel : undefined,
+      slotOptions: slotOptions.map((slot: any, index: number) => ({
+        id: slot.id,
+        label: `vi tri ${index + 1}`,
+        code: slot.code,
+        floor: slot.floor_name || slot.floor_number || '-',
+        zone: slot.zone_name || '-',
+      })),
       paymentMethod,
       parkingLotOptions: parkingSuggestions.map((suggestion: any, index: number) => ({
         id: suggestion.id,
@@ -625,6 +958,7 @@ export class ChatbotService {
     const missing: string[] = [];
     if (!nextPending.parkingLotId) missing.push('ten bai do');
     if (!nextPending.startTime || !nextPending.endTime) missing.push('thoi gian vao/ra');
+    if (nextPending.parkingLotId && nextPending.startTime && nextPending.endTime && !nextPending.slotId) missing.push('vi tri do');
     if (!nextPending.vehiclePlate) missing.push('xe hoac bien so');
 
     if (missing.length) {
@@ -633,6 +967,7 @@ export class ChatbotService {
       const bookingStatus = this.markdownTable(['Thong tin', 'Trang thai'], [
         ['Bai do', nextPending.parkingLotName ? this.cleanDisplayText(nextPending.parkingLotName) : 'Can chon'],
         ['Thoi gian', nextPending.startTime && nextPending.endTime ? `${nextPending.startTime} - ${nextPending.endTime}` : 'Can nhap'],
+        ['Vi tri do', nextPending.slotLabel || 'Can chon'],
         ['Xe', nextPending.vehiclePlate || 'Can chon'],
         ['Thanh toan', nextPending.paymentMethod?.toUpperCase() || 'VNPAY'],
       ]);
@@ -640,7 +975,9 @@ export class ChatbotService {
         nextField === 'ten bai do'
           ? this.formatParkingLotOptions(parkingSuggestions)
           : nextField === 'thoi gian vao/ra'
-            ? this.formatTimeExamples()
+            ? `${timeError ? `\n\n${timeError}` : ''}${this.formatTimeExamples()}`
+            : nextField === 'vi tri do'
+              ? this.formatSlotOptions(slotOptions)
             : nextField === 'xe hoac bien so'
               ? this.formatVehicleOptions(vehicles)
               : this.formatPaymentOptions();
@@ -649,6 +986,8 @@ export class ChatbotService {
           ? 'Ban muon dat o bai nao?'
           : nextField === 'thoi gian vao/ra'
             ? 'Ban muon gui xe luc nao va lay xe luc nao?'
+            : nextField === 'vi tri do'
+              ? 'Ban muon chon vi tri do nao?'
             : nextField === 'xe hoac bien so'
               ? 'Ban chon xe nao de dat cho?'
               : 'Ban muon thanh toan bang phuong thuc nao?';
@@ -666,6 +1005,7 @@ export class ChatbotService {
               plateNumber: vehicle.plate_number,
               type: vehicle.type,
             })),
+            slots: nextPending.slotOptions,
             payments: [
               { label: 'thanh toan 1', value: 'vnpay' },
               { label: 'thanh toan 2', value: 'wallet' },
@@ -678,14 +1018,15 @@ export class ChatbotService {
     }
 
     const params = new URLSearchParams();
-    params.set('start', nextPending.startTime);
-    params.set('end', nextPending.endTime);
-    params.set('vehicle', nextPending.vehiclePlate);
-    params.set('payment', nextPending.paymentMethod);
+    params.set('start', String(nextPending.startTime));
+    params.set('end', String(nextPending.endTime));
+    params.set('vehicle', String(nextPending.vehiclePlate));
+    params.set('payment', String(nextPending.paymentMethod));
+    params.set('slot', String(nextPending.slotId));
     this.stateService.deleteSession(userId);
 
     return {
-      text: `Ok, minh se mo trang dat cho bai ${nextPending.parkingLotName} voi xe ${nextPending.vehiclePlate}, tu ${nextPending.startTime} den ${nextPending.endTime}.`,
+      text: `Ok, minh se mo trang dat cho bai ${nextPending.parkingLotName}, vi tri ${nextPending.slotLabel}, voi xe ${nextPending.vehiclePlate}, tu ${nextPending.startTime} den ${nextPending.endTime}. Neu muon doi vi tri hoac doi bai, ban co the nhan lai trong chat truoc khi xac nhan.`,
       action: 'redirect',
       redirectUrl: `/users/myBooking/${nextPending.parkingLotId}?${params.toString()}`,
       data: { pendingBooking: nextPending },
@@ -693,6 +1034,7 @@ export class ChatbotService {
   }
 
   private getSystemPrompt(): string {
+    // Prompt nền cho LLM USER: nêu vai trò, nguyên tắc không bịa data và nhúng tài liệu RAG.
     return `Báº¡n lÃ  GoPark AI â€“ trá»£ lÃ½ thÃ´ng minh cá»§a á»©ng dá»¥ng Ä‘áº·t chá»— giá»¯ xe GoPark. Báº¡n nÃ³i chuyá»‡n tá»± nhiÃªn, thÃ¢n thiá»‡n nhÆ° má»™t ngÆ°á»i báº¡n am hiá»ƒu vá» Ä‘á»— xe táº¡i Viá»‡t Nam.
 
 NGUYÃŠN Táº®C QUAN TRá»ŒNG:
@@ -717,6 +1059,7 @@ ${this.guideService.getGuide()}`;
   }
 
   private getToolsDefinition(): any[] {
+    // Khai báo function calling: LLM chỉ được lấy dữ liệu runtime qua các tool này.
     return [
       {
         type: 'function',
@@ -788,6 +1131,7 @@ ${this.guideService.getGuide()}`;
               startTime: { type: 'string', format: 'date-time' },
               endTime: { type: 'string', format: 'date-time' },
               vehicleId: { type: 'string' },
+              slotId: { type: 'string' },
               paymentMethod: {
                 type: 'string',
                 enum: ['WALLET', 'VNPAY', 'CASH'],
@@ -823,6 +1167,7 @@ ${this.guideService.getGuide()}`;
     userId?: string,
     context?: any,
   ): Promise<any> {
+    // Router thực thi tool do LLM yêu cầu, map tên tool sang hàm query/mutation nội bộ.
     const { name, arguments: args } = toolCall.function;
     const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args || {};
     this.logger.log(
@@ -971,6 +1316,41 @@ ${this.guideService.getGuide()}`;
     return { vehicles };
   }
 
+  private async getUserAccountOverview(userId: string): Promise<any> {
+    const [wallet, vehicles, bookings] = await Promise.all([
+      this.getWalletBalance(userId),
+      this.getUserVehicles(userId),
+      this.getUserBookings(userId),
+    ]);
+    const vehicleList = vehicles.vehicles || [];
+    const bookingList = bookings.bookings || [];
+    const activeBookings = bookingList.filter((booking: any) =>
+      ['PENDING', 'CONFIRMED', 'ONGOING'].includes(String(booking.status || '').toUpperCase()),
+    );
+
+    return {
+      text:
+        `## Tổng Quan Tài Khoản\n\n` +
+        this.markdownTable(['Hạng mục', 'Giá trị'], [
+          ['Số dư ví', `${Number(wallet.balance || 0).toLocaleString('vi-VN')}đ`],
+          ['Xe đã đăng ký', vehicleList.length],
+          ['Booking gần đây', bookingList.length],
+          ['Booking đang theo dõi', activeBookings.length],
+        ]) +
+        `\n\n### Gợi ý tiếp theo\n` +
+        `- \`xe của tôi\` để xem danh sách biển số\n` +
+        `- \`lịch sử đặt của tôi\` để xem booking gần đây\n` +
+        `- \`đặt bãi\` để tạo lượt đặt mới`,
+      data: {
+        action: 'user_account_overview',
+        walletBalance: wallet.balance || 0,
+        vehicles: vehicleList.length,
+        recentBookings: bookingList.length,
+        activeBookings: activeBookings.length,
+      },
+    };
+  }
+
   private async createBooking(
     args: any,
     userId?: string,
@@ -978,7 +1358,7 @@ ${this.guideService.getGuide()}`;
   ): Promise<any> {
     if (!userId) return { error: 'Cáº§n Ä‘Äƒng nháº­p Ä‘á»ƒ Ä‘áº·t bÃ£i' };
 
-    let { parkingLotId, startTime, endTime, vehicleId, paymentMethod } = args;
+    let { parkingLotId, startTime, endTime, vehicleId, paymentMethod, slotId } = args;
 
     // Gá»™p thÃ´ng tin tá»« context Ä‘ang cÃ³ (náº¿u cÃ³)
     const pending = context?.pendingBooking || {};
@@ -987,6 +1367,7 @@ ${this.guideService.getGuide()}`;
     endTime = endTime || pending.endTime;
     vehicleId = vehicleId || pending.vehicleId;
     paymentMethod = paymentMethod || pending.paymentMethod;
+    slotId = slotId || pending.slotId;
 
     const missing: string[] = [];
     if (!parkingLotId) missing.push('bÃ£i Ä‘á»—');
@@ -1003,6 +1384,7 @@ ${this.guideService.getGuide()}`;
           startTime,
           endTime,
           vehicleId,
+          slotId,
           paymentMethod,
         },
         message: `Thiáº¿u: ${missing.join(', ')}`,
@@ -1027,6 +1409,7 @@ ${this.guideService.getGuide()}`;
       vehicle: vehicleId,
       payment: paymentMethod,
     });
+    if (slotId) params.set('slot', String(slotId));
     const redirectUrl = `/users/mybooking/${parkingLotId}?${params.toString()}`;
 
     return {
@@ -1094,7 +1477,7 @@ ${this.guideService.getGuide()}`;
 
   async createBookingFromForm(bookingData: any, userId: string): Promise<any> {
     // Giá»¯ nguyÃªn nhÆ° cÅ©
-    const { parkingLotId, startTime, endTime, vehicleId, paymentMethod } =
+    const { parkingLotId, startTime, endTime, vehicleId, paymentMethod, slotId } =
       bookingData;
     const start = new Date(startTime);
     const end = new Date(endTime);
@@ -1129,13 +1512,42 @@ ${this.guideService.getGuide()}`;
     const totalAmount = hours * hourlyRate;
 
     const newBooking = await this.dataSource.transaction(async (manager) => {
+      const slotQuery = slotId
+        ? `SELECT ps.*
+           FROM parking_slots ps
+           JOIN parking_zones pz ON pz.id = ps.parking_zone_id
+           JOIN parking_floors pf ON pf.id = pz.parking_floor_id
+           WHERE pf.parking_lot_id = $1
+             AND ps.id = $4
+             AND ps.status = 'AVAILABLE'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM bookings b
+               WHERE b.slot_id = ps.id
+                 AND b.status IN ('PENDING', 'CONFIRMED', 'ONGOING')
+                 AND b.start_time < $3
+                 AND b.end_time > $2
+             )
+           LIMIT 1`
+        : `SELECT ps.*
+           FROM parking_slots ps
+           JOIN parking_zones pz ON pz.id = ps.parking_zone_id
+           JOIN parking_floors pf ON pf.id = pz.parking_floor_id
+           WHERE pf.parking_lot_id = $1
+             AND ps.status = 'AVAILABLE'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM bookings b
+               WHERE b.slot_id = ps.id
+                 AND b.status IN ('PENDING', 'CONFIRMED', 'ONGOING')
+                 AND b.start_time < $3
+                 AND b.end_time > $2
+             )
+           ORDER BY ps.id ASC
+           LIMIT 1`;
       const availableSlots = await manager.query(
-        `SELECT * FROM parking_slots WHERE parking_zone_id IN (
-     SELECT id FROM parking_zones WHERE parking_floor_id IN (
-       SELECT id FROM parking_floors WHERE parking_lot_id = $1
-     )
-   ) AND status = 'AVAILABLE' LIMIT 1`,
-        [parkingLotId],
+        slotQuery,
+        slotId ? [parkingLotId, start, end, slotId] : [parkingLotId, start, end],
       );
       if (!availableSlots.length) throw new Error('Háº¿t chá»— trá»‘ng');
       const booking = await manager.query(
@@ -1170,6 +1582,7 @@ ${this.guideService.getGuide()}`;
     messages: any[],
     userId?: string,
   ): Promise<any> {
+    // Fallback rule-based khi không có model hoặc LLM lỗi.
     const lastMsg =
       messages.filter((m) => m.role === 'user').pop()?.content || '';
     const normalized = this.normalizeText(lastMsg);
