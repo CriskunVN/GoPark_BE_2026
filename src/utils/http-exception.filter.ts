@@ -18,12 +18,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Định dạng lại cấu trúc lỗi
     response.status(status).json({
-      statusCode: status,
-      timestamp: new Date().toISOString(),
-      path: request.url,
-      message:
-        exceptionResponse?.message || exception.message || 'Lỗi hệ thống',
-      error: exceptionResponse?.error || null,
-    });
+        statusCode: status,
+        timestamp: new Date().toISOString(),
+        path: request.url,
+        message:
+          exceptionResponse?.message || exception.message || 'Lỗi hệ thống',
+        error: exceptionResponse?.error || null,
+      });
   }
 }
