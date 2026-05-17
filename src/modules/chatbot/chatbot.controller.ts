@@ -50,7 +50,7 @@ export class ChatbotController {
       throw new BadRequestException('Cần đăng nhập để đặt bãi');
     }
 
-    const { parkingLotId, startTime, endTime, vehicleId, paymentMethod } = body;
+    const { parkingLotId, startTime, endTime, vehicleId, paymentMethod, slotId } = body;
 
     if (
       !parkingLotId ||
@@ -64,7 +64,7 @@ export class ChatbotController {
 
     try {
       const result = await this.chatbotService.createBookingFromForm(
-        { parkingLotId, startTime, endTime, vehicleId, paymentMethod },
+        { parkingLotId, startTime, endTime, vehicleId, paymentMethod, slotId },
         userId,
       );
 

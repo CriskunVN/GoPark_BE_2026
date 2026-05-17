@@ -15,6 +15,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { ChatbotStateService } from './chatbot-state.service';
 import { ChatbotSession } from './entities/chatbot-session.entity';
 import { ChatbotGuideService } from './chatbot-guide.service';
+import { ChatbotKnowledgeService } from './chatbot-knowledge.service';
 
 @Module({
   imports: [
@@ -33,7 +34,7 @@ import { ChatbotGuideService } from './chatbot-guide.service';
     }),
   ],
   providers: [
-    ChatbotService, OwnerChatbotService, AdminChatbotService, ChatbotGuideService,
+    ChatbotService, OwnerChatbotService, AdminChatbotService, ChatbotGuideService, ChatbotKnowledgeService,
     AuthGuard, OptionalAuthGuard, RolesGuard, Reflector, ChatbotStateService,
   ],
   controllers: [ChatbotController, OwnerChatbotController, AdminChatbotController],

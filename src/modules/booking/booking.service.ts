@@ -81,7 +81,7 @@ export class BookingService {
       // Gọi hàm dọn dẹp các booking pending đã hết hạn trước khi tạo mới để tránh xung đột dữ liệu và đảm bảo tính nhất quán của hệ thống
       await this.voucherCleanupService.cleanupExpiredPendingBookings();
 
-      // Táº¡o transaction
+      // Tạo transaction
       const queryRunner = this.dataSource.createQueryRunner();
       await queryRunner.connect();
       await queryRunner.startTransaction();
@@ -152,7 +152,7 @@ export class BookingService {
         });
 
         if (newbooking) {
-          // Náº¾U CÃ“: Cáº­p nháº­t láº¡i thÃ´ng tin má»›i vÃ o báº£n ghi cÅ©
+          // NẾU CÓ: Cập nhật lại thông tin mới vào bản ghi cũ
           newbooking.start_time = new Date(bookingdto.start_time);
           newbooking.end_time = new Date(bookingdto.end_time);
           newbooking.vehicle = { id: bookingdto.vehicle_id } as any;
@@ -173,7 +173,7 @@ export class BookingService {
           newbooking,
         );
 
-        // Náº¿u cÃ³ mÃ£ voucher, thÃ¬ validate vÃ  Ã¡p dá»¥ng nÃ³ vÃ o booking má»›i táº¡o nÃ y (trÆ°á»›c khi táº¡o invoice)
+        // Nếu có mã voucher, thì validate và áp dụng nó vào booking mới tạo này (trước khi tạo invoice)
         await this.voucherService.rollbackUsageForBooking(
           savedBooking.id,
           queryRunner.manager,
@@ -232,7 +232,7 @@ export class BookingService {
 
         await invoiceRepo.save(invoice);
 
-        // Táº¡o QR
+        // Tạo QR
         const qrRepo = queryRunner.manager.getRepository(QRCode);
         let qrCode = await qrRepo.findOne({
           where: { booking: { id: savedBooking.id } },
@@ -245,7 +245,7 @@ export class BookingService {
             status: 'active',
           });
         } else {
-          // Náº¿u Ä‘Ã£ cÃ³ QR rá»“i, cÃ³ thá»ƒ cáº­p nháº­t ná»™i dung má»›i náº¿u muá»‘n, hoáº·c giá»¯ nguyÃªn
+          // Nếu đã có QR rồi, có thể cập nhật nội dung mới nếu muốn, hoặc giữ nguyên
           qrCode.status = 'active';
         }
 
@@ -253,7 +253,7 @@ export class BookingService {
 
         await queryRunner.commitTransaction();
 
-        // Activity log cho viá»‡c táº¡o má»›i booking
+        // Activity log cho việc tạo mới booking
         this.activityService.templateforBookingActivity(
           savedBooking.id,
           bookingdto.user_id,
@@ -263,7 +263,7 @@ export class BookingService {
 
         return {
           ...savedBooking,
-          qrCodeContent: qrCode.content, //tráº£ vá» Ä‘á»ƒ app váº½ hÃ¬nh QR
+          qrCodeContent: qrCode.content, //trả về để app vẽ hình QR
         };
       } catch (error) {
         await queryRunner.rollbackTransaction();
@@ -272,20 +272,20 @@ export class BookingService {
         await queryRunner.release();
       }
     } catch (error) {
-      // In lá»—i ra terminal Ä‘á»ƒ báº¡n Ä‘á»c Ä‘Æ°á»£c nÃ³ bá»‹ gÃ¬
-      console.error('Lá»–I Táº I CREATE_BOOKING:', error);
-      throw error; // Pháº£i throw lá»—i Ä‘á»ƒ NestJS tráº£ vá» HTTP 500/400 cho Frontend
+      // In lỗi ra terminal để bạn đọc được nó bị gì
+      console.error('LỖI TẠI CREATE_BOOKING:', error);
+      throw error; // Phải throw lỗi để NestJS trả về HTTP 500/400 cho Frontend
     }
   }
 
-  // =================  BOOKING (GIA Háº N) =================
+  // =================  BOOKING (GIA HẠN) =================
   async extendBooking(
     id: number,
     extendDto: { new_end_time: string; isPreview?: boolean },
     currentUserId?: string,
   ) {
     return await this.dataSource.transaction(async (manager) => {
-      // 1. Láº¥y thÃ´ng tin booking vÃ  cÃ¡c quan há»‡
+      // 1. Lấy thông tin booking và các quan hệ
       const booking = await manager.findOne(Booking, {
         where: { id },
         relations: [
@@ -298,35 +298,35 @@ export class BookingService {
         ],
       });
 
-      if (!booking) throw new NotFoundException('KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n Ä‘áº·t chá»—');
+      if (!booking) throw new NotFoundException('Không tìm thấy đơn đặt chỗ');
 
-      // SECURITY CHECK: Chá»‰ chá»§ nhÃ¢n Ä‘Æ¡n hÃ ng má»›i Ä‘Æ°á»£c gia háº¡n
+      // SECURITY CHECK: Chỉ chủ nhân đơn hàng mới được gia hạn
       if (currentUserId && booking.user.id !== currentUserId) {
         throw new BadRequestException(
-          'Báº¡n khÃ´ng cÃ³ quyá»n gia háº¡n Ä‘Æ¡n hÃ ng nÃ y',
+          'Bạn không có quyền gia hạn đơn hàng này',
         );
       }
 
-      // 2. Láº¥y Ä‘Æ¡n giÃ¡ thá»±c táº¿ theo Zone (Khu vá»±c) tá»« Database
+      // 2. Lấy đơn giá thực tế theo Zone (Khu vực) từ Database
       const pricing = await manager.findOne(PricingRule, {
         where: { parkingZone: { id: Number(booking.slot.parkingZone.id) } },
         order: { id: 'DESC' },
       });
-      console.log('DEBUG: TÃ¬m giÃ¡ cho Zone ID =', booking.slot.parkingZone.id);
-      console.log('DEBUG: Káº¿t quáº£ Pricing =', pricing);
+      console.log('DEBUG: Tìm giá cho Zone ID =', booking.slot.parkingZone.id);
+      console.log('DEBUG: Kết quả Pricing =', pricing);
 
       const pricePerHour = pricing?.price_per_hour || 0;
       const priceDay = pricing?.price_per_day || 0;
-      const zoneName = booking.slot.parkingZone.zone_name || 'Khu vá»±c';
+      const zoneName = booking.slot.parkingZone.zone_name || 'Khu vực';
 
       const oldEndTime = dayjs(booking.end_time);
       const newEndTime = dayjs(extendDto.new_end_time);
 
       if (newEndTime.isBefore(oldEndTime) || newEndTime.isSame(oldEndTime)) {
-        throw new BadRequestException('Giá» káº¿t thÃºc má»›i pháº£i sau giá» hiá»‡n táº¡i');
+        throw new BadRequestException('Giờ kết thúc mới phải sau giờ hiện tại');
       }
 
-      // 3. Kiá»ƒm tra xung Ä‘á»™t Slot
+      // 3. Kiểm tra xung đột Slot
       const conflict = await manager
         .createQueryBuilder(Booking, 'b')
         .where('b.slot_id = :slotId', { slotId: booking.slot.id })
@@ -344,10 +344,10 @@ export class BookingService {
 
       if (conflict)
         throw new BadRequestException(
-          'Vá»‹ trÃ­ nÃ y Ä‘Ã£ cÃ³ ngÆ°á»i Ä‘áº·t trÆ°á»›c trong khung giá» báº¡n muá»‘n gia háº¡n!',
+          'Vị trí này đã có người đặt trước trong khung giờ bạn muốn gia hạn!',
         );
 
-      // 3.5. Kiá»ƒm tra giá» hoáº¡t Ä‘á»™ng cá»§a bÃ£i xe
+      // 3.5. Kiểm tra giờ hoạt động của bãi xe
       const parkingLot = booking.slot.parkingZone.parkingFloor.parkingLot;
       
       const lotOpenTime = parkingLot.open_time;
@@ -362,43 +362,43 @@ export class BookingService {
         closeStr = dayjs(lotCloseTime).format('HH:mm');
         const extendTimeStr = newEndTime.format('HH:mm');
 
-        // 1. Kiá»ƒm tra trong khoáº£ng giá» hoáº¡t Ä‘á»™ng
+        // 1. Kiểm tra trong khoảng giờ hoạt động
         if (openStr < closeStr) {
           if (extendTimeStr < openStr || extendTimeStr > closeStr) {
-            validationError = `BÃ£i xe chá»‰ hoáº¡t Ä‘á»™ng tá»« ${openStr} Ä‘áº¿n ${closeStr}. Vui lÃ²ng chá»n giá» gia háº¡n trong khoáº£ng nÃ y.`;
+            validationError = `Bãi xe chỉ hoạt động từ ${openStr} đến ${closeStr}. Vui lòng chọn giờ gia hạn trong khoảng này.`;
           }
         } else if (openStr > closeStr) {
           if (extendTimeStr < openStr && extendTimeStr > closeStr) {
-            validationError = `BÃ£i xe chá»‰ hoáº¡t Ä‘á»™ng tá»« ${openStr} Ä‘áº¿n ${closeStr}. Vui lÃ²ng chá»n giá» gia háº¡n trong khoáº£ng nÃ y.`;
+            validationError = `Bãi xe chỉ hoạt động từ ${openStr} đến ${closeStr}. Vui lòng chọn giờ gia hạn trong khoảng này.`;
           }
         }
 
-        // 2. Kiá»ƒm tra gia háº¡n qua Ä‘Ãªm (náº¿u khÃ´ng pháº£i 24/7)
+        // 2. Kiểm tra gia hạn qua đêm (nếu không phải 24/7)
         const isOpen247 = openStr === '00:00' && closeStr === '23:59';
         if (!validationError && !isOpen247) {
           const oldDateStr = dayjs(booking.start_time).format('YYYY-MM-DD');
           const newEndDateStr = newEndTime.format('YYYY-MM-DD');
           if (oldDateStr !== newEndDateStr) {
-            validationError = 'BÃ£i xe khÃ´ng há»— trá»£ gia háº¡n qua Ä‘Ãªm. Vui lÃ²ng chá»n giá» káº¿t thÃºc trong cÃ¹ng ngÃ y.';
+            validationError = 'Bãi xe không hỗ trợ gia hạn qua đêm. Vui lòng chọn giờ kết thúc trong cùng ngày.';
           }
         }
       }
 
-      // Náº¿u thá»±c hiá»‡n gia háº¡n tháº­t vÃ  cÃ³ lá»—i -> Cháº·n láº¡i
+      // Nếu thực hiện gia hạn thật và có lỗi -> Chặn lại
       if (!extendDto.isPreview && validationError) {
         throw new BadRequestException(validationError);
       }
 
-      // 4. ÃP Dá»¤NG CÃ”NG THá»¨C Äá»’NG NHáº¤T Vá»šI FRONTEND
+      // 4. ÁP DỤNG CÔNG THỨC ĐỒNG NHẤT VỚI FRONTEND
       const isSameDay = oldEndTime.isSame(newEndTime, 'day');
       const totalHoursExtend = newEndTime.diff(oldEndTime, 'hour', true);
 
       let extraAmount = 0;
       if (isSameDay) {
-        // 1. Trong cÃ¹ng 1 ngÃ y: TÃ­nh theo giá», lÃ m trÃ²n lÃªn
+        // 1. Trong cùng 1 ngày: Tính theo giờ, làm tròn lên
         extraAmount = Math.ceil(totalHoursExtend) * pricePerHour;
       } else {
-        // 2. Qua Ä‘Ãªm hoáº·c nhiá»u ngÃ y: TÃ­nh theo ngÃ y
+        // 2. Qua đêm hoặc nhiều ngày: Tính theo ngày
         const numberOfDays = Math.ceil(totalHoursExtend / 24);
         extraAmount = numberOfDays * priceDay;
       }
@@ -407,7 +407,7 @@ export class BookingService {
       const remainingMinutes = Math.round((totalHoursExtend % 24) * 60);
       const totalMinutesExtend = Math.round(totalHoursExtend * 60);
 
-      // Tráº£ vá» Preview hiá»ƒn thá»‹ trÃªn UI
+      // Trả về Preview hiển thị trên UI
       if (extendDto.isPreview) {
         return {
           data: {
@@ -429,8 +429,8 @@ export class BookingService {
       }
 
 
-      // 5. Táº¡o hÃ³a Ä‘Æ¡n gia háº¡n (Tráº¡ng thÃ¡i PENDING Ä‘á»ƒ thu tiá»n máº·t táº¡i quáº§y khi check-out)
-      // 5. Thanh toÃ¡n thá»±c táº¿
+      // 5. Tạo hóa đơn gia hạn (Trạng thái PENDING để thu tiền mặt tại quầy khi check-out)
+      // 5. Thanh toán thực tế
       if (extraAmount > 0) {
         const invoiceData: any = {
           booking: booking,
@@ -438,7 +438,7 @@ export class BookingService {
           discount_amount: 0,
           total: extraAmount,
           tax: 0,
-          description: `Gia háº¡n thÃªm ${days > 0 ? days + ' ngÃ y ' : ''}${remainingMinutes} phÃºt táº¡i ${zoneName}`,
+          description: `Gia hạn thêm ${days > 0 ? days + ' ngày ' : ''}${remainingMinutes} phút tại ${zoneName}`,
           status: InvoiceStatus.PENDING,
         };
 
@@ -446,11 +446,11 @@ export class BookingService {
         await manager.save(newInvoice);
       }
 
-      // 6. Cáº­p nháº­t giá» má»›i vÃ o database
+      // 6. Cập nhật giờ mới vào database
       booking.end_time = newEndTime.toDate();
       const updatedBooking = await manager.save(booking);
 
-      // Activity log cho viá»‡c táº¡o má»›i booking
+      // Activity log cho việc tạo mới booking
       this.activityService.templateforBookingActivity(
         updatedBooking.id,
         updatedBooking.user.id,
@@ -459,7 +459,7 @@ export class BookingService {
       );
 
       return {
-        message: 'Gia háº¡n thÃ nh cÃ´ng',
+        message: 'Gia hạn thành công',
         data: updatedBooking,
       };
     });
@@ -474,24 +474,24 @@ export class BookingService {
     imageUrl?: string,
   ) {
     console.log(
-      `>>> [scanQRCode] Báº®T Äáº¦U QUÃ‰T: content="${content}", gateId=${gateId}, detectedPlate="${detectedPlate}"`,
+      `>>> [scanQRCode] BẮT ĐẦU QUÉT: content="${content}", gateId=${gateId}, detectedPlate="${detectedPlate}"`,
     );
     const trimmedContent = content?.trim();
 
-    // 1. Kiá»ƒm tra cá»•ng
+    // 1. Kiểm tra cổng
     const gate = await this.checkLogRepository.manager.findOne(Gate, {
       where: { id: gateId },
       relations: ['parkingLot', 'parkingLot.owner'],
     });
     if (!gate) {
-      console.error(`[scanQRCode] Lá»–I: Cá»•ng ${gateId} khÃ´ng tá»“n táº¡i`);
-      throw new NotFoundException('Cá»•ng khÃ´ng tá»“n táº¡i');
+      console.error(`[scanQRCode] LỖI: Cổng ${gateId} không tồn tại`);
+      throw new NotFoundException('Cổng không tồn tại');
     }
 
-    // SECURITY CHECK: Kiá»ƒm tra quyá»n truy cáº­p bÃ£i xe cá»§a ngÆ°á»i quÃ©t
+    // SECURITY CHECK: Kiểm tra quyền truy cập bãi xe của người quét
     await this.parkingLotService.validateLotAccess(gate.parkingLot.id, user);
 
-    // 2. Kiá»ƒm tra mÃ£ QR
+    // 2. Kiểm tra mã QR
     const qrCode = await this.qrcodeRepository.findOne({
       where: { content: trimmedContent },
       relations: [
@@ -509,23 +509,23 @@ export class BookingService {
 
     if (!qrCode) {
       console.error(
-        `[scanQRCode] Lá»–I: KhÃ´ng tÃ¬m tháº¥y QR content="${trimmedContent}"`,
+        `[scanQRCode] LỖI: Không tìm thấy QR content="${trimmedContent}"`,
       );
-      throw new NotFoundException('MÃ£ QR khÃ´ng tá»“n táº¡i trong há»‡ thá»‘ng');
+      throw new NotFoundException('Mã QR không tồn tại trong hệ thống');
     }
 
     if (qrCode.status !== 'active') {
       console.error(
-        `[scanQRCode] Lá»–I: QR content="${trimmedContent}" Ä‘ang á»Ÿ tráº¡ng thÃ¡i ${qrCode.status}`,
+        `[scanQRCode] LỖI: QR content="${trimmedContent}" đang ở trạng thái ${qrCode.status}`,
       );
       throw new BadRequestException(
-        `MÃ£ QR Ä‘Ã£ ${qrCode.status === 'used' ? 'Ä‘Æ°á»£c sá»­ dá»¥ng' : 'háº¿t háº¡n hoáº·c khÃ´ng hiá»‡u lá»±c'}`,
+        `Mã QR đã ${qrCode.status === 'used' ? 'được sử dụng' : 'hết hạn hoặc không hiệu lực'}`,
       );
     }
 
     const booking = qrCode.booking;
 
-    // 3. SO KHá»šP BIá»‚N Sá» XE (Sá»¬ Dá»¤NG LEVENSHTEIN DISTANCE)
+    // 3. SO KHỚP BIỂN SỐ XE (SỬ DỤNG LEVENSHTEIN DISTANCE)
     if (detectedPlate && booking.vehicle) {
       const cleanDetected = detectedPlate
         .toUpperCase()
@@ -534,9 +534,9 @@ export class BookingService {
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, '');
 
-      console.log('So khá»›p:', cleanDetected, 'vs', cleanRegistered);
+      console.log('So khớp:', cleanDetected, 'vs', cleanRegistered);
 
-      // Thuáº­t toÃ¡n Levenshtein Distance Ä‘á»ƒ tÃ­nh Ä‘á»™ lá»‡ch chuá»—i
+      // Thuật toán Levenshtein Distance để tính độ lệch chuỗi
       const getLevenshteinDistance = (a: string, b: string) => {
         const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i]);
         for (let j = 1; j <= b.length; j++) matrix[0][j] = j;
@@ -545,9 +545,9 @@ export class BookingService {
           for (let j = 1; j <= b.length; j++) {
             const cost = a[i - 1] === b[j - 1] ? 0 : 1;
             matrix[i][j] = Math.min(
-              matrix[i - 1][j] + 1, // xÃ³a
-              matrix[i][j - 1] + 1, // thÃªm
-              matrix[i - 1][j - 1] + cost, // thay tháº¿
+              matrix[i - 1][j] + 1, // xóa
+              matrix[i][j - 1] + 1, // thêm
+              matrix[i - 1][j - 1] + cost, // thay thế
             );
           }
         }
@@ -562,12 +562,12 @@ export class BookingService {
 
       if (!isMatch) {
         throw new BadRequestException(
-          `Biá»ƒn sá»‘ khÃ´ng khá»›p! Há»‡ thá»‘ng lá»c Ä‘Æ°á»£c: ${cleanDetected}, ÄÄƒng kÃ½: ${booking.vehicle.plate_number}`,
+          `Biển số không khớp! Hệ thống lọc được: ${cleanDetected}, Đăng ký: ${booking.vehicle.plate_number}`,
         );
       }
     } else if (!detectedPlate) {
       throw new BadRequestException(
-        'Vui lÃ²ng cung cáº¥p áº£nh biá»ƒn sá»‘ xe Ä‘á»ƒ Ä‘á»‘i chiáº¿u',
+        'Vui lòng cung cấp ảnh biển số xe để đối chiếu',
       );
     }
 
@@ -576,14 +576,14 @@ export class BookingService {
       booking.status === BookingStatus.CONFIRMED ||
       booking.status === BookingStatus.PENDING
     ) {
-      // RÃ ng buá»™c: Check-in khÃ´ng Ä‘Æ°á»£c phÃ©p táº¡i cá»•ng chá»‰ dÃ nh cho lá»‘i ra (OUT)
+      // Ràng buộc: Check-in không được phép tại cổng chỉ dành cho lối ra (OUT)
       if (gate.type === 'OUT') {
         throw new BadRequestException(
-          `Cá»•ng "${gate.name}" chá»‰ dÃ nh cho lá»‘i ra. Vui lÃ²ng quÃ©t táº¡i cá»•ng lá»‘i vÃ o.`,
+          `Cổng "${gate.name}" chỉ dành cho lối ra. Vui lòng quét tại cổng lối vào.`,
         );
       }
 
-      // Kiá»ƒm tra Ä‘áº¿n sá»›m (Check-in sá»›m).Cho phÃ©p check-in sá»›m 10p
+      // Kiểm tra đến sớm (Check-in sớm).Cho phép check-in sớm 10p
       const now = new Date();
       if (now < booking.start_time) {
         const diffMs = booking.start_time.getTime() - now.getTime();
@@ -591,19 +591,19 @@ export class BookingService {
 
         if (diffMins > 10) {
           throw new BadRequestException(
-            `Báº¡n Ä‘áº¿n quÃ¡ sá»›m. Vui lÃ²ng quay láº¡i sau ${diffMins - 10} phÃºt ná»¯a (há»‡ thá»‘ng cho phÃ©p check-in sá»›m tá»‘i Ä‘a 10 phÃºt).`,
+            `Bạn đến quá sớm. Vui lòng quay lại sau ${diffMins - 10} phút nữa (hệ thống cho phép check-in sớm tối đa 10 phút).`,
           );
         }
-        // Náº¿u diffMins <= 10, tiáº¿p tá»¥c xá»­ lÃ½ nhÆ°ng cÃ³ thá»ƒ Ä‘Ã¡nh dáº¥u Ä‘á»ƒ Ä‘á»•i message thÃ nh "ChÃ o má»«ng báº¡n Ä‘áº¿n sá»›m!"
+        // Nếu diffMins <= 10, tiếp tục xử lý nhưng có thể đánh dấu để đổi message thành "Chào mừng bạn đến sớm!"
       }
 
-      // Kiá»ƒm tra quÃ¡ háº¡n check-in (Náº¿u giá» hiá»‡n táº¡i > end_time)
+      // Kiểm tra quá hạn check-in (Nếu giờ hiện tại > end_time)
       if (now > booking.end_time) {
         console.warn(
-          `[scanQRCode] Booking #${booking.id} Ä‘Ã£ quÃ¡ háº¡n. Äang tá»± Ä‘á»™ng dá»n dáº¹p...`,
+          `[scanQRCode] Booking #${booking.id} đã quá hạn. Đang tự động dọn dẹp...`,
         );
 
-        // Tá»± Ä‘á»™ng giáº£i phÃ³ng slot vÃ  Ä‘Ã¡nh dáº¥u booking káº¿t thÃºc
+        // Tự động giải phóng slot và đánh dấu booking kết thúc
         booking.status = BookingStatus.COMPLETED;
         qrCode.status = 'used';
 
@@ -611,7 +611,7 @@ export class BookingService {
           booking.slot.status = SlotStatus.AVAILABLE;
           await this.parkingSlotRepository.save(booking.slot);
           console.log(
-            `[scanQRCode] Slot ${booking.slot.code} Ä‘Ã£ Ä‘Æ°á»£c giáº£i phÃ³ng.`,
+            `[scanQRCode] Slot ${booking.slot.code} đã được giải phóng.`,
           );
         }
 
@@ -619,7 +619,7 @@ export class BookingService {
         await this.bookingRepository.save(booking);
 
         throw new BadRequestException(
-          'Báº¡n Ä‘Ã£ quÃ¡ háº¡n check-in (thá»i gian Ä‘áº·t chá»— Ä‘Ã£ káº¿t thÃºc). Há»‡ thá»‘ng Ä‘Ã£ tá»± Ä‘á»™ng káº¿t thÃºc lÆ°á»£t Ä‘áº·t nÃ y vÃ  giáº£i phÃ³ng vá»‹ trÃ­ Ä‘á»—.',
+          'Bạn đã quá hạn check-in (thời gian đặt chỗ đã kết thúc). Hệ thống đã tự động kết thúc lượt đặt này và giải phóng vị trí đỗ.',
         );
       }
 
@@ -628,7 +628,7 @@ export class BookingService {
 
       const newLog = this.checkLogRepository.create({
         booking: booking,
-        gate: { id: gateId }, // Sá»­ dá»¥ng quan há»‡ gate vá»›i ID truyá»n vÃ o tá»« mobile/camera
+        gate: { id: gateId }, // Sử dụng quan hệ gate với ID truyền vào từ mobile/camera
         check_status: 'in',
         time: new Date(),
         image_url: imageUrl,
@@ -638,11 +638,11 @@ export class BookingService {
       await this.bookingRepository.save(booking);
 
       let successMessage = isAlreadyPaid
-        ? ' Check-in thÃ nh cÃ´ng!'
-        : 'Check in thÃ nh cÃ´ng. Vui lÃ²ng thu phÃ­';
+        ? ' Check-in thành công!'
+        : 'Check in thành công. Vui lòng thu phí';
 
       if (now < booking.start_time) {
-        successMessage = `Check-in thÃ nh cÃ´ng.ChÃ o má»«ng báº¡n Ä‘áº¿n sá»›m!${isAlreadyPaid ? '' : ' Vui lÃ²ng thu phÃ­.'}`;
+        successMessage = `Check-in thành công.Chào mừng bạn đến sớm!${isAlreadyPaid ? '' : ' Vui lòng thu phí.'}`;
       }
 
       return {
@@ -653,14 +653,14 @@ export class BookingService {
 
     //check-out
     if (booking.status === BookingStatus.ONGOING) {
-      // RÃ ng buá»™c: Check-out khÃ´ng Ä‘Æ°á»£c phÃ©p táº¡i cá»•ng chá»‰ dÃ nh cho lá»‘i vÃ o (IN)
+      // Ràng buộc: Check-out không được phép tại cổng chỉ dành cho lối vào (IN)
       if (gate.type === 'IN') {
         throw new BadRequestException(
-          `Cá»•ng "${gate.name}" chá»‰ dÃ nh cho lá»‘i vÃ o. Vui lÃ²ng quÃ©t táº¡i cá»•ng lá»‘i ra.`,
+          `Cổng "${gate.name}" chỉ dành cho lối vào. Vui lòng quét tại cổng lối ra.`,
         );
       }
 
-      // 4. TÃNH PHÃ PHáº T Náº¾U RA MUá»˜N (15 PHÃšT Ã‚N Háº N)
+      // 4. TÍNH PHÍ PHẠT NẾU RA MUỘN (15 PHÚT ÂN HẠN)
       const pricing = await this.dataSource.manager.findOne(PricingRule, {
         where: { parkingZone: { id: Number(booking.slot.parkingZone.id) } },
         order: { id: 'DESC' },
@@ -674,23 +674,23 @@ export class BookingService {
         pricing?.price_per_day || 0,
       );
 
-      // 4. KIá»‚M TRA PHÃ PHáº T (QUÃ Háº N)
+      // 4. KIỂM TRA PHÍ PHẠT (QUÁ HẠN)
       if (penaltyInfo.isLate && penaltyInfo.penaltyFee > 0) {
         return {
           requirePayment: true,
           type: 'out',
-          message: `KhÃ¡ch Ä‘Ã£ quÃ¡ thá»i gian Ä‘á»— xe: ${penaltyInfo.penaltyFee.toLocaleString()}Ä‘`,
+          message: `Khách đã quá thời gian đỗ xe: ${penaltyInfo.penaltyFee.toLocaleString()}đ`,
           penalty: {
             ...penaltyInfo,
             bookingId: booking.id,
             plate: booking.vehicle?.plate_number || detectedPlate || "???",
           },
           imageUrl: imageUrl,
-          content: content // Tráº£ vá» content QR Ä‘á»ƒ confirmPayment dÃ¹ng
+          content: content // Trả về content QR để confirmPayment dùng
         };
       }
 
-      // 5. TÃNH PHÃ GIA Háº N CHÆ¯A THANH TOÃN
+      // 5. TÍNH PHÍ GIA HẠN CHƯA THANH TOÁN
       const pendingExtensionInvoices = booking.invoice?.filter(
         (inv) => inv.status === InvoiceStatus.PENDING && Number(inv.total) > 0
       ) || [];
@@ -702,7 +702,7 @@ export class BookingService {
           extensionFee,
           bookingId: booking.id,
           plate: booking.vehicle?.plate_number || detectedPlate || "???",
-          message: `KhÃ¡ch cÃ³ phÃ­ gia háº¡n chÆ°a thanh toÃ¡n: ${extensionFee.toLocaleString()}Ä‘`,
+          message: `Khách có phí gia hạn chưa thanh toán: ${extensionFee.toLocaleString()}đ`,
           type: 'out',
           imageUrl: imageUrl,
           content: content
@@ -730,32 +730,32 @@ export class BookingService {
       await this.bookingRepository.save(booking);
 
       return {
-        message: 'Checkout thÃ nh cÃ´ng!',
+        message: 'Checkout thành công!',
         type: 'out',
         imageUrl: imageUrl,
       };
     }
     throw new BadRequestException(
-      'tráº¡ng thÃ¡i booking khÃ´ng há»£p lá»‡ Ä‘á»ƒ thá»±c hiá»‡n',
+      'trạng thái booking không hợp lệ để thực hiện',
     );
   }
 
   async confirmPaymentAndCheckout(data: { bookingId: number, gateId: number, imageUrl?: string, content: string, penaltyFee?: number }) {
     return await this.dataSource.transaction(async (manager) => {
-      // 1. Láº¥y thÃ´ng tin booking
+      // 1. Lấy thông tin booking
       const booking = await manager.findOne(Booking, {
         where: { id: data.bookingId },
         relations: ['slot', 'invoice', 'vehicle'],
       });
 
-      if (!booking) throw new NotFoundException('KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n Ä‘áº·t chá»—');
+      if (!booking) throw new NotFoundException('Không tìm thấy đơn đặt chỗ');
 
-      // 2. Láº¥y QR Code
+      // 2. Lấy QR Code
       const qrCode = await manager.findOne(QRCode, {
         where: { content: data.content },
       });
 
-      // 3. Cáº­p nháº­t cÃ¡c hÃ³a Ä‘Æ¡n PENDING thÃ nh PAID (XÃ¡c nháº­n Ä‘Ã£ nháº­n tiá»n máº·t)
+      // 3. Cập nhật các hóa đơn PENDING thành PAID (Xác nhận đã nhận tiền mặt)
       const pendingInvoices = booking.invoice?.filter(
         (inv) => inv.status === InvoiceStatus.PENDING
       );
@@ -766,7 +766,7 @@ export class BookingService {
         }
       }
 
-      // 4. Náº¿u cÃ³ phÃ­ pháº¡t (truyá»n tá»« frontend), táº¡o hÃ³a Ä‘Æ¡n PAID
+      // 4. Nếu có phí phạt (truyền từ frontend), tạo hóa đơn PAID
       if (data.penaltyFee && data.penaltyFee > 0) {
         const penaltyInvoice = manager.create(Invoice, {
           booking,
@@ -778,7 +778,7 @@ export class BookingService {
         await manager.save(penaltyInvoice);
       }
 
-      // 4. Cáº­p nháº­t tráº¡ng thÃ¡i
+      // 4. Cập nhật trạng thái
       booking.status = BookingStatus.COMPLETED;
       if (booking.slot) {
         booking.slot.status = SlotStatus.AVAILABLE;
@@ -790,7 +790,7 @@ export class BookingService {
       }
       await manager.save(booking);
 
-      // 5. Táº¡o CheckLog (Ra)
+      // 5. Tạo CheckLog (Ra)
       const newLog = manager.create(CheckLog, {
         booking: booking,
         gate: { id: data.gateId } as any,
@@ -801,7 +801,7 @@ export class BookingService {
       await manager.save(newLog);
 
       return {
-        message: 'XÃ¡c nháº­n thanh toÃ¡n vÃ  hoÃ n táº¥t check-out thÃ nh cÃ´ng!',
+        message: 'Xác nhận thanh toán và hoàn tất check-out thành công!',
         bookingId: booking.id
       };
     });
@@ -872,14 +872,14 @@ export class BookingService {
 
     if (!booking) {
       throw new NotFoundException(
-        'KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n Ä‘áº·t chá»— hoáº¡t Ä‘á»™ng táº¡i vá»‹ trÃ­ nÃ y',
+        'Không tìm thấy đơn đặt chỗ hoạt động tại vị trí này',
       );
     }
 
     return booking;
   }
 
-  // danh sÃ¡ch cÃ¡c xe Ä‘áº·t(Ve-QR)
+  // danh sách các xe đặt(Ve-QR)
   async getLatestActiveBooking(vehicleId: number, userId: string) {
     const data = await this.bookingRepository.findOne({
       where: [
@@ -896,12 +896,12 @@ export class BookingService {
         'slot.parkingZone.parkingFloor.parkingLot.owner',
         'qrCode',
       ],
-      // Quan trá»ng: Sáº¯p xáº¿p theo ID hoáº·c thá»i gian táº¡o giáº£m dáº§n Ä‘á»ƒ láº¥y cÃ¡i má»›i nháº¥t
+      // Quan trọng: Sắp xếp theo ID hoặc thời gian tạo giảm dần để lấy cái mới nhất
       order: {
         created_at: 'DESC',
       },
     });
-    console.log('>>> [BE] Káº¿t quáº£ tÃ¬m kiáº¿m:', data);
+    console.log('>>> [BE] Kết quả tìm kiếm:', data);
     return data;
   }
 
@@ -998,7 +998,7 @@ export class BookingService {
     });
 
     if (!booking) {
-      throw new NotFoundException('khÃ´ng cÃ³ booking');
+      throw new NotFoundException('không có booking');
     }
 
     await this.bookingRepository.delete(id);
@@ -1009,11 +1009,11 @@ export class BookingService {
       `user #${booking.user?.id ?? 'N/A'}`;
     const parkingLot = booking.slot?.parkingZone?.parkingFloor?.parkingLot;
     const parkingLotName =
-      parkingLot?.name || `bÃ£i #${parkingLot?.id ?? 'N/A'}`;
+      parkingLot?.name || `bãi #${parkingLot?.id ?? 'N/A'}`;
 
     await this.activityService.logActivity({
       type: ActivityType.BOOKING_CANCELED,
-      content: `NgÆ°á»i dÃ¹ng ${userName} Ä‘Ã£ há»§y chá»— táº¡i ${parkingLotName}`,
+      content: `Người dùng ${userName} đã hủy chỗ tại ${parkingLotName}`,
       status: ActivityStatus.WARNING,
       userId: booking.user?.id,
       meta: {
@@ -1034,7 +1034,7 @@ export class BookingService {
     });
 
     if (checkqrcode) {
-      throw new BadRequestException('Ä‘Ã£ cÃ³ qr cho booking nÃ y');
+      throw new BadRequestException('đã có qr cho booking này');
     }
 
     const newQRcode = this.qrcodeRepository.create({
@@ -1070,7 +1070,7 @@ export class BookingService {
     });
 
     if (!booking) {
-      throw new NotFoundException('khÃ´ng tÃ¬m tháº¥y booking');
+      throw new NotFoundException('không tìm thấy booking');
     }
 
     const displayName = booking.user.profile.name;
@@ -1093,7 +1093,7 @@ export class BookingService {
     );
   }
 
-  // ================== Thá»‘ng kÃª sá»‘ lÆ°á»£ng booking hÃ´m nay (ADMIN) =================
+  // ================== Thống kê số lượng booking hôm nay (ADMIN) =================
   async countTodayBookings() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1108,7 +1108,7 @@ export class BookingService {
     });
   }
 
-  // =========== TÃ­nh doanh thu trong thÃ¡ng (ADMIN) ================
+  // =========== Tính doanh thu trong tháng (ADMIN) ================
   async calculateMonthlyRevenue() {
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -1167,7 +1167,7 @@ export class BookingService {
         start: firstDayOfThisMonth,
         end: firstDayOfNextMonth,
       })
-      // Táº¡m thá»i bá» qua status PAID Ä‘á»ƒ hiá»ƒn thá»‹ dá»¯ liá»‡u náº¿u DB chÆ°a cÃ³ payment thá»±c táº¿
+      // Tạm thời bỏ qua status PAID để hiển thị dữ liệu nếu DB chưa có payment thực tế
       // .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
       .select('SUM(COALESCE(i.total, 0))', 'total')
       .getRawOne();
@@ -1187,7 +1187,7 @@ export class BookingService {
         start: firstDayOfLastMonth,
         end: firstDayOfThisMonth,
       })
-      // Thá»‘ng kÃª doanh thu dá»± kiáº¿n tá»« cÃ¡c Ä‘Æ¡n há»£p lá»‡
+      // Thống kê doanh thu dự kiến từ các đơn hợp lệ
       .andWhere('b.status IN (:...statuses)', {
         statuses: [
           BookingStatus.CONFIRMED,
@@ -1272,7 +1272,7 @@ export class BookingService {
       .where('owner.id = :ownerId', { ownerId })
       .andWhere(lotId ? 'l.id = :lotId' : '1=1', { lotId })
       .andWhere('EXTRACT(YEAR FROM b.start_time) = :year', { year })
-      // Táº¡m thá»i bá» qua status PAID Ä‘á»ƒ tháº¥y dá»¯ liá»‡u dá»± kiáº¿n
+      // Tạm thời bỏ qua status PAID để thấy dữ liệu dự kiến
       // .andWhere('i.status = :status', { status: InvoiceStatus.PAID })
       .andWhere('b.status IN (:...statuses)', {
         statuses: [
@@ -1312,7 +1312,7 @@ export class BookingService {
     endDate?: string,
   ) {
     try {
-      // Náº¿u khÃ´ng cÃ³ ngÃ y, máº·c Ä‘á»‹nh láº¥y thÃ¡ng hiá»‡n táº¡i
+      // Nếu không có ngày, mặc định lấy tháng hiện tại
       const start = startDate
         ? new Date(startDate)
         : dayjs().startOf('month').toDate();
@@ -1321,7 +1321,7 @@ export class BookingService {
       const query = this.bookingRepository
         .createQueryBuilder('b')
         .innerJoin('b.invoice', 'i')
-        .leftJoin('i.payment', 'p') // DÃ¹ng leftJoin Ä‘á»ƒ khÃ´ng bá» sÃ³t cÃ¡c hÃ³a Ä‘Æ¡n chÆ°a cÃ³ báº£n ghi payment (nhÆ° thanh toÃ¡n VÃ­)
+        .leftJoin('i.payment', 'p') // Dùng leftJoin để không bỏ sót các hóa đơn chưa có bản ghi payment (như thanh toán Ví)
         .innerJoin('b.slot', 's')
         .innerJoin('s.parkingZone', 'z')
         .innerJoin('z.parkingFloor', 'f')
@@ -1336,7 +1336,7 @@ export class BookingService {
       }
 
       const rawData = await query
-        .select("COALESCE(p.method, 'WALLET')", 'method') // Máº·c Ä‘á»‹nh lÃ  WALLET náº¿u khÃ´ng cÃ³ báº£n ghi payment
+        .select("COALESCE(p.method, 'WALLET')", 'method') // Mặc định là WALLET nếu không có bản ghi payment
         .addSelect('COUNT(DISTINCT i.id)', 'count')
         .addSelect('SUM(i.total)', 'total')
         .groupBy("COALESCE(p.method, 'WALLET')")
@@ -1375,7 +1375,7 @@ export class BookingService {
         start: startOfDay,
         end: endOfDay,
       })
-      // Thá»‘ng kÃª cáº£ nhá»¯ng Ä‘Æ¡n Ä‘ang hoáº¡t Ä‘á»™ng
+      // Thống kê cả những đơn đang hoạt động
       .andWhere('b.status IN (:...statuses)', {
         statuses: [
           BookingStatus.CONFIRMED,
@@ -1419,7 +1419,7 @@ export class BookingService {
       .innerJoin('f.parkingLot', 'l')
       .innerJoin('l.owner', 'owner')
       .where('owner.id = :ownerId', { ownerId })
-      // Thá»‘ng kÃª top bÃ£i xe dá»±a trÃªn táº¥t cáº£ Ä‘Æ¡n Ä‘áº·t
+      // Thống kê top bãi xe dựa trên tất cả đơn đặt
       .andWhere('b.status IN (:...statuses)', {
         statuses: [
           BookingStatus.CONFIRMED,
@@ -1431,7 +1431,7 @@ export class BookingService {
       .addSelect('l.name', 'name')
       .addSelect('SUM(COALESCE(i.total, 0))', 'revenue')
       .addSelect('COUNT(DISTINCT b.id)', 'bookings')
-      // ThÃªm subquery Ä‘á»ƒ tÃ­nh tá»‰ lá»‡ láº¥p Ä‘áº§y thá»±c táº¿ cho tá»«ng bÃ£i
+      // Thêm subquery để tính tỉ lệ lấp đầy thực tế cho từng bãi
       .addSelect(
         `(SELECT (COUNT(s2.id) FILTER (WHERE s2.status = 'OCCUPIED'))::float / NULLIF(COUNT(s2.id), 0) * 100 
           FROM parking_slots s2 
@@ -1494,7 +1494,7 @@ export class BookingService {
     });
   }
 
-  // =========== Äáº¿m sÃ´ lÆ°á»£ng booking cá»§a 1 user ================
+  // =========== Đếm sô lượng booking của 1 user ================
   async countBookingsByUserId(userId: string) {
     return this.bookingRepository.count({
       where: {
@@ -1503,7 +1503,7 @@ export class BookingService {
     });
   }
 
-  // =========== TÃ­nh tá»•ng chi tiÃªu cá»§a 1 user ================
+  // =========== Tính tổng chi tiêu của 1 user ================
   async calculateTotalSpendingByUserId(userId: string) {
     const result = await this.bookingRepository
       .createQueryBuilder('booking')
@@ -1517,7 +1517,7 @@ export class BookingService {
     return parseFloat(result.total) || 0;
   }
 
-  // =========== Tá»•ng doanh thu booking cá»§a 1 bÃ£i Ä‘á»— xe ================
+  // =========== Tổng doanh thu booking của 1 bãi đỗ xe ================
   async calculateTotalRevenueByOwnerId(ownerId: string) {
     const result = await this.bookingRepository
       .createQueryBuilder('booking')
@@ -1536,23 +1536,23 @@ export class BookingService {
     return this.formatToMillions(rawTotal);
   }
 
-  // =========== ThÃªm má»™t hÃ m helper nhá» trong cÃ¹ng class Ä‘á»ƒ tÃ¡i sá»­ dá»¥ng
+  // =========== Thêm một hàm helper nhỏ trong cùng class để tái sử dụng
   private formatToMillions(amount: number): string {
-    if (amount === 0) return '0 Tr â‚«';
+    if (amount === 0) return '0 Tr ₫';
 
-    // Chia cho 1 triá»‡u Ä‘á»ƒ láº¥y pháº§n nguyÃªn vÃ  tháº­p phÃ¢n (VD: 5200000 -> 5.2)
+    // Chia cho 1 triệu để lấy phần nguyên và thập phân (VD: 5200000 -> 5.2)
     const millions = amount / 1000000;
 
-    // DÃ¹ng Intl.NumberFormat vá»›i locale 'vi-VN' Ä‘á»ƒ tá»± Ä‘á»™ng dÃ¹ng dáº¥u pháº©y `,`
+    // Dùng Intl.NumberFormat với locale 'vi-VN' để tự động dùng dấu phẩy `,`
     const formattedNumber = new Intl.NumberFormat('vi-VN', {
       minimumFractionDigits: 0,
-      maximumFractionDigits: 1, // Láº¥y tá»‘i Ä‘a 1 chá»¯ sá»‘ tháº­p phÃ¢n giá»‘ng trong áº£nh
+      maximumFractionDigits: 1, // Lấy tối đa 1 chữ số thập phân giống trong ảnh
     }).format(millions);
 
-    return `${formattedNumber} Tr â‚«`;
+    return `${formattedNumber} Tr ₫`;
   }
 
-  // =========== Äáº¿m sá»‘ lÆ°á»£ng booking cá»§a 1 bÃ£i Ä‘á»— xe ================
+  // =========== Đếm số lượng booking của 1 bãi đỗ xe ================
   async countBookingsByOwnerId(ownerId: string) {
     return this.bookingRepository
       .createQueryBuilder('booking')
@@ -1600,7 +1600,7 @@ export class BookingService {
     );
   }
 
-  //lá»‹ch sá»­ check-in check-out
+  //lịch sử check-in check-out
   async getLiveHistory(
     parkingLotId: number,
     page = 1,
@@ -1654,21 +1654,21 @@ export class BookingService {
     return { data, count };
   }
 
-  // ================= UTILS: TÃNH PHÃ QUÃ Háº N =================
+  // ================= UTILS: TÍNH PHÍ QUÁ HẠN =================
   private calculateLatePenalty(
     endTime: Date,
     actualExitTime: Date,
     pricePerHour: number,
     priceDay: number,
   ) {
-    const gracePeriodMinutes = 15; //thá»i gian Ã¢n háº­n 15p. náº¿u ra trÆ°á»›c 15p thÃ¬ khÃ´ng tÃ­nh phÃ­
+    const gracePeriodMinutes = 15; //thời gian ân hạn 15p. nếu ra trước 15p thì không tính phí
     const end = dayjs(endTime);
     const actual = dayjs(actualExitTime);
 
-    // TÃ­nh tá»•ng sá»‘ phÃºt chÃªnh lá»‡ch
+    // Tính tổng số phút chênh lệch
     const diffMinutes = actual.diff(end, 'minute');
 
-    // Náº¿u ra trÆ°á»›c hoáº·c trong thá»i gian Ã¢n háº¡n
+    // Nếu ra trước hoặc trong thời gian ân hạn
     if (diffMinutes <= gracePeriodMinutes) {
       return {
         isLate: false,
@@ -1677,17 +1677,17 @@ export class BookingService {
       };
     }
 
-    // Náº¿u ra muá»™n hÆ¡n thá»i gian Ã¢n háº¡n
+    // Nếu ra muộn hơn thời gian ân hạn
     const lateTime = actual.subtract(gracePeriodMinutes, 'minute');
     const totalHoursLate = lateTime.diff(end, 'hour', true);
     const isSameDay = end.isSame(lateTime, 'day');
 
     let penaltyFee = 0;
     if (isSameDay) {
-      // 1. Trong cÃ¹ng 1 ngÃ y: TÃ­nh theo giá», lÃ m trÃ²n lÃªn
+      // 1. Trong cùng 1 ngày: Tính theo giờ, làm tròn lên
       penaltyFee = Math.ceil(totalHoursLate) * pricePerHour;
     } else {
-      // 2. Qua Ä‘Ãªm hoáº·c nhiá»u ngÃ y: TÃ­nh theo ngÃ y
+      // 2. Qua đêm hoặc nhiều ngày: Tính theo ngày
       const numberOfDays = Math.ceil(totalHoursLate / 24);
       penaltyFee = numberOfDays * priceDay;
     }
