@@ -357,14 +357,34 @@ export class BookingService {
       let openStr = '00:00';
       let closeStr = '23:59';
 
+      const formatDateToVN = (d: any) => {
+        const dateObj = dayjs.isDayjs(d) ? d.toDate() : new Date(d);
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(dateObj);
+      };
+
+      const formatTimeToVN = (d: any) => {
+        const dateObj = dayjs.isDayjs(d) ? d.toDate() : new Date(d);
+        return new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(dateObj);
+      };
+
       if (lotOpenTime && lotCloseTime) {
         openStr = String(lotOpenTime).includes(':')
           ? String(lotOpenTime).substring(0, 5)
-          : dayjs(lotOpenTime).format('HH:mm');
+          : formatTimeToVN(lotOpenTime);
         closeStr = String(lotCloseTime).includes(':')
           ? String(lotCloseTime).substring(0, 5)
-          : dayjs(lotCloseTime).format('HH:mm');
-        const extendTimeStr = newEndTime.format('HH:mm');
+          : formatTimeToVN(lotCloseTime);
+        const extendTimeStr = formatTimeToVN(newEndTime);
 
         // 1. Kiểm tra trong khoảng giờ hoạt động
         if (openStr < closeStr) {
@@ -380,8 +400,8 @@ export class BookingService {
         // 2. Kiểm tra gia hạn qua đêm (nếu không phải 24/7)
         const isOpen247 = openStr === '00:00' && closeStr === '23:59';
         if (!validationError && !isOpen247) {
-          const oldDateStr = dayjs(booking.start_time).format('YYYY-MM-DD');
-          const newEndDateStr = newEndTime.format('YYYY-MM-DD');
+          const oldDateStr = formatDateToVN(booking.start_time);
+          const newEndDateStr = formatDateToVN(newEndTime);
           if (oldDateStr !== newEndDateStr) {
             validationError = 'Bãi xe không hỗ trợ gia hạn qua đêm. Vui lòng chọn giờ kết thúc trong cùng ngày.';
           }
@@ -394,7 +414,7 @@ export class BookingService {
       }
 
       // 4. ÁP DỤNG CÔNG THỨC ĐỒNG NHẤT VỚI FRONTEND
-      const isSameDay = oldEndTime.isSame(newEndTime, 'day');
+      const isSameDay = formatDateToVN(oldEndTime) === formatDateToVN(newEndTime);
       const totalHoursExtend = newEndTime.diff(oldEndTime, 'hour', true);
 
       let extraAmount = 0;
