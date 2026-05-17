@@ -795,12 +795,30 @@ export class ChatbotService {
     const lot = rows[0];
     if (!lot?.open_time || !lot?.close_time) return null;
 
+    const parseTimeToMinutes = (timeVal: any) => {
+      if (!timeVal) return 0;
+      const s = String(timeVal);
+      if (s.includes('T')) {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) {
+          return d.getHours() * 60 + d.getMinutes();
+        }
+      }
+      if (s.includes(':')) {
+        const parts = s.split(':');
+        return Number(parts[0]) * 60 + Number(parts[1] || 0);
+      }
+      const d = new Date(timeVal);
+      if (!isNaN(d.getTime())) {
+        return d.getHours() * 60 + d.getMinutes();
+      }
+      return 0;
+    };
+
     const start = new Date(startTime);
     const end = new Date(endTime);
-    const open = new Date(lot.open_time);
-    const close = new Date(lot.close_time);
-    const openMinutes = open.getHours() * 60 + open.getMinutes();
-    const closeMinutes = close.getHours() * 60 + close.getMinutes();
+    const openMinutes = parseTimeToMinutes(lot.open_time);
+    const closeMinutes = parseTimeToMinutes(lot.close_time);
     const startMinutes = start.getHours() * 60 + start.getMinutes();
     const endMinutes = end.getHours() * 60 + end.getMinutes();
     const format = (mins: number) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;

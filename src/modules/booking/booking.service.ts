@@ -358,8 +358,12 @@ export class BookingService {
       let closeStr = '23:59';
 
       if (lotOpenTime && lotCloseTime) {
-        openStr = dayjs(lotOpenTime).format('HH:mm');
-        closeStr = dayjs(lotCloseTime).format('HH:mm');
+        openStr = String(lotOpenTime).includes(':')
+          ? String(lotOpenTime).substring(0, 5)
+          : dayjs(lotOpenTime).format('HH:mm');
+        closeStr = String(lotCloseTime).includes(':')
+          ? String(lotCloseTime).substring(0, 5)
+          : dayjs(lotCloseTime).format('HH:mm');
         const extendTimeStr = newEndTime.format('HH:mm');
 
         // 1. Kiểm tra trong khoảng giờ hoạt động

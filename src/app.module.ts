@@ -63,9 +63,19 @@ import { ChatbotModule } from './modules/chatbot/chatbot.module';
 })
 export class AppModule {
   constructor(private dataSource: DataSource) {}
-  onModuleInit() {
+  async onModuleInit() {
     if (this.dataSource.isInitialized) {
       console.log('Database connection successfully.');
+      try {
+        await this.dataSource.query(`
+          ALTER TABLE parking_lots 
+          ALTER COLUMN open_time TYPE time WITHOUT TIME ZONE USING open_time::time,
+          ALTER COLUMN close_time TYPE time WITHOUT TIME ZONE USING close_time::time;
+        `);
+        console.log('Successfully altered parking_lots columns open_time and close_time to TIME.');
+      } catch (err) {
+        console.log('Altering parking_lots columns to TIME skipped or already done:', err.message);
+      }
     } else {
       console.error('Failed to connect to the database.');
     }
