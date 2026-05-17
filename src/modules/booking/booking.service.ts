@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -70,7 +70,7 @@ export class BookingService {
 
     private readonly voucherService: VoucherService,
     private readonly voucherCleanupService: VoucherCleanupService,
-  ) {}
+  ) { }
 
   // ================= CREATE BOOKING =================
   async createBooking(bookingdto: CreateBookingDto) {
@@ -349,7 +349,7 @@ export class BookingService {
 
       // 3.5. Kiểm tra giờ hoạt động của bãi xe
       const parkingLot = booking.slot.parkingZone.parkingFloor.parkingLot;
-      
+
       const lotOpenTime = parkingLot.open_time;
       const lotCloseTime = parkingLot.close_time;
 
@@ -626,6 +626,11 @@ export class BookingService {
       const isAlreadyPaid = booking.status === BookingStatus.CONFIRMED;
       booking.status = BookingStatus.ONGOING;
 
+      if (booking.slot) {
+        booking.slot.status = SlotStatus.OCCUPIED;
+        await this.parkingSlotRepository.save(booking.slot);
+      }
+
       const newLog = this.checkLogRepository.create({
         booking: booking,
         gate: { id: gateId }, // Sử dụng quan hệ gate với ID truyền vào từ mobile/camera
@@ -886,6 +891,7 @@ export class BookingService {
         {
           vehicle: { id: vehicleId },
           user: { id: userId },
+          status: In([BookingStatus.CONFIRMED, BookingStatus.ONGOING, BookingStatus.PENDING]),
         },
       ],
       relations: [
@@ -994,6 +1000,8 @@ export class BookingService {
         'slot.parkingZone',
         'slot.parkingZone.parkingFloor',
         'slot.parkingZone.parkingFloor.parkingLot',
+        'slot.parkingZone.parkingFloor.parkingLot.owner',
+        'invoice',
       ],
     });
 
@@ -1001,7 +1009,42 @@ export class BookingService {
       throw new NotFoundException('không có booking');
     }
 
-    await this.bookingRepository.delete(id);
+    // 1. Hoàn lại tiền vào ví của người dùng dựa trên hóa đơn đã thanh toán (PAID) và khấu trừ từ ví Chủ bãi(hỗ trợ vnpay và ví)
+    const paidInvoices = booking.invoice?.filter(inv => inv.status === InvoiceStatus.PAID) || [];
+    let totalRefundAmount = 0;
+    for (const inv of paidInvoices) {
+      totalRefundAmount += Number(inv.total || 0);
+    }
+
+    if (totalRefundAmount > 0 && booking.user?.id) {
+      const ownerId = booking.slot?.parkingZone?.parkingFloor?.parkingLot?.owner?.id;
+      if (ownerId) {
+        await this.walletService.refundBooking(
+          booking.user.id,
+          ownerId,
+          totalRefundAmount,
+          String(booking.id)
+        );
+        console.log(`[RefundBooking] Đã khấu trừ ví chủ bãi (${ownerId}) và hoàn lại ${totalRefundAmount}đ vào ví khách hàng (${booking.user.id}) khi hủy booking #${booking.id}`);
+      } else {
+        await this.walletService.refund(
+          booking.user.id,
+          totalRefundAmount,
+          String(booking.id)
+        );
+        console.log(`[Refund] Fallback hoàn ${totalRefundAmount}đ vào ví khách hàng (${booking.user.id}) khi hủy booking #${booking.id}`);
+      }
+    }
+
+    // 2. Giải phóng vị trí đỗ (ParkingSlot) về trạng thái AVAILABLE
+    if (booking.slot) {
+      booking.slot.status = SlotStatus.AVAILABLE;
+      await this.parkingSlotRepository.save(booking.slot);
+    }
+
+    // 3. Thay đổi trạng thái đặt chỗ sang CANCELLED thay vì xóa khỏi hệ thống
+    booking.status = BookingStatus.CANCELLED;
+    await this.bookingRepository.save(booking);
 
     const userName =
       booking.user?.profile?.name ||
@@ -1661,7 +1704,7 @@ export class BookingService {
     pricePerHour: number,
     priceDay: number,
   ) {
-    const gracePeriodMinutes = 15; //thời gian ân hạn 15p. nếu ra trước 15p thì không tính phí
+    const gracePeriodMinutes = 15; //thời gian ân hận 15p. nếu ra trước 15p thì không tính phí
     const end = dayjs(endTime);
     const actual = dayjs(actualExitTime);
 

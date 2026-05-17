@@ -45,7 +45,7 @@ export class AdminService {
     private transactionRepository: Repository<Transaction>,
     @InjectRepository(WalletTransaction)
     private walletTransactionRepository: Repository<WalletTransaction>,
-  ) {}
+  ) { }
 
   //Admin có thể xem tất cả người dùng
   async findAllUsers(page = 1, limit = 10) {
@@ -499,11 +499,11 @@ export class AdminService {
       const pricing = pricingMap.get(parkingLot.id);
       const pricePerHour = pricing
         ? [
-            {
-              pricePerHour: pricing.pricePerHour,
-              pricePerDay: pricing.pricePerDay,
-            },
-          ]
+          {
+            pricePerHour: pricing.pricePerHour,
+            pricePerDay: pricing.pricePerDay,
+          },
+        ]
         : [];
 
       // tính đánh giá trung bình của bãi đỗ xe
