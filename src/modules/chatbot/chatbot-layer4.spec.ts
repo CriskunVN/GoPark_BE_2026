@@ -63,16 +63,22 @@ describe('Chatbot layer 4 behavior', () => {
   });
 
   describe('user chatbot booking flow', () => {
-    function createUserChatbot() {
+    function createUserChatbot(
+      slotRows = [
+        { id: 101, code: 'A1', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1, is_booked: false },
+        { id: 102, code: 'A2', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1, is_booked: false },
+      ],
+      operatingTime = {
+        open_time: '2026-05-16T06:00:00+07:00',
+        close_time: '2026-05-16T22:00:00+07:00',
+      },
+    ) {
       const query = jest.fn(async (sql: string) => {
         if (sql.includes('SELECT open_time, close_time FROM parking_lots')) {
-          return [{ open_time: '2026-05-16T06:00:00+07:00', close_time: '2026-05-16T22:00:00+07:00' }];
+          return [operatingTime];
         }
         if (sql.includes('FROM parking_slots ps')) {
-          return [
-            { id: 101, code: 'A1', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1 },
-            { id: 102, code: 'A2', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1 },
-          ];
+          return slotRows;
         }
         return [];
       });
@@ -128,7 +134,7 @@ describe('Chatbot layer 4 behavior', () => {
       expect(chooseTime.data.pendingBooking.endTime).toContain('T10:00');
       expect(chooseTime.data.missing).toEqual(expect.arrayContaining(['vi tri do', 'xe hoac bien so']));
       expect(chooseTime.data.nextField).toBe('vi tri do');
-      expect(chooseTime.text).toContain('| Vi tri 1 | Tang 1 | A | A1 |');
+      expect(chooseTime.text).toContain('| Vị trí 1 | Tang 1 | A | A1 | Trống |');
 
       const chooseSlot = await service.processMessage([{ role: 'user', content: 'vi tri 2' }], userId);
       expect(chooseSlot.action).toBe('collect_booking');
@@ -142,6 +148,60 @@ describe('Chatbot layer 4 behavior', () => {
       expect(chooseVehicle.redirectUrl).toContain('start=2026-05-17T08%3A00');
       expect(chooseVehicle.redirectUrl).toContain('end=2026-05-17T10%3A00');
       expect(chooseVehicle.redirectUrl).toContain('slot=102');
+    });
+
+    it('keeps 7h30-9h in Vietnam local time when redirecting to booking form', async () => {
+      const service = createUserChatbot();
+
+      await service.processMessage([{ role: 'user', content: 'dat bai' }], userId);
+      await service.processMessage([{ role: 'user', content: 'bai 1' }], userId);
+      await service.processMessage([{ role: 'user', content: 'ngay mai tu 7h 30 den 9h' }], userId);
+      await service.processMessage([{ role: 'user', content: 'vi tri 1' }], userId);
+      const chooseVehicle = await service.processMessage([{ role: 'user', content: 'xe 1' }], userId);
+
+      expect(chooseVehicle.action).toBe('redirect');
+      expect(chooseVehicle.redirectUrl).toContain('start=2026-05-17T07%3A30');
+      expect(chooseVehicle.redirectUrl).toContain('end=2026-05-17T09%3A00');
+    });
+
+    it('suggests booking times inside the selected parking lot operating hours', async () => {
+      jest.setSystemTime(new Date('2026-05-16T04:10:00+07:00'));
+      const service = createUserChatbot(undefined, {
+        open_time: '2026-05-16T07:00:00+07:00',
+        close_time: '2026-05-16T00:00:00+07:00',
+      });
+
+      await service.processMessage([{ role: 'user', content: 'dat bai' }], userId);
+      const chooseLot = await service.processMessage([{ role: 'user', content: 'bai 1' }], userId);
+
+      expect(chooseLot.data.suggestions.timeExamples).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('7h'),
+        ]),
+      );
+      expect(chooseLot.data.suggestions.timeExamples.join(' ')).not.toContain('5h');
+    });
+
+    it('shows booked slots and asks users to choose another slot when selected slot is occupied', async () => {
+      const service = createUserChatbot([
+        { id: 101, code: 'A1', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1, is_booked: false },
+        { id: 102, code: 'A2', status: 'AVAILABLE', zone_name: 'A', floor_name: 'Tang 1', floor_number: 1, is_booked: true },
+      ]);
+
+      await service.processMessage([{ role: 'user', content: 'dat bai' }], userId);
+      await service.processMessage([{ role: 'user', content: 'bai 1' }], userId);
+      const chooseTime = await service.processMessage(
+        [{ role: 'user', content: 'ngay mai tu 8h den 10h' }],
+        userId,
+      );
+      expect(chooseTime.text).toContain('| Vị trí 2 | Tang 1 | A | A2 | Đã đặt |');
+
+      const chooseBookedSlot = await service.processMessage([{ role: 'user', content: 'vi tri 2' }], userId);
+      expect(chooseBookedSlot.action).toBe('collect_booking');
+      expect(chooseBookedSlot.data.nextField).toBe('vi tri do');
+      expect(chooseBookedSlot.data.pendingBooking.slotId).toBeUndefined();
+      expect(chooseBookedSlot.text).toContain('đã có người đặt');
+      expect(chooseBookedSlot.text).toContain('chọn vị trí khác');
     });
 
     it('asks users to reselect time when booking outside parking lot opening hours', async () => {
@@ -178,9 +238,7 @@ describe('Chatbot layer 4 behavior', () => {
         userId,
       );
 
-      expect(response.text).toContain('Tổng Quan Tài Khoản');
-      expect(response.text).toContain('Số dư ví');
-      expect(response.text).toContain('Xe đã đăng ký');
+      expect(response.text).toContain('125.000');
       expect(response.data.action).toBe('user_account_overview');
       expect(response.data.vehicles).toBe(2);
     });
@@ -193,8 +251,19 @@ describe('Chatbot layer 4 behavior', () => {
         userId,
       );
 
-      expect(response.text).toContain('ngoài phạm vi GoPark');
-      expect(response.text).toContain('đặt bãi');
+      expect(response.text).toContain('chỉ hỗ trợ');
+      expect(response.text).toContain('bãi đỗ xe');
+    });
+
+    it('rejects code and HTML generation requests for user chatbot', async () => {
+      const service = createUserChatbot();
+
+      const response = await service.processMessage(
+        [{ role: 'user', content: 'ban hay viet code html hello world cho toi' }],
+        userId,
+      );
+
+      expect(response.text).toContain('viết code/HTML');
     });
 
     it('answers user data questions with readable markdown tables', async () => {

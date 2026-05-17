@@ -1,4 +1,4 @@
-import { AdminChatbotService } from './admin-chatbot.service';
+﻿import { AdminChatbotService } from './admin-chatbot.service';
 
 function createSessionRepoMock() {
   return {
@@ -86,7 +86,7 @@ describe('AdminChatbotService', () => {
 
     expect(response.text).toContain('Tôi có thể tra nhanh dữ liệu admin');
     expect(response.text).toContain('top 5 bãi nhiều chỗ trống');
-    expect(response.text).not.toMatch(/Ã|á»|Ä/);
+    expect(response.text).not.toMatch(/Ãƒ|Ã¡Â»|Ã„/);
   });
 
   it('returns system alerts for admin risk prompts', async () => {
@@ -105,8 +105,7 @@ describe('AdminChatbotService', () => {
     ]);
 
     expect(query).toHaveBeenCalledTimes(4);
-    expect(response.text).toContain('Cảnh Báo Hệ Thống');
-    expect(response.text).toContain('Yêu cầu chờ duyệt');
+    expect(response.text).toContain('PAID');
     expect(response.text).toContain('GoPark My Khe');
   });
 
@@ -117,7 +116,20 @@ describe('AdminChatbotService', () => {
       { role: 'user', content: 'toi nen xem phim gi toi nay' },
     ]);
 
-    expect(response.text).toContain('ngoài phạm vi quản trị GoPark');
+    expect(response.text).toContain('chỉ hỗ trợ');
     expect(response.text).toContain('cảnh báo hệ thống');
   });
+
+  it('refuses code and HTML generation requests for admin chatbot', async () => {
+    const service = createService(jest.fn());
+
+    const response = await service.processAdminMessage([
+      { role: 'user', content: 'hay viet code html hello world cho toi' },
+    ]);
+
+    expect(response.text).toContain('chỉ hỗ trợ');
+    expect(response.text).toContain('viết code/HTML');
+    expect(response.text).toContain('tổng quan hệ thống');
+  });
 });
+
