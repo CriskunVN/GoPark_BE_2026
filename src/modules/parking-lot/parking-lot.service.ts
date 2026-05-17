@@ -28,6 +28,7 @@ import {
   ParkingLotStatus,
   SlotStatus,
 } from 'src/common/enums/status.enum';
+import { convertUTCToLocalForDb } from '../../utils/time';
 import { UserRoleEnum } from 'src/common/enums/role.enum';
 import { RequestService } from '../request/request.service';
 import { RequestType } from '../request/entities/request.entity';
@@ -130,8 +131,8 @@ export class ParkingLotService {
         createParkingLotDto.totalSlots ??
         0,
       description: createParkingLotDto.description,
-      open_time: createParkingLotDto.open_time ? new Date(createParkingLotDto.open_time) : undefined,
-      close_time: createParkingLotDto.close_time ? new Date(createParkingLotDto.close_time) : undefined,
+      open_time: convertUTCToLocalForDb(createParkingLotDto.open_time),
+      close_time: convertUTCToLocalForDb(createParkingLotDto.close_time),
       operating_days: createParkingLotDto.operating_days,
       image: { thumbnail, gallery },
       status: ParkingLotStatus.PENDING,
@@ -189,11 +190,17 @@ export class ParkingLotService {
     }
 
     if (updateParkingLotDto.open_time) {
-      parkingLot.open_time = new Date(updateParkingLotDto.open_time);
+      const convertedOpenTime = convertUTCToLocalForDb(updateParkingLotDto.open_time);
+      if (convertedOpenTime) {
+        parkingLot.open_time = convertedOpenTime;
+      }
     }
 
     if (updateParkingLotDto.close_time) {
-      parkingLot.close_time = new Date(updateParkingLotDto.close_time);
+      const convertedCloseTime = convertUTCToLocalForDb(updateParkingLotDto.close_time);
+      if (convertedCloseTime) {
+        parkingLot.close_time = convertedCloseTime;
+      }
     }
 
     if (updateParkingLotDto.operating_days) {
