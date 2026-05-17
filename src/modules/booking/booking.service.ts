@@ -78,7 +78,7 @@ export class BookingService {
       const subTotal = bookingdto.sub_total ?? 0;
       const voucherCode = bookingdto.voucher_code?.trim();
 
-      // gá»i hÃ m dá»n dáº¹p cÃ¡c booking pending Ä‘Ã£ háº¿t háº¡n trÆ°á»›c khi táº¡o má»›i Ä‘á»ƒ trÃ¡nh xung Ä‘á»™t dá»¯ liá»‡u vÃ  Ä‘áº£m báº£o tÃ­nh nháº¥t quÃ¡n cá»§a há»‡ thá»‘ng
+      // Gọi hàm dọn dẹp các booking pending đã hết hạn trước khi tạo mới để tránh xung đột dữ liệu và đảm bảo tính nhất quán của hệ thống
       await this.voucherCleanupService.cleanupExpiredPendingBookings();
 
       // Táº¡o transaction
@@ -87,11 +87,11 @@ export class BookingService {
       await queryRunner.startTransaction();
 
       try {
-        //2. kiá»ƒm tra xe cÃ³ Ä‘ang báº­n á»Ÿ vá»‹ trÃ­ khÃ¡c khÃ´ng
+        //2. kiểm tra xe có đang bận ở vị trí khác không
         const startTime = new Date(bookingdto.start_time);
         const endTime = new Date(bookingdto.end_time);
 
-        // 2a. Kiá»ƒm tra xe cÃ³ Ä‘ang Ä‘á»— (ONGOING) hoáº·c Ä‘Ã£ cÃ³ lá»‹ch Ä‘áº·t chá»— chÆ°a káº¿t thÃºc (CONFIRMED/PENDING) khÃ´ng
+        // 2a. Kiểm tra xe có đang đỗ (ONGOING) hoặc đã có lịch đặt chỗ chưa kết thúc (CONFIRMED/PENDING) không
         const ongoingBooking = await queryRunner.manager.findOne(Booking, {
           where: {
             vehicle: { id: bookingdto.vehicle_id },
@@ -101,7 +101,7 @@ export class BookingService {
 
         if (ongoingBooking) {
           throw new BadRequestException(
-            `Xe nÃ y hiá»‡n Ä‘Ã£ cÃ³ má»™t lá»‹ch Ä‘áº·t chá»— chÆ°a hoÃ n thÃ nh (Tráº¡ng thÃ¡i: ${ongoingBooking.status}). Vui lÃ²ng hoÃ n táº¥t lÆ°á»£t Ä‘á»— cÅ© trÆ°á»›c khi táº¡o lÆ°á»£t má»›i.`,
+            `Xe này hiện đã có một lịch đặt chỗ chưa hoàn thành (Trạng thái: ${ongoingBooking.status}). Vui lòng hoàn tất lượt đỗ cũ trước khi tạo lượt mới.`,
           );
         }
 
@@ -110,7 +110,7 @@ export class BookingService {
           .where('booking.vehicle = :vehicleId', {
             vehicleId: bookingdto.vehicle_id,
           })
-          // Chá»‰ check cÃ¡c booking "sá»‘ng": ÄÃ£ thanh toÃ¡n, Ä‘ang Ä‘á»—, hoáº·c Ä‘ang chá» thanh toÃ¡n
+          // Chỉ check các booking "sống": Đã thanh toán, đang đỗ, hoặc đang chờ thanh toán
           .andWhere('booking.status IN (:...statuses)', {
             statuses: [
               BookingStatus.PENDING,
@@ -118,14 +118,14 @@ export class BookingService {
               BookingStatus.ONGOING,
             ],
           })
-          // CÃ´ng thá»©c overlap: (Start1 < End2) AND (End1 > Start2)
+          // Công thức overlap: (Start1 < End2) AND (End1 > Start2)
           .andWhere('booking.start_time < :endTime', { endTime })
           .andWhere('booking.end_time > :startTime', { startTime })
           .getOne();
 
         if (conflictingVehicle) {
           throw new BadRequestException(
-            `Xe nÃ y Ä‘Ã£ cÃ³ lá»‹ch Ä‘áº·t chá»— trong khoáº£ng thá»i gian tá»« ${dayjs(conflictingVehicle.start_time).format('HH:mm')} Ä‘áº¿n ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`,
+            `Xe này đã có lịch đặt chỗ trong khoảng thời gian từ ${dayjs(conflictingVehicle.start_time).format('HH:mm')} đến ${dayjs(conflictingVehicle.end_time).format('HH:mm')}`,
           );
         }
 
@@ -134,15 +134,15 @@ export class BookingService {
         });
 
         if (!slot) {
-          throw new NotFoundException('KhÃ´ng tÃ¬m tháº¥y chá»— Ä‘á»—');
+          throw new NotFoundException('Không tìm thấy chỗ đỗ');
         }
 
-        // Kiá»ƒm tra tráº¡ng thÃ¡i
+        // Kiểm tra trạng thái
         if (slot.status.toLowerCase() === 'booked') {
-          throw new BadRequestException('Chá»— nÃ y Ä‘Ã£ Ä‘Æ°á»£c Ä‘áº·t');
+          throw new BadRequestException('Chỗ này đã được đặt');
         }
 
-        // Kiá»ƒm tra xem user Ä‘Ã£ cÃ³ booking pending nÃ o chÆ°a
+        // Kiểm tra xem user đã có booking pending nào chưa
         let newbooking = await queryRunner.manager.findOne(Booking, {
           where: {
             user: { id: bookingdto.user_id },
