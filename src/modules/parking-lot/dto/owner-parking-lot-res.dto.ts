@@ -11,8 +11,8 @@ export class OwnerParkingLotResDto {
   availableSlots: number;
   status: string;
   description?: string;
-  open_time?: Date;
-  close_time?: Date;
+  open_time?: string;
+  close_time?: string;
   operating_days?: string;
   image?: any;
 
@@ -27,8 +27,8 @@ export class OwnerParkingLotResDto {
       availableSlots: lot.available_slots,
       status: lot.status,
       description: lot.description,
-      open_time: convertLocalToUTCForRes(lot.open_time),
-      close_time: convertLocalToUTCForRes(lot.close_time),
+      open_time: lot.open_time,
+      close_time: lot.close_time,
       operating_days: lot.operating_days,
       image: lot.image,
     };

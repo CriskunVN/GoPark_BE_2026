@@ -56,6 +56,15 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import * as vision from '@google-cloud/vision';
 import { Gate } from './entities/gate.entity';
 
+function extractTimeFromInput(timeStr?: string): string | undefined {
+  if (!timeStr) return undefined;
+  if (timeStr.includes('T')) {
+    const parts = timeStr.split('T')[1];
+    return parts.substring(0, 5); // "06:00:00.000Z" -> "06:00"
+  }
+  return timeStr.substring(0, 5); // "06:00:00" -> "06:00"
+}
+
 export interface OcrSpaceResponse {
   IsErroredOnProcessing: boolean;
   ErrorMessage?: string[];
@@ -131,8 +140,8 @@ export class ParkingLotService {
         createParkingLotDto.totalSlots ??
         0,
       description: createParkingLotDto.description,
-      open_time: convertUTCToLocalForDb(createParkingLotDto.open_time),
-      close_time: convertUTCToLocalForDb(createParkingLotDto.close_time),
+      open_time: extractTimeFromInput(createParkingLotDto.open_time) || '06:00',
+      close_time: extractTimeFromInput(createParkingLotDto.close_time) || '22:00',
       operating_days: createParkingLotDto.operating_days,
       image: { thumbnail, gallery },
       status: ParkingLotStatus.PENDING,
@@ -209,14 +218,14 @@ export class ParkingLotService {
     }
 
     if (updateParkingLotDto.open_time) {
-      const convertedOpenTime = convertUTCToLocalForDb(updateParkingLotDto.open_time);
+      const convertedOpenTime = extractTimeFromInput(updateParkingLotDto.open_time);
       if (convertedOpenTime) {
         parkingLot.open_time = convertedOpenTime;
       }
     }
 
     if (updateParkingLotDto.close_time) {
-      const convertedCloseTime = convertUTCToLocalForDb(updateParkingLotDto.close_time);
+      const convertedCloseTime = extractTimeFromInput(updateParkingLotDto.close_time);
       if (convertedCloseTime) {
         parkingLot.close_time = convertedCloseTime;
       }
