@@ -190,11 +190,17 @@ export class ParkingLotService {
     }
 
     if (updateParkingLotDto.open_time) {
-      parkingLot.open_time = convertUTCToLocalForDb(updateParkingLotDto.open_time);
+      const convertedOpenTime = convertUTCToLocalForDb(updateParkingLotDto.open_time);
+      if (convertedOpenTime) {
+        parkingLot.open_time = convertedOpenTime;
+      }
     }
 
     if (updateParkingLotDto.close_time) {
-      parkingLot.close_time = convertUTCToLocalForDb(updateParkingLotDto.close_time);
+      const convertedCloseTime = convertUTCToLocalForDb(updateParkingLotDto.close_time);
+      if (convertedCloseTime) {
+        parkingLot.close_time = convertedCloseTime;
+      }
     }
 
     if (updateParkingLotDto.operating_days) {
