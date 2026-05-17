@@ -543,9 +543,13 @@ export class AdminService {
         }));
 
       // Format lại thời gian đóng/mở cửa thành string "HH:mm" (nếu có)
-      const formatTime = (date?: Date) => {
-        if (!date) return '00:00';
-        const utcDate = convertLocalToUTCForRes(date);
+      const formatTime = (timeVal?: any) => {
+        if (!timeVal) return '00:00';
+        const s = String(timeVal);
+        if (s.includes(':')) {
+          return s.substring(0, 5);
+        }
+        const utcDate = convertLocalToUTCForRes(timeVal);
         if (!utcDate) return '00:00';
         return `${String(utcDate.getUTCHours()).padStart(2, '0')}:${String(utcDate.getUTCMinutes()).padStart(2, '0')}`;
       };

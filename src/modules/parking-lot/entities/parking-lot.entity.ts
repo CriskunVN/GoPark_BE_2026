@@ -48,11 +48,11 @@ export class ParkingLot {
   @Column({ nullable: true })
   description?: string;
 
-  @Column({ type: 'timestamp', nullable: true })
-  open_time: Date;
+  @Column({ type: 'time', nullable: true })
+  open_time: string;
 
-  @Column({ type: 'timestamp', nullable: true })
-  close_time: Date;
+  @Column({ type: 'time', nullable: true })
+  close_time: string;
 
   @Column({ nullable: true })
   operating_days: string;
