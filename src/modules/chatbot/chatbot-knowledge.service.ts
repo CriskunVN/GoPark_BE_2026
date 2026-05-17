@@ -36,6 +36,7 @@ export class ChatbotKnowledgeService {
   }
 
   buildContext(query: string, limit = 4): string {
+    // Lấy các đoạn knowledgebase liên quan để nhúng vào system prompt cho LLM.
     const matches = this.search(query, limit).filter((match) => match.score >= 0.08);
     if (!matches.length) return '';
 
@@ -48,6 +49,7 @@ export class ChatbotKnowledgeService {
   }
 
   answerFromKnowledge(query: string): string | null {
+    // Fallback RAG không gọi LLM: trích câu hướng dẫn phù hợp nhất từ markdown.
     const matches = this.search(query, 3).filter((match) => match.score >= 0.12);
     if (!matches.length) return null;
 
@@ -120,7 +122,8 @@ export class ChatbotKnowledgeService {
       'thi', 'hay', 'hoac', 'trong', 'ngoai', 'duoc', 'khong',
     ]);
 
-    return (value || '')
+    const raw = (value || '').replace(/đ/g, 'd');
+    return raw
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')

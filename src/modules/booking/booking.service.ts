@@ -576,7 +576,7 @@ export class BookingService {
       booking.status === BookingStatus.CONFIRMED ||
       booking.status === BookingStatus.PENDING
     ) {
-      // // Ràng buộc: Check-in không được phép tại cổng chỉ dành cho lối ra (OUT)
+      // Ràng buộc: Check-in không được phép tại cổng chỉ dành cho lối ra (OUT)
       if (gate.type === 'OUT') {
         throw new BadRequestException(
           `Cổng "${gate.name}" chỉ dành cho lối ra. Vui lòng quét tại cổng lối vào.`,
@@ -658,7 +658,7 @@ export class BookingService {
 
     //check-out
     if (booking.status === BookingStatus.ONGOING) {
-      //Ràng buộc: Check-out không được phép tại cổng chỉ dành cho lối vào (IN)
+      // Ràng buộc: Check-out không được phép tại cổng chỉ dành cho lối vào (IN)
       if (gate.type === 'IN') {
         throw new BadRequestException(
           `Cổng "${gate.name}" chỉ dành cho lối vào. Vui lòng quét tại cổng lối ra.`,
